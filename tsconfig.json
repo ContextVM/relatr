@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    // Environment setup & latest features
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false,
+
+    // Path aliases
+    "paths": {
+      "@/*": ["./src/*"],
+      "@social-graph/*": ["./src/social-graph/*"],
+      "@metrics/*": ["./src/metrics/*"],
+      "@trust/*": ["./src/trust/*"],
+      "@distance/*": ["./src/distance/*"],
+      "@database/*": ["./src/database/*"],
+      "@config/*": ["./src/config/*"],
+      "@services/*": ["./src/services/*"],
+      "@mcp/*": ["./src/mcp/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

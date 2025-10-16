@@ -1,0 +1,30 @@
+{
+  "name": "relatr",
+  "version": "1.0.0",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "mcp": "bun run src/mcp/server.ts",
+    "start": "bun run src/mcp/server.ts",
+    "dev": "bun run src/config/environment.ts",
+    "build": "bun build src/mcp/server.ts --outdir dist --target node",
+    "init-db": "bun run scripts/init-db.ts",
+    "test": "bun test",
+    "test:distance": "bun test src/distance/tests/",
+    "visualize-decay": "bun run scripts/visualize-decay.ts",
+    "config-test": "bun run src/config/environment.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "nostr-social-graph": "^1.0.33",
+    "nostr-tools": "^2.17.0",
+    "zod": "3"
+  }
+}
