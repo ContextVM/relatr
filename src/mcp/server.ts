@@ -78,7 +78,7 @@ function registerCalculateTrustScoreTool(
       .optional()
       .describe("Optional source pubkey (uses default if not provided)"),
     weightingScheme: z
-      .enum(["default", "conservative", "progressive", "balanced"])
+      .enum(["default", "social", "validation", "strict"])
       .optional()
       .describe(
         "Weighting scheme: 'default' (balanced), 'conservative' (higher profile validation), 'progressive' (higher social distance), 'balanced'",

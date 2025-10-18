@@ -132,7 +132,8 @@ describe("TrustCalculator - Score Calculation", () => {
     );
     const expectedScore = weightedSum / totalWeight;
 
-    expect(result.score).toBeCloseTo(expectedScore, 6);
+    // Score is now rounded to 3 decimal places, so we use precision of 2
+    expect(result.score).toBeCloseTo(expectedScore, 2);
   });
 
   test("should include all components in result", () => {
@@ -155,7 +156,16 @@ describe("TrustCalculator - Score Calculation", () => {
   });
 
   test("should handle custom weights override", () => {
-    const customWeights = { distanceWeight: 0.5, nip05Valid: 0.3 };
+    // Create custom weights that will sum to 1.0 when merged
+    // testConfig has: distance=0.4, nip05=0.2, lightning=0.15, event=0.15, reciprocity=0.1
+    // We override distance and nip05, keep the rest
+    const customWeights = {
+      distanceWeight: 0.5,
+      nip05Valid: 0.25,
+      lightningAddress: 0.1,
+      eventKind10002: 0.1,
+      reciprocity: 0.05
+    }; // Sum = 1.0
     const sourcePubkey = "custom_weights_source";
     const targetPubkey = "custom_weights_target";
 
@@ -167,16 +177,12 @@ describe("TrustCalculator - Score Calculation", () => {
       customWeights,
     );
 
-    // The components should show the final weights used in calculation
+    // The components should show the final weights used in calculation (rounded)
     expect(result.components.distanceWeight).toBe(0.5);
-    expect(result.components.nip05Valid).toBe(0.3);
-    expect(result.components.lightningAddress).toBe(
-      testConfig.weights.lightningAddress,
-    );
-    expect(result.components.eventKind10002).toBe(
-      testConfig.weights.eventKind10002,
-    );
-    expect(result.components.reciprocity).toBe(testConfig.weights.reciprocity);
+    expect(result.components.nip05Valid).toBe(0.25);
+    expect(result.components.lightningAddress).toBe(0.1);
+    expect(result.components.eventKind10002).toBe(0.1);
+    expect(result.components.reciprocity).toBe(0.05);
   });
 
   test("should validate input parameters", () => {
@@ -212,6 +218,149 @@ describe("TrustCalculator - Score Calculation", () => {
       1000,
     );
     expect(result.score).toBe(0);
+  });
+});
+
+describe("TrustCalculator - Weight Validation", () => {
+  test("should accept weights that sum to 1.0", () => {
+    const validConfig = {
+      ...testConfig,
+      weights: {
+        distanceWeight: 0.5,
+        nip05Valid: 0.2,
+        lightningAddress: 0.1,
+        eventKind10002: 0.1,
+        reciprocity: 0.1,
+      },
+    };
+
+    expect(() => new TrustCalculator(validConfig)).not.toThrow();
+  });
+
+  test("should accept weights within tolerance (±0.01)", () => {
+    const validConfig = {
+      ...testConfig,
+      weights: {
+        distanceWeight: 0.5,
+        nip05Valid: 0.2,
+        lightningAddress: 0.1,
+        eventKind10002: 0.1,
+        reciprocity: 0.105, // Sum = 1.005, within tolerance
+      },
+    };
+
+    expect(() => new TrustCalculator(validConfig)).not.toThrow();
+  });
+
+  test("should reject weights that sum too low", () => {
+    const invalidConfig = {
+      ...testConfig,
+      weights: {
+        distanceWeight: 0.4,
+        nip05Valid: 0.2,
+        lightningAddress: 0.1,
+        eventKind10002: 0.1,
+        reciprocity: 0.1, // Sum = 0.9, outside tolerance
+      },
+    };
+
+    expect(() => new TrustCalculator(invalidConfig)).toThrow(
+      /must sum to 1.0/,
+    );
+  });
+
+  test("should reject weights that sum too high", () => {
+    const invalidConfig = {
+      ...testConfig,
+      weights: {
+        distanceWeight: 0.5,
+        nip05Valid: 0.3,
+        lightningAddress: 0.2,
+        eventKind10002: 0.15,
+        reciprocity: 0.1, // Sum = 1.25, outside tolerance
+      },
+    };
+
+    expect(() => new TrustCalculator(invalidConfig)).toThrow(
+      /must sum to 1.0/,
+    );
+  });
+
+  test("should validate custom weights passed to calculate()", () => {
+    const invalidCustomWeights = {
+      distanceWeight: 0.8,
+      nip05Valid: 0.5, // This will make sum > 1.0 when merged
+    };
+
+    expect(() =>
+      calculator.calculate(
+        "source",
+        "target",
+        testMetrics,
+        1,
+        invalidCustomWeights,
+      ),
+    ).toThrow(/must sum to 1.0/);
+  });
+
+  test("should validate weights on config update", () => {
+    const calc = new TrustCalculator(testConfig);
+    
+    const invalidWeights = {
+      distanceWeight: 0.3,
+      nip05Valid: 0.2,
+      lightningAddress: 0.1,
+      eventKind10002: 0.1,
+      reciprocity: 0.1, // Sum = 0.8
+    };
+
+    expect(() => calc.updateConfig({ weights: invalidWeights })).toThrow(
+      /must sum to 1.0/,
+    );
+  });
+});
+
+describe("TrustCalculator - Score Rounding", () => {
+  test("should round score to 3 decimal places", () => {
+    const result = calculator.calculate("source", "target", testMetrics, 1);
+    
+    // Check that score has at most 3 decimal places
+    const scoreStr = result.score.toString();
+    const decimalPart = scoreStr.split('.')[1] || '';
+    expect(decimalPart.length).toBeLessThanOrEqual(3);
+  });
+
+  test("should round component values to 3 decimal places", () => {
+    const result = calculator.calculate("source", "target", testMetrics, 2);
+    
+    // Check all component values
+    const checkDecimalPlaces = (value: number) => {
+      const valueStr = value.toString();
+      const decimalPart = valueStr.split('.')[1] || '';
+      expect(decimalPart.length).toBeLessThanOrEqual(3);
+    };
+
+    checkDecimalPlaces(result.components.distanceWeight);
+    checkDecimalPlaces(result.components.nip05Valid);
+    checkDecimalPlaces(result.components.lightningAddress);
+    checkDecimalPlaces(result.components.eventKind10002);
+    checkDecimalPlaces(result.components.reciprocity);
+    checkDecimalPlaces(result.components.socialDistance);
+    checkDecimalPlaces(result.components.normalizedDistance);
+  });
+
+  test("should maintain score accuracy after rounding", () => {
+    // Use a distance that creates a long decimal
+    const distance = 3.7;
+    const result = calculator.calculate("source", "target", testMetrics, distance);
+    
+    // Score should be between 0 and 1
+    expect(result.score).toBeGreaterThanOrEqual(0);
+    expect(result.score).toBeLessThanOrEqual(1);
+    
+    // Rounding should not create values outside valid range
+    expect(result.components.normalizedDistance).toBeGreaterThanOrEqual(0);
+    expect(result.components.normalizedDistance).toBeLessThanOrEqual(1);
   });
 });
 

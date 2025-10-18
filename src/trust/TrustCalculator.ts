@@ -5,7 +5,7 @@ import type {
   MetricWeights,
   ScoreComponents,
 } from "../types";
-import { SocialGraphError } from "../types";
+import { SocialGraphError, ValidationError } from "../types";
 
 /**
  * Trust score calculation using distance normalization and weighted metrics
@@ -13,6 +13,8 @@ import { SocialGraphError } from "../types";
  */
 export class TrustCalculator {
   private config: RelatrConfig;
+  private static readonly DECIMAL_PLACES = 3;
+  private static readonly WEIGHT_SUM_TOLERANCE = 0.01;
 
   /**
    * Create a new TrustCalculator instance
@@ -22,6 +24,9 @@ export class TrustCalculator {
     if (!config) {
       throw new SocialGraphError("Config is required", "CONSTRUCTOR");
     }
+
+    // Validate that weights sum to approximately 1.0
+    this.validateWeights(config.weights);
 
     this.config = config;
   }
@@ -66,28 +71,32 @@ export class TrustCalculator {
       );
     }
 
-    // Merge weights
+    // Merge and validate weights
     const finalWeights = this.mergeWeights(this.config.weights, weights);
+    this.validateWeights(finalWeights);
 
     // Normalize distance
     const normalizedDistance = this.normalizeDistance(distance);
 
     // Calculate weighted score
-    const score = this.calculateWeightedScore(
+    const rawScore = this.calculateWeightedScore(
       metrics,
       normalizedDistance,
       finalWeights,
     );
 
-    // Create score components
+    // Round final score and components for consistency and readability
+    const score = this.roundToDecimalPlaces(rawScore);
+    
+    // Create score components with rounded values
     const components: ScoreComponents = {
-      distanceWeight: finalWeights.distanceWeight,
-      nip05Valid: finalWeights.nip05Valid,
-      lightningAddress: finalWeights.lightningAddress,
-      eventKind10002: finalWeights.eventKind10002,
-      reciprocity: finalWeights.reciprocity,
-      socialDistance: distance,
-      normalizedDistance,
+      distanceWeight: this.roundToDecimalPlaces(finalWeights.distanceWeight),
+      nip05Valid: this.roundToDecimalPlaces(finalWeights.nip05Valid),
+      lightningAddress: this.roundToDecimalPlaces(finalWeights.lightningAddress),
+      eventKind10002: this.roundToDecimalPlaces(finalWeights.eventKind10002),
+      reciprocity: this.roundToDecimalPlaces(finalWeights.reciprocity),
+      socialDistance: this.roundToDecimalPlaces(distance),
+      normalizedDistance: this.roundToDecimalPlaces(normalizedDistance),
     };
 
     // Create trust score object
@@ -197,6 +206,45 @@ export class TrustCalculator {
   }
 
   /**
+   * Validate that metric weights sum to approximately 1.0
+   * @param weights - Metric weights to validate
+   * @throws ValidationError if weights don't sum to approximately 1.0
+   * @private
+   */
+  private validateWeights(weights: MetricWeights): void {
+    const sum =
+      weights.distanceWeight +
+      weights.nip05Valid +
+      weights.lightningAddress +
+      weights.eventKind10002 +
+      weights.reciprocity;
+
+    const deviation = Math.abs(sum - 1.0);
+    
+    if (deviation > TrustCalculator.WEIGHT_SUM_TOLERANCE) {
+      throw new ValidationError(
+        `Metric weights must sum to 1.0 (±${TrustCalculator.WEIGHT_SUM_TOLERANCE}). Current sum: ${sum.toFixed(4)}`,
+        "weights"
+      );
+    }
+  }
+
+  /**
+   * Round a number to a specified number of decimal places
+   * @param value - The value to round
+   * @param places - Number of decimal places (default: 3)
+   * @returns Rounded value
+   * @private
+   */
+  private roundToDecimalPlaces(
+    value: number,
+    places: number = TrustCalculator.DECIMAL_PLACES
+  ): number {
+    const multiplier = Math.pow(10, places);
+    return Math.round(value * multiplier) / multiplier;
+  }
+
+  /**
    * Get the current configuration
    * @returns Current RelatrConfig
    */
@@ -209,6 +257,9 @@ export class TrustCalculator {
    * @param newConfig - New configuration to use
    */
   updateConfig(newConfig: Partial<RelatrConfig>): void {
+    if (newConfig.weights) {
+      this.validateWeights(newConfig.weights);
+    }
     this.config = { ...this.config, ...newConfig };
   }
 }

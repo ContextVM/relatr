@@ -103,7 +103,7 @@ await service.initialize();
 const result = await service.calculateTrustScore({
   targetPubkey: "target_pubkey", // Required
   sourcePubkey: "source_pubkey", // Optional, uses default if not provided
-  weightingScheme: "progressive", // Optional: 'default', 'conservative', 'progressive', 'balanced'
+  weightingScheme: "validation", // Optional: 'default', 'social', 'validation', 'strict'
 });
 ```
 
@@ -116,7 +116,7 @@ The MCP server provides a simplified interface where only the target pubkey is r
 calculate_trust_score targetPubkey="abc123..."
 
 # With optional parameters
-calculate_trust_score targetPubkey="abc123..." sourcePubkey="def456..." weightingScheme="progressive"
+calculate_trust_score targetPubkey="abc123..." sourcePubkey="def456..." weightingScheme="validation"
 ```
 
 ### Health Check
@@ -146,10 +146,23 @@ await service.manageCache("stats");
 
 ### Weighting Schemes
 
-- **default**: Balanced approach with standard weights
-- **conservative**: Higher emphasis on social distance
-- **progressive**: Higher emphasis on profile validations
-- **custom**: Provide your own weight configuration
+All trust scores and component values are rounded to 3 decimal places for consistency and readability.
+
+Available presets (all weights sum to 1.0):
+
+- **default**: Balanced approach favoring social graph (50%) with moderate profile validation
+  - Distance: 0.50, NIP-05: 0.15, Lightning: 0.10, Event: 0.10, Reciprocity: 0.15
+
+- **social**: Heavy emphasis on social graph proximity (70%), trusts the network
+  - Distance: 0.70, NIP-05: 0.10, Lightning: 0.05, Event: 0.05, Reciprocity: 0.10
+
+- **validation**: Heavy emphasis on profile validations (60%), trusts verified identities
+  - Distance: 0.25, NIP-05: 0.25, Lightning: 0.20, Event: 0.15, Reciprocity: 0.15
+
+- **strict**: Balanced but demanding, requires both strong connections AND validations
+  - Distance: 0.40, NIP-05: 0.25, Lightning: 0.15, Event: 0.10, Reciprocity: 0.10
+
+- **custom**: Provide your own weight configuration (must sum to 1.0 ±0.01)
 
 ### Cache Settings
 

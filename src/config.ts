@@ -107,41 +107,48 @@ export function mergeWeights(
 
 /**
  * Weighting presets for different trust calculation strategies
+ *
+ * All weights are normalized to sum to 1.0 for consistent scoring.
+ *
+ * - default: Balanced approach favoring social graph (50%) with moderate profile validation
+ * - social: Heavy emphasis on social graph proximity (70%), trusts the network
+ * - validation: Heavy emphasis on profile validations (60%), trusts verified identities
+ * - strict: Requires both strong connections AND strong validations
  */
 export const WEIGHTING_PRESETS = {
   default: {
-    distanceWeight: 0.5,
-    nip05Valid: 0.15,
-    lightningAddress: 0.1,
-    eventKind10002: 0.1,
-    reciprocity: 0.15,
+    distanceWeight: 0.50,  // Social graph proximity
+    nip05Valid: 0.15,      // NIP-05 verification
+    lightningAddress: 0.10, // Lightning address
+    eventKind10002: 0.10,  // Relay list publication
+    reciprocity: 0.15,     // Mutual follow
   },
-  conservative: {
-    distanceWeight: 0.3,
+  social: {
+    distanceWeight: 0.70,  // Prioritize social connections
+    nip05Valid: 0.10,
+    lightningAddress: 0.05,
+    eventKind10002: 0.05,
+    reciprocity: 0.10,
+  },
+  validation: {
+    distanceWeight: 0.25,  // Prioritize profile validations
     nip05Valid: 0.25,
-    lightningAddress: 0.15,
+    lightningAddress: 0.20,
     eventKind10002: 0.15,
     reciprocity: 0.15,
   },
-  progressive: {
-    distanceWeight: 0.6,
-    nip05Valid: 0.1,
-    lightningAddress: 0.1,
-    eventKind10002: 0.1,
-    reciprocity: 0.1,
-  },
-  balanced: {
-    distanceWeight: 0.4,
-    nip05Valid: 0.2,
-    lightningAddress: 0.1,
-    eventKind10002: 0.1,
-    reciprocity: 0.2,
+  strict: {
+    distanceWeight: 0.40,  // Balanced but demanding
+    nip05Valid: 0.25,
+    lightningAddress: 0.15,
+    eventKind10002: 0.10,
+    reciprocity: 0.10,
   },
 } as const;
 
 /**
  * Get weighting preset by name
- * @param presetName - Name of the preset ('default', 'conservative', 'progressive', 'balanced')
+ * @param presetName - Name of the preset ('default', 'social', 'validation', 'strict')
  * @returns MetricWeights for the specified preset
  * @throws Error if preset name is invalid
  */

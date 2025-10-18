@@ -65,7 +65,7 @@ export interface ProfileMetricsRow {
 export interface CalculateTrustScoreParams {
   sourcePubkey?: string;
   targetPubkey: string;
-  weightingScheme?: "default" | "conservative" | "progressive" | "balanced";
+  weightingScheme?: "default" | "social" | "validation" | "strict";
 }
 
 export interface CalculateTrustScoreResult {
@@ -215,9 +215,9 @@ export type CacheKey = string | [string, string];
 // Weighting scheme type
 export type WeightingScheme =
   | "default"
-  | "conservative"
-  | "progressive"
-  | "balanced";
+  | "social"
+  | "validation"
+  | "strict";
 
 // Health check component type
 export type HealthComponent = "database" | "socialGraph";
