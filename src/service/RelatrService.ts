@@ -29,7 +29,6 @@ export class RelatrService {
     private trustCalculator: TrustCalculator | null = null;
     private metricsValidator: MetricsValidator | null = null;
     private metricsCache: SimpleCache<ProfileMetrics> | null = null;
-    private trustScoreCache: SimpleCache<TrustScore> | null = null;
     private initialized = false;
 
     constructor(config: RelatrConfig) {
@@ -62,11 +61,11 @@ export class RelatrService {
         if (this.initialized) return;
         try {
             this.db = initDatabase(this.config.databasePath);
-            this.metricsCache = new SimpleCache('profile_metrics', this.config.cacheTtlSeconds);
-            this.trustScoreCache = new SimpleCache('trust_scores', this.config.cacheTtlSeconds);
+            // Pass the database instance to cache constructor for consistency
+            this.metricsCache = new SimpleCache(this.db, 'profile_metrics', this.config.cacheTtlSeconds);
             this.socialGraph = new SocialGraph(this.config.graphBinaryPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
-            this.trustCalculator = new TrustCalculator(this.config, this.trustScoreCache);
+            this.trustCalculator = new TrustCalculator(this.config);
             this.metricsValidator = new MetricsValidator(this.config.nostrRelays, this.socialGraph, this.metricsCache);
             this.initialized = true;
         } catch (error) {
@@ -78,7 +77,7 @@ export class RelatrService {
     async calculateTrustScore(params: CalculateTrustScoreParams): Promise<TrustScore> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
 
-        const { sourcePubkey, targetPubkey, weightingScheme, customWeights } = params;
+        const { sourcePubkey, targetPubkey, weightingScheme } = params;
         
         if (!targetPubkey || typeof targetPubkey !== 'string') {
             throw new ValidationError('Invalid target pubkey', 'targetPubkey');
@@ -90,21 +89,16 @@ export class RelatrService {
         }
 
         try {
-            const cacheKey: [string, string] = [effectiveSourcePubkey, targetPubkey];
-            const cached = await this.trustScoreCache!.get(cacheKey);
-            if (cached) return cached;
-
             const distance = effectiveSourcePubkey !== this.socialGraph!.getCurrentRoot()
                 ? await this.socialGraph!.getDistanceBetween(effectiveSourcePubkey, targetPubkey)
                 : this.socialGraph!.getDistance(targetPubkey);
 
             const metrics = await this.metricsValidator!.validateAll(targetPubkey, effectiveSourcePubkey);
-            const weights = weightingScheme ? getWeightingPreset(weightingScheme) : customWeights;
+            const weights = weightingScheme ? getWeightingPreset(weightingScheme) : this.config.weights;
 
-            const trustScore = await this.trustCalculator!.calculate(
+            const trustScore = this.trustCalculator!.calculate(
                 effectiveSourcePubkey, targetPubkey, metrics, distance, weights
             );
-            await this.trustScoreCache!.set(cacheKey, trustScore);
             return trustScore;
 
         } catch (error) {
@@ -133,39 +127,30 @@ export class RelatrService {
         try {
             switch (action) {
                 case 'clear': {
-                    const metricsCleared = targetPubkey 
+                    const metricsCleared = targetPubkey
                         ? await this.metricsCache!.clear(targetPubkey)
                         : await this.metricsCache!.clear();
-                    const scoresCleared = targetPubkey
-                        ? await this.trustScoreCache!.clear([targetPubkey, ''])
-                        : await this.trustScoreCache!.clear();
                     
                     return {
                         success: true,
                         metricsCleared,
-                        scoresCleared,
                         message: targetPubkey ? `Cleared ${targetPubkey}` : 'Cleared all'
                     };
                 }
                 case 'cleanup': {
                     const metricsDeleted = await this.metricsCache!.cleanup();
-                    const scoresDeleted = await this.trustScoreCache!.cleanup();
-                    const dbCleanup = cleanupExpiredCache(this.db!);
-
                     return {
                         success: true,
-                        metricsCleared: metricsDeleted + dbCleanup.metricsDeleted,
-                        scoresCleared: scoresDeleted + dbCleanup.scoresDeleted,
-                        message: `Cleaned ${metricsDeleted + dbCleanup.metricsDeleted} metrics, ${scoresDeleted + dbCleanup.scoresDeleted} scores`
+                        metricsCleared: metricsDeleted,
+                        message: `Cleaned ${metricsDeleted} metrics`
                     };
                 }
                 case 'stats': {
                     const metricsStats = await this.metricsCache!.getStats();
-                    const scoresStats = await this.trustScoreCache!.getStats();
 
                     return {
                         success: true,
-                        message: `Metrics: ${metricsStats.totalEntries}/${metricsStats.expiredEntries}, Scores: ${scoresStats.totalEntries}/${scoresStats.expiredEntries}`
+                        message: `Metrics: ${metricsStats.totalEntries}/${metricsStats.expiredEntries}`
                     };
                 }
                 default:
@@ -195,7 +180,6 @@ export class RelatrService {
         this.trustCalculator = null;
         this.metricsValidator = null;
         this.metricsCache = null;
-        this.trustScoreCache = null;
         this.initialized = false;
     }
 

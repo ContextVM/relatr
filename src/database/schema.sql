@@ -15,21 +15,3 @@ CREATE TABLE IF NOT EXISTS profile_metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_profile_metrics_expires ON profile_metrics(expires_at);
-
--- Table 2: Trust Scores Cache
-CREATE TABLE IF NOT EXISTS trust_scores (
-    source_pubkey TEXT NOT NULL,
-    target_pubkey TEXT NOT NULL,
-    score REAL NOT NULL CHECK(score >= 0.0 AND score <= 1.0),
-    distance_weight REAL NOT NULL,
-    nip05_weight REAL NOT NULL,
-    lightning_weight REAL NOT NULL,
-    event_weight REAL NOT NULL,
-    reciprocity_weight REAL NOT NULL,
-    computed_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    PRIMARY KEY (source_pubkey, target_pubkey)
-);
-
-CREATE INDEX IF NOT EXISTS idx_trust_scores_expires ON trust_scores(expires_at);
-CREATE INDEX IF NOT EXISTS idx_trust_scores_source ON trust_scores(source_pubkey);

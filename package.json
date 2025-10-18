@@ -6,17 +6,11 @@
   "private": true,
   "scripts": {
     "mcp": "bun run src/mcp/server.ts",
-    "start": "bun run src/mcp/server.ts",
-    "dev": "bun run src/config/environment.ts",
-    "build": "bun build src/mcp/server.ts --outdir dist --target node",
-    "init-db": "bun run scripts/init-db.ts",
-    "test": "bun test",
-    "test:distance": "bun test src/distance/tests/",
-    "visualize-decay": "bun run scripts/visualize-decay.ts",
-    "config-test": "bun run src/config/environment.ts"
+    "format": "prettier --write ."
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "prettier": "^3.6.2"
   },
   "peerDependencies": {
     "typescript": "^5"

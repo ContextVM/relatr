@@ -1,129 +1,186 @@
-# Relatr: A Decentralized Web of Trust Metric Service for Nostr
+# Relatr
 
-**Relatr** is a comprehensive, high-performance service that computes trust scores for [Nostr](https://nostr.com/) profiles. It provides a decentralized web of trust metric, enabling applications to evaluate profile trustworthiness based on a multi-faceted analysis of social graph data, profile validation, and some activity metrics.
+A decentralized web of trust metric service for Nostr that computes personalized trust scores by combining social graph distances with profile validation metrics.
 
-Relatr is designed to be a foundational component for Nostr clients, relays, and other services that need to assess profile quality and authenticity. By leveraging a sophisticated weighting system and a caching layer, it delivers fast and accurate trust scores.
+## Overview
 
-## Table of Contents
-
-- [Features](#features)
-- [Architecture Overview](#architecture-overview)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [API Documentation](#api-documentation)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
+Relatr measures relative trust between Nostr public keys by analyzing social graph proximity and validating profile characteristics. It uses a weighted scoring system to produce a comprehensive trust metric that can be personalized from any source pubkey's perspective.
 
 ## Features
 
-- **Trust Score Calculation:** Implements a configurable, multi-factor trust score based on:
-    - **Social Graph Distance:** Measures the social distance from a trusted root node.
-    - **Profile Validation Metrics:**
-        - NIP-05 Verification
-        - Lightning Address/LUD-16 Validation
-        - Profile and Events
-        - Reciprocity (Mutual Follows)
-- **High-Performance Caching:** Utilizes an in-memory and SQLite-based caching strategy for rapid score retrieval.
-- **Pre-computed Social Graph:** Integrates with a pre-computed social graph for efficient distance calculations.
-- **MCP Server:** Exposes trust score data via a standard MCP server interface.
-- **Configurable Weighting:** Allows customization of the weighting scheme to tailor trust score calculations to specific needs.
-- **Extensible Architecture:** Designed for modularity, allowing new metrics and data sources to be easily integrated.
+- **Social Graph Analysis**: Calculates trust distances using nostr-social-graph
+- **Profile Validation**: Validates NIP-05, Lightning addresses, and event publications
+- **Reciprocity Checking**: Verifies mutual follow relationships
+- **Configurable Scoring**: Flexible weighting schemes for different trust factors
+- **Persistent Caching**: SQLite-based caching for performance optimization
+- **MCP Server Interface**: Model Context Protocol API for integration
 
-## Architecture Overview
+## Quick Start
 
-Relatr's architecture is designed for performance, scalability, and extensibility. The core components include:
+### Installation
 
-- **Service Orchestration Layer:** The main entry point that coordinates the different modules.
-- **Database Layer:** Manages the SQLite database for caching social graph data, profile metrics, and trust scores.
-- **Social Graph Manager:** Loads and queries the pre-computed social graph.
-- **Distance Normalizer:** Calculates and normalizes the social distance between profiles.
-- **Profile Metrics Collector:** Gathers and validates profile metrics like NIP-05 and Lightning addresses.
-- **Trust Score Calculator:** Computes the final trust score based on the configured weighting scheme.
-- **MCP Server:** Provides an MCP interface for clients to query trust scores.
+```bash
+# Clone the repository
+git clone <repository-url>
+cd relatr
 
-For a more in-depth understanding of the architecture, please refer to our [High-Level Design (HLD)](docs/hdd.md) and the detailed [Low-Level Design (LLD) documents](docs/lld/).
+# Install dependencies
+bun install
 
-## Installation
+# Copy environment configuration
+cp .env.example .env
 
-To get started with Relatr, follow these steps:
+# Initialize the database
+bun run mcp
+```
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/your-repo/relatr.git
-    cd relatr
-    ```
+### Configuration
 
-2.  **Install dependencies:**
-    Relatr uses [Bun](https://bun.sh/) as its JavaScript runtime.
-    ```bash
-    bun install
-    ```
+Edit `.env` with your settings:
 
-3.  **Set up the environment:**
-    Copy the example environment file and customize it as needed.
-    ```bash
-    cp .env.example .env
-    ```
-    See the [Configuration](#configuration) section for more details on the available options.
+```env
+DEFAULT_SOURCE_PUBKEY=your_default_pubkey
+GRAPH_BINARY_PATH=./data/socialGraph.bin
+DATABASE_PATH=./data/relatr.db
+NOSTR_RELAYS=wss://relay.nostr.org,wss://relay.damus.io
+DECAY_FACTOR=0.1
+CACHE_TTL_SECONDS=3600
+```
 
-4.  **Initialize the database:**
-    This script sets up the necessary tables in the SQLite database.
-    ```bash
-    bun run scripts/init-db.ts
-    ```
+### Running the Service
 
-## Configuration
+```bash
+# Start the MCP server
+bun run mcp
 
-Relatr is configured via environment variables. The following variables are available:
+# Or run directly
+bun run index.ts
+```
 
-| Variable                  | Description                                                 | Default                |
-| ------------------------- | ----------------------------------------------------------- | ---------------------- |
-| `DATABASE_PATH`           | Path to the SQLite database file.                           | `data/relatr.db`       |
-| `SOCIAL_GRAPH_PATH`       | Path to the pre-computed social graph file.                 | `data/socialGraph.bin` |
-| `ROOT_PUBLIC_KEY`         | The public key of the root node for distance calculations.  |                        |
-| `MCP_SERVER_PORT`         | The port for the MCP server.                                | `8080`                 |
-| `LOG_LEVEL`               | The log level for the application.                          | `info`                 |
-| `WEIGHT_SCHEME`           | The weighting scheme to use for trust score calculations.   | `default`              |
+## Architecture
 
-For more details on configuring weighting schemes, see the [Weighting Schemes Guide](docs/weighting-schemes.md).
+### Core Components
+
+1. **RelatrService**: Main service orchestrating all components
+2. **SocialGraph**: Manages Nostr social graph data and distance calculations
+3. **TrustCalculator**: Computes final trust scores from metrics
+4. **MetricsValidator**: Validates profile characteristics
+5. **SimpleCache**: Persistent caching layer using SQLite
+
+### Trust Score Calculation
+
+The trust score is computed using a weighted formula:
+
+```
+Trust Score = Σ(wi × vi) / Σ(wi)
+```
+
+Where:
+
+- `wi` = weight for metric i
+- `vi` = normalized value for metric i (0.0-1.0)
+
+### Metrics
+
+| Metric      | Type         | Weight | Description                       |
+| ----------- | ------------ | ------ | --------------------------------- |
+| Distance    | Float (0-1)  | 0.5    | Social graph proximity with decay |
+| NIP-05      | Binary (0/1) | 0.15   | Valid NIP-05 identifier           |
+| Lightning   | Binary (0/1) | 0.1    | Lightning Network address         |
+| Event 10002 | Binary (0/1) | 0.1    | Published relay list              |
+| Reciprocity | Binary (0/1) | 0.15   | Mutual follow relationship        |
+
+## API Usage
+
+### Calculate Trust Score
+
+```typescript
+import { RelatrService } from "./src/service/RelatrService";
+
+const service = new RelatrService(config);
+await service.initialize();
+
+const result = await service.calculateTrustScore({
+  targetPubkey: "target_pubkey", // Required
+  sourcePubkey: "source_pubkey", // Optional, uses default if not provided
+  weightingScheme: "progressive", // Optional: 'default', 'conservative', 'progressive', 'balanced'
+});
+```
+
+#### MCP Tool Usage
+
+The MCP server provides a simplified interface where only the target pubkey is required:
+
+```bash
+# Basic usage - only target pubkey required
+calculate_trust_score targetPubkey="abc123..."
+
+# With optional parameters
+calculate_trust_score targetPubkey="abc123..." sourcePubkey="def456..." weightingScheme="progressive"
+```
+
+### Health Check
+
+```typescript
+const health = await service.healthCheck();
+// Returns: { status: 'healthy' | 'unhealthy', database: boolean, socialGraph: boolean }
+```
+
+### Cache Management
+
+```typescript
+// Clear cache for specific pubkey
+await service.manageCache("clear", "target_pubkey");
+
+// Clear all cache
+await service.manageCache("clear");
+
+// Clean up expired entries
+await service.manageCache("cleanup");
+
+// Get cache statistics
+await service.manageCache("stats");
+```
+
+## Configuration Options
+
+### Weighting Schemes
+
+- **default**: Balanced approach with standard weights
+- **conservative**: Higher emphasis on social distance
+- **progressive**: Higher emphasis on profile validations
+- **custom**: Provide your own weight configuration
+
+### Cache Settings
+
+- `cacheTtlSeconds`: Time-to-live for cached entries (default: 3600)
+- Cache is automatically cleaned up on expiration
+- Persistent storage survives application restarts
 
 ## Development
 
-We welcome contributions to Relatr! To set up a development environment, follow the [Installation](#installation) instructions.
+### Project Structure
+
+```
+src/
+├── service/          # Main service orchestration
+├── database/         # Database connection and caching
+├── graph/           # Social graph management
+├── trust/           # Trust score calculation
+├── validators/      # Profile validation logic
+├── mcp/             # MCP server implementation
+└── types.ts         # TypeScript type definitions
+```
 
 ### Running Tests
-
-To run the test suite, use the following command:
 
 ```bash
 bun test
 ```
 
-### Code Structure
+### Database Schema
 
-The project is organized into the following directories:
+The service uses SQLite with two main cache tables:
 
-- `src/`: The main source code for the application.
-  - `config/`: Environment and configuration management.
-  - `database/`: SQLite database connection and queries.
-  - `distance/`: Social distance normalization.
-  - `mcp/`: The MCP server implementation.
-  - `metrics/`: Profile metrics collection and validation.
-  - `services/`: The main Relatr service orchestrator.
-  - `social-graph/`: Social graph management.
-  - `trust/`: Trust score calculation and weighting.
-- `scripts/`: Utility scripts for database initialization, etc.
-- `docs/`: Project documentation.
-- `data/`: Data files, including the database and social graph.
-
-For more details, please see the [Implementation Guide](docs/lld/00-implementation-guide.md).
-
-## Contributing
-
-Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+- `profile_metrics`: Stores validated profile characteristics
+- `trust_scores`: Stores computed trust scores with component breakdown
