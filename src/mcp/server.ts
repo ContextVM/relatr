@@ -1,402 +1,330 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { RelatrService } from '../services/RelatrService.js';
-import { config } from '../config/environment.js';
-import type { TrustScoreCalculationRequest } from '../services/types.js';
+import { RelatrService } from '../service/RelatrService.js';
+import { loadConfig } from '../config.js';
 
 /**
- * MCP Server for Relatr trust score calculation
+ * Start the MCP server for Relatr v2
  * 
- * This server exposes the `calculate_trust_score` tool that computes trust scores
- * between Nostr pubkeys based on social graph distance and profile metrics.
+ * This function initializes the RelatrService, creates and configures the MCP server,
+ * registers the required tools, and handles graceful shutdown.
  */
-class RelatrMcpServer {
-    private server: McpServer;
-    private relatrService: RelatrService;
-    private isInitialized = false;
-    private isShuttingDown = false;
+export async function startMCPServer(): Promise<void> {
+    let relatrService: RelatrService | null = null;
+    let server: McpServer | null = null;
 
-    constructor() {
-        this.server = new McpServer({
-            name: 'relatr',
-            version: '1.0.0'
+    try {
+        // Load configuration and initialize RelatrService
+        const config = loadConfig();
+        relatrService = new RelatrService(config);
+        await relatrService.initialize();
+
+        // Create MCP server
+        server = new McpServer({
+            name: 'relatr-v2',
+            version: '2.0.0'
         });
 
-        this.relatrService = new RelatrService({
-            defaultSourcePubkey: config.DEFAULT_SOURCE_PUBKEY,
-            enableLogging: true,
-            logLevel: 'info',
-            enableMetrics: true,
-            performanceMonitoring: true,
-        });
+        // Register tools
+        registerCalculateTrustScoreTool(server, relatrService);
+        registerHealthCheckTool(server, relatrService);
+        registerManageCacheTool(server, relatrService);
 
-        this.setupSignalHandlers();
-    }
+        // Setup graceful shutdown
+        setupGracefulShutdown(server, relatrService);
 
-    /**
-     * Initialize the MCP server and all dependencies
-     */
-    async initialize(): Promise<void> {
-        if (this.isInitialized) {
-            console.log('[RelatrMcpServer] Already initialized');
-            return;
-        }
+        // Start the server
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+        
+        console.log('[Relatr MCP] Server started successfully');
 
-        console.log('[RelatrMcpServer] Initializing Relatr MCP Server...');
-
-        try {
-            // Initialize the RelatrService
-            await this.relatrService.initialize();
-            
-            // Register tools
-            this.registerTools();
-            
-            // Register server info
-            this.registerServerInfo();
-            
-            this.isInitialized = true;
-            console.log('[RelatrMcpServer] MCP Server initialized successfully');
-            
-        } catch (error) {
-            console.error('[RelatrMcpServer] Failed to initialize:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Register all MCP tools
-     */
-    private registerTools(): void {
-        // Register calculate_trust_score tool
-        this.server.registerTool(
-            'calculate_trust_score',
-            {
-                title: 'Calculate Trust Score',
-                description: 'Compute trust score between two Nostr pubkeys using social graph distance and profile metrics',
-                inputSchema: {
-                    targetPubkey: z.string()
-                        .length(64, "Target pubkey must be exactly 64 characters (hex)")
-                        .regex(/^[0-9a-fA-F]+$/, "Target pubkey must be a valid hex string"),
-                    sourcePubkey: z.string()
-                        .length(64, "Source pubkey must be exactly 64 characters (hex)")
-                        .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
-                        .optional(),
-                    scheme: z.enum(['default', 'conservative', 'progressive', 'balanced'], {
-                        errorMap: () => ({ message: "Scheme must be one of: default, conservative, progressive, balanced" })
-                    }).optional(),
-                    forceRefresh: z.boolean().optional(),
-                },
-            },
-            async (params) => {
-                return this.handleCalculateTrustScore(params);
-            }
-        );
-
-        // Register health check tool
-        this.server.registerTool(
-            'health_check',
-            {
-                title: 'Health Check',
-                description: 'Check the health status of the Relatr service',
-                inputSchema: {},
-            },
-            async () => {
-                return this.handleHealthCheck();
-            }
-        );
-
-        // Register cache management tool
-        this.server.registerTool(
-            'manage_cache',
-            {
-                title: 'Manage Cache',
-                description: 'Manage cache operations (cleanup, invalidate)',
-                inputSchema: {
-                    operation: z.enum(['cleanup', 'invalidate']),
-                    targetPubkey: z.string().optional(),
-                },
-            },
-            async (params) => {
-                return this.handleCacheManagement(params);
-            }
-        );
-
-        console.log('[RelatrMcpServer] Tools registered successfully');
-    }
-
-    /**
-     * Register server information
-     */
-    private registerServerInfo(): void {
-        // Server info is automatically handled by the MCP SDK
-        // No need to manually register request handlers
-    }
-
-    /**
-     * Handle calculate_trust_score tool requests
-     */
-    private async handleCalculateTrustScore(params: any): Promise<any> {
-        if (this.isShuttingDown) {
-            return {
-                content: [{
-                    type: 'text',
-                    text: 'Error: Server is shutting down'
-                }],
-                isError: true,
-            };
-        }
-
-        try {
-            // Validate input parameters manually since we can't use Zod schema directly
-            if (!params.targetPubkey || typeof params.targetPubkey !== 'string') {
-                throw new Error('targetPubkey is required and must be a string');
-            }
-            
-            if (!/^[0-9a-fA-F]{64}$/.test(params.targetPubkey)) {
-                throw new Error('targetPubkey must be exactly 64 hex characters');
-            }
-            
-            if (params.sourcePubkey && !/^[0-9a-fA-F]{64}$/.test(params.sourcePubkey)) {
-                throw new Error('sourcePubkey must be exactly 64 hex characters');
-            }
-            
-            if (params.scheme && !['default', 'conservative', 'progressive', 'balanced'].includes(params.scheme)) {
-                throw new Error('scheme must be one of: default, conservative, progressive, balanced');
-            }
-            
-            // Prepare request for RelatrService
-            const request: TrustScoreCalculationRequest = {
-                targetPubkey: params.targetPubkey,
-                sourcePubkey: params.sourcePubkey || config.DEFAULT_SOURCE_PUBKEY,
-                scheme: params.scheme || 'default',
-                forceRefresh: params.forceRefresh || false,
-            };
-
-            console.log(`[RelatrMcpServer] Calculating trust score for ${request.targetPubkey.substring(0, 8)}... from ${request.sourcePubkey?.substring(0, 8)}...`);
-
-            // Calculate trust score using RelatrService
-            const result = await this.relatrService.calculateTrustScore(request);
-
-            console.log(`[RelatrMcpServer] Trust score calculated: ${result.score.toFixed(3)} (${result.duration}ms)`);
-
-            return {
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify(result, null, 2)
-                }],
-                structuredContent: result,
-            };
-
-        } catch (error) {
-            console.error('[RelatrMcpServer] Error calculating trust score:', error);
-            
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            
-            return {
-                content: [{
-                    type: 'text',
-                    text: `Error calculating trust score: ${errorMessage}`
-                }],
-                isError: true,
-            };
-        }
-    }
-
-    /**
-     * Handle health check requests
-     */
-    private async handleHealthCheck(): Promise<any> {
-        try {
-            const healthStatus = await this.relatrService.getHealthStatus();
-            
-            return {
-                content: [{
-                    type: 'text',
-                    text: JSON.stringify(healthStatus, null, 2)
-                }],
-                structuredContent: healthStatus,
-            };
-
-        } catch (error) {
-            console.error('[RelatrMcpServer] Error during health check:', error);
-            
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            
-            return {
-                content: [{
-                    type: 'text',
-                    text: `Error during health check: ${errorMessage}`
-                }],
-                isError: true,
-            };
-        }
-    }
-
-    /**
-     * Handle cache management requests
-     */
-    private async handleCacheManagement(params: any): Promise<any> {
-        try {
-            const { operation, targetPubkey } = params;
-            
-            if (operation === 'cleanup') {
-                const cleanedEntries = await this.relatrService.cleanupCaches();
-                
-                return {
-                    content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            success: true,
-                            message: `Cache cleanup completed`,
-                            cleanedEntries,
-                        }, null, 2)
-                    }],
-                    structuredContent: {
-                        success: true,
-                        message: `Cache cleanup completed`,
-                        cleanedEntries,
-                    },
-                };
-            } else if (operation === 'invalidate') {
-                if (!targetPubkey) {
-                    throw new Error('targetPubkey is required for invalidate operation');
-                }
-                
-                await this.relatrService.invalidateCache(targetPubkey);
-                
-                return {
-                    content: [{
-                        type: 'text',
-                        text: JSON.stringify({
-                            success: true,
-                            message: `Cache invalidated for ${targetPubkey.substring(0, 8)}...`,
-                        }, null, 2)
-                    }],
-                    structuredContent: {
-                        success: true,
-                        message: `Cache invalidated for ${targetPubkey.substring(0, 8)}...`,
-                    },
-                };
-            } else {
-                throw new Error(`Unknown operation: ${operation}`);
-            }
-
-        } catch (error) {
-            console.error('[RelatrMcpServer] Error managing cache:', error);
-            
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            
-            return {
-                content: [{
-                    type: 'text',
-                    text: `Error managing cache: ${errorMessage}`
-                }],
-                isError: true,
-            };
-        }
-    }
-
-    /**
-     * Start the MCP server
-     */
-    async start(): Promise<void> {
-        if (!this.isInitialized) {
-            await this.initialize();
-        }
-
-        console.log('[RelatrMcpServer] Starting MCP server on stdio...');
-
-        try {
-            const transport = new StdioServerTransport();
-            await this.server.connect(transport);
-            
-            console.log('[RelatrMcpServer] MCP server started successfully');
-            
-        } catch (error) {
-            console.error('[RelatrMcpServer] Failed to start MCP server:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Gracefully shutdown the server
-     */
-    async shutdown(): Promise<void> {
-        if (this.isShuttingDown) {
-            console.log('[RelatrMcpServer] Already shutting down');
-            return;
-        }
-
-        this.isShuttingDown = true;
-        console.log('[RelatrMcpServer] Shutting down MCP server...');
-
-        try {
-            // Shutdown RelatrService
-            if (this.relatrService) {
-                await this.relatrService.shutdown();
-            }
-
-            console.log('[RelatrMcpServer] MCP server shutdown complete');
-            
-        } catch (error) {
-            console.error('[RelatrMcpServer] Error during shutdown:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Setup signal handlers for graceful shutdown
-     */
-    private setupSignalHandlers(): void {
-        const gracefulShutdown = async (signal: string) => {
-            console.log(`[RelatrMcpServer] Received ${signal}, initiating graceful shutdown...`);
-            
+    } catch (error) {
+        console.error('[Relatr MCP] Failed to start server:', error);
+        
+        // Cleanup on error
+        if (relatrService) {
             try {
-                await this.shutdown();
-                process.exit(0);
-            } catch (error) {
-                console.error('[RelatrMcpServer] Error during graceful shutdown:', error);
-                process.exit(1);
+                await relatrService.shutdown();
+            } catch (shutdownError) {
+                console.error('[Relatr MCP] Error during shutdown cleanup:', shutdownError);
             }
-        };
-
-        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+        }
         
-        // Handle uncaught exceptions
-        process.on('uncaughtException', (error) => {
-            console.error('[RelatrMcpServer] Uncaught exception:', error);
-            gracefulShutdown('uncaughtException');
-        });
-        
-        process.on('unhandledRejection', (reason, promise) => {
-            console.error('[RelatrMcpServer] Unhandled rejection at:', promise, 'reason:', reason);
-            gracefulShutdown('unhandledRejection');
-        });
+        process.exit(1);
     }
 }
 
 /**
- * Main entry point for the MCP server
+ * Register the calculate_trust_score tool
  */
-async function main(): Promise<void> {
-    const server = new RelatrMcpServer();
+function registerCalculateTrustScoreTool(server: McpServer, relatrService: RelatrService): void {
+    // Input schema
+    const inputSchema = z.object({
+        sourcePubkey: z.string()
+            .length(64, "Source pubkey must be exactly 64 characters (hex)")
+            .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
+            .optional(),
+        targetPubkey: z.string()
+            .length(64, "Target pubkey must be exactly 64 characters (hex)")
+            .regex(/^[0-9a-fA-F]+$/, "Target pubkey must be a valid hex string"),
+        weightingScheme: z.enum(['default', 'conservative', 'progressive', 'balanced'])
+            .optional(),
+        customWeights: z.object({
+            distanceWeight: z.number().min(0).max(1).optional(),
+            nip05Valid: z.number().min(0).max(1).optional(),
+            lightningAddress: z.number().min(0).max(1).optional(),
+            eventKind10002: z.number().min(0).max(1).optional(),
+            reciprocity: z.number().min(0).max(1).optional(),
+        }).optional()
+    });
+
+    // Output schema
+    const outputSchema = z.object({
+        trustScore: z.object({
+            sourcePubkey: z.string(),
+            targetPubkey: z.string(),
+            score: z.number().min(0).max(1),
+            components: z.object({
+                distanceWeight: z.number(),
+                nip05Valid: z.number(),
+                lightningAddress: z.number(),
+                eventKind10002: z.number(),
+                reciprocity: z.number(),
+                socialDistance: z.number(),
+                normalizedDistance: z.number(),
+            }),
+            computedAt: z.number(),
+        }),
+        computationTimeMs: z.number(),
+    });
+
+    server.registerTool(
+        'calculate_trust_score',
+        {
+            title: 'Calculate Trust Score',
+            description: 'Compute trust score between two Nostr pubkeys using social graph distance and profile metrics',
+            inputSchema: inputSchema.shape,
+            outputSchema: outputSchema.shape,
+        },
+        async (params) => {
+            const startTime = Date.now();
+            
+            try {
+                // Validate input
+                const validatedParams = inputSchema.parse(params);
+                
+                // Calculate trust score
+                const trustScore = await relatrService.calculateTrustScore(validatedParams);
+                const computationTimeMs = Date.now() - startTime;
+                
+                const result = {
+                    trustScore,
+                    computationTimeMs,
+                };
+                
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }],
+                    structuredContent: {
+                        trustScore: {
+                            sourcePubkey: trustScore.sourcePubkey,
+                            targetPubkey: trustScore.targetPubkey,
+                            score: trustScore.score,
+                            components: {
+                                distanceWeight: trustScore.components.distanceWeight,
+                                nip05Valid: trustScore.components.nip05Valid,
+                                lightningAddress: trustScore.components.lightningAddress,
+                                eventKind10002: trustScore.components.eventKind10002,
+                                reciprocity: trustScore.components.reciprocity,
+                                socialDistance: trustScore.components.socialDistance,
+                                normalizedDistance: trustScore.components.normalizedDistance,
+                            },
+                            computedAt: trustScore.computedAt,
+                        },
+                        computationTimeMs,
+                    },
+                };
+
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                
+                return {
+                    content: [{
+                        type: 'text',
+                        text: `Error calculating trust score: ${errorMessage}`
+                    }],
+                    isError: true,
+                };
+            }
+        }
+    );
+}
+
+/**
+ * Register the health_check tool
+ */
+function registerHealthCheckTool(server: McpServer, relatrService: RelatrService): void {
+    // Input schema (empty)
+    const inputSchema = z.object({});
+
+    // Output schema
+    const outputSchema = z.object({
+        status: z.enum(['healthy', 'unhealthy']),
+        database: z.boolean(),
+        socialGraph: z.boolean(),
+        timestamp: z.number(),
+    });
+
+    server.registerTool(
+        'health_check',
+        {
+            title: 'Health Check',
+            description: 'Check the health status of the Relatr service',
+            inputSchema: inputSchema.shape,
+            outputSchema: outputSchema.shape,
+        },
+        async () => {
+            try {
+                const healthResult = await relatrService.healthCheck();
+                
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(healthResult, null, 2)
+                    }],
+                    structuredContent: {
+                        status: healthResult.status,
+                        database: healthResult.database,
+                        socialGraph: healthResult.socialGraph,
+                        timestamp: healthResult.timestamp,
+                    },
+                };
+
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                
+                return {
+                    content: [{
+                        type: 'text',
+                        text: `Error during health check: ${errorMessage}`
+                    }],
+                    isError: true,
+                };
+            }
+        }
+    );
+}
+
+/**
+ * Register the manage_cache tool
+ */
+function registerManageCacheTool(server: McpServer, relatrService: RelatrService): void {
+    // Input schema
+    const inputSchema = z.object({
+        action: z.enum(['clear', 'cleanup', 'stats']),
+        targetPubkey: z.string()
+            .length(64, "Target pubkey must be exactly 64 characters (hex)")
+            .regex(/^[0-9a-fA-F]+$/, "Target pubkey must be a valid hex string")
+            .optional(),
+    });
+
+    // Output schema
+    const outputSchema = z.object({
+        success: z.boolean(),
+        metricsCleared: z.number().optional(),
+        scoresCleared: z.number().optional(),
+        message: z.string(),
+    });
+
+    server.registerTool(
+        'manage_cache',
+        {
+            title: 'Manage Cache',
+            description: 'Manage cache operations (clear, cleanup, stats)',
+            inputSchema: inputSchema.shape,
+            outputSchema: outputSchema.shape,
+        },
+        async (params) => {
+            try {
+                // Validate input
+                const validatedParams = inputSchema.parse(params);
+                
+                // Execute cache operation
+                const result = await relatrService.manageCache(
+                    validatedParams.action,
+                    validatedParams.targetPubkey
+                );
+                
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify(result, null, 2)
+                    }],
+                    structuredContent: {
+                        success: result.success,
+                        metricsCleared: result.metricsCleared,
+                        scoresCleared: result.scoresCleared,
+                        message: result.message,
+                    },
+                };
+
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                
+                return {
+                    content: [{
+                        type: 'text',
+                        text: `Error managing cache: ${errorMessage}`
+                    }],
+                    isError: true,
+                };
+            }
+        }
+    );
+}
+
+/**
+ * Setup graceful shutdown handlers
+ */
+function setupGracefulShutdown(server: McpServer, relatrService: RelatrService): void {
+    const gracefulShutdown = async (signal: string): Promise<void> => {
+        console.log(`[Relatr MCP] Received ${signal}, shutting down gracefully...`);
+        
+        try {
+            // Shutdown RelatrService
+            await relatrService.shutdown();
+            console.log('[Relatr MCP] Shutdown complete');
+            process.exit(0);
+        } catch (error) {
+            console.error('[Relatr MCP] Error during shutdown:', error);
+            process.exit(1);
+        }
+    };
+
+    // Register signal handlers
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     
-    try {
-        await server.start();
-    } catch (error) {
-        console.error('[RelatrMcpServer] Failed to start server:', error);
-        process.exit(1);
-    }
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+        console.error('[Relatr MCP] Uncaught exception:', error);
+        gracefulShutdown('uncaughtException');
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+        console.error('[Relatr MCP] Unhandled rejection at:', promise, 'reason:', reason);
+        gracefulShutdown('unhandledRejection');
+    });
 }
 
 // Start the server if this file is run directly
 if (import.meta.main) {
-    main().catch((error) => {
-        console.error('[RelatrMcpServer] Fatal error:', error);
+    startMCPServer().catch((error) => {
+        console.error('[Relatr MCP] Fatal error:', error);
         process.exit(1);
     });
 }
-
-export { RelatrMcpServer };

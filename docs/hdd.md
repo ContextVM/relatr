@@ -1,8 +1,8 @@
-High Level Design Document for "Relate" Web of Trust Service on Nostr
+High Level Design Document for "Relatr" Web of Trust Service on Nostr
 
 Overview
 --------
-"Relate" is a decentralized web of trust metric service for open networks like Nostr. It focuses on computing personalized trust ranks by measuring relative trust distances between public keys and combining them with multiple profile and behavioral validations. Implemented using Bun.js and the "nostr-social-graph" TypeScript library, it dynamically builds and queries social graphs from Nostr follow events, with results cached for performance. "Relate" exposes an MCP (Model Context Protocol) server interface for interactive and configurable trust metric computation.
+"Relatr" is a decentralized web of trust metric service for open networks like Nostr. It focuses on computing personalized trust ranks by measuring relative trust distances between public keys and combining them with multiple profile and behavioral validations. Implemented using Bun.js and the "nostr-social-graph" TypeScript library, it dynamically builds and queries social graphs from Nostr follow events, with results cached for performance. "Relatr" exposes an MCP (Model Context Protocol) server interface for interactive and configurable trust metric computation.
 
 Core Components
 ---------------
@@ -77,4 +77,4 @@ Implementation Notes
 
 Summary
 -------
-"Relate" provides a comprehensive, extensible platform for assessing trust in Nostr by combining social graph proximity and profile-based validations. The use of a modular weighted floating point formula incorporating normalized integer distances and binary checks enables intuitive yet robust scoring for personalized trust relationships. Its design includes efficient caching, a versatile MCP API, and adaptability to evolving metrics, positioning it as a foundational tool for decentralized identity and reputation in open social ecosystems.
+"Relatr" provides a comprehensive, extensible platform for assessing trust in Nostr by combining social graph proximity and profile-based validations. The use of a modular weighted floating point formula incorporating normalized integer distances and binary checks enables intuitive yet robust scoring for personalized trust relationships. Its design includes efficient caching, a versatile MCP API, and adaptability to evolving metrics, positioning it as a foundational tool for decentralized identity and reputation in open social ecosystems.
