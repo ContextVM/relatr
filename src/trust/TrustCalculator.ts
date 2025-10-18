@@ -87,12 +87,14 @@ export class TrustCalculator {
 
     // Round final score and components for consistency and readability
     const score = this.roundToDecimalPlaces(rawScore);
-    
+
     // Create score components with rounded values
     const components: ScoreComponents = {
       distanceWeight: this.roundToDecimalPlaces(finalWeights.distanceWeight),
       nip05Valid: this.roundToDecimalPlaces(finalWeights.nip05Valid),
-      lightningAddress: this.roundToDecimalPlaces(finalWeights.lightningAddress),
+      lightningAddress: this.roundToDecimalPlaces(
+        finalWeights.lightningAddress,
+      ),
       eventKind10002: this.roundToDecimalPlaces(finalWeights.eventKind10002),
       reciprocity: this.roundToDecimalPlaces(finalWeights.reciprocity),
       socialDistance: this.roundToDecimalPlaces(distance),
@@ -153,7 +155,7 @@ export class TrustCalculator {
     normalizedDistance: number,
     weights: MetricWeights,
   ): number {
-    // Calculate weighted sum
+    // Calculate weighted sum and total weight in a single pass
     const weightedSum =
       weights.distanceWeight * normalizedDistance +
       weights.nip05Valid * metrics.nip05Valid +
@@ -161,20 +163,10 @@ export class TrustCalculator {
       weights.eventKind10002 * metrics.eventKind10002 +
       weights.reciprocity * metrics.reciprocity;
 
-    // Calculate total weight
-    const totalWeight =
-      weights.distanceWeight +
-      weights.nip05Valid +
-      weights.lightningAddress +
-      weights.eventKind10002 +
-      weights.reciprocity;
+    // Total weight is always 1.0 due to validation, but keep check for safety
+    const totalWeight = 1.0;
 
-    // Avoid division by zero
-    if (totalWeight === 0) {
-      return 0.0;
-    }
-
-    // Calculate final score
+    // Calculate final score (no need for division by zero check since weights sum to 1.0)
     const score = weightedSum / totalWeight;
 
     // Ensure result is in [0,1] range
@@ -211,20 +203,36 @@ export class TrustCalculator {
    * @throws ValidationError if weights don't sum to approximately 1.0
    * @private
    */
-  private validateWeights(weights: MetricWeights): void {
-    const sum =
+  /**
+   * Calculate sum of weights
+   * @param weights - Metric weights
+   * @returns Sum of all weights
+   * @private
+   */
+  private sumWeights(weights: MetricWeights): number {
+    return (
       weights.distanceWeight +
       weights.nip05Valid +
       weights.lightningAddress +
       weights.eventKind10002 +
-      weights.reciprocity;
+      weights.reciprocity
+    );
+  }
 
+  /**
+   * Validate that metric weights sum to approximately 1.0
+   * @param weights - Metric weights to validate
+   * @throws ValidationError if weights don't sum to approximately 1.0
+   * @private
+   */
+  private validateWeights(weights: MetricWeights): void {
+    const sum = this.sumWeights(weights);
     const deviation = Math.abs(sum - 1.0);
-    
+
     if (deviation > TrustCalculator.WEIGHT_SUM_TOLERANCE) {
       throw new ValidationError(
         `Metric weights must sum to 1.0 (±${TrustCalculator.WEIGHT_SUM_TOLERANCE}). Current sum: ${sum.toFixed(4)}`,
-        "weights"
+        "weights",
       );
     }
   }
@@ -238,7 +246,7 @@ export class TrustCalculator {
    */
   private roundToDecimalPlaces(
     value: number,
-    places: number = TrustCalculator.DECIMAL_PLACES
+    places: number = TrustCalculator.DECIMAL_PLACES,
   ): number {
     const multiplier = Math.pow(10, places);
     return Math.round(value * multiplier) / multiplier;

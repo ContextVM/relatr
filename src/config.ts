@@ -117,32 +117,32 @@ export function mergeWeights(
  */
 export const WEIGHTING_PRESETS = {
   default: {
-    distanceWeight: 0.50,  // Social graph proximity
-    nip05Valid: 0.15,      // NIP-05 verification
-    lightningAddress: 0.10, // Lightning address
-    eventKind10002: 0.10,  // Relay list publication
-    reciprocity: 0.15,     // Mutual follow
+    distanceWeight: 0.5, // Social graph proximity
+    nip05Valid: 0.15, // NIP-05 verification
+    lightningAddress: 0.1, // Lightning address
+    eventKind10002: 0.1, // Relay list publication
+    reciprocity: 0.15, // Mutual follow
   },
   social: {
-    distanceWeight: 0.70,  // Prioritize social connections
-    nip05Valid: 0.10,
+    distanceWeight: 0.7, // Prioritize social connections
+    nip05Valid: 0.1,
     lightningAddress: 0.05,
     eventKind10002: 0.05,
-    reciprocity: 0.10,
+    reciprocity: 0.1,
   },
   validation: {
-    distanceWeight: 0.25,  // Prioritize profile validations
+    distanceWeight: 0.25, // Prioritize profile validations
     nip05Valid: 0.25,
-    lightningAddress: 0.20,
+    lightningAddress: 0.2,
     eventKind10002: 0.15,
     reciprocity: 0.15,
   },
   strict: {
-    distanceWeight: 0.40,  // Balanced but demanding
+    distanceWeight: 0.4, // Balanced but demanding
     nip05Valid: 0.25,
     lightningAddress: 0.15,
-    eventKind10002: 0.10,
-    reciprocity: 0.10,
+    eventKind10002: 0.1,
+    reciprocity: 0.1,
   },
 } as const;
 

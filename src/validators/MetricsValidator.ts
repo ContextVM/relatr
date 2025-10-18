@@ -4,6 +4,7 @@ import type { NostrProfile, ProfileMetrics, CacheKey } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import { SimpleCache } from "../database/cache";
+import { withTimeout } from "@/utils";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -117,7 +118,7 @@ export class MetricsValidator {
         nip05Valid: 0.0,
         lightningAddress: 0.0,
         eventKind10002: 0.0,
-        reciprocity: sourcePubkey ? 0.0 : 0.0,
+        reciprocity: 0.0,
         computedAt: now,
         expiresAt,
       };
@@ -147,7 +148,7 @@ export class MetricsValidator {
       }
 
       // Query the NIP-05 address with timeout
-      const profile = await this.withTimeout(
+      const profile = await withTimeout(
         queryProfile(normalizedNip05),
         this.timeoutMs,
       );
@@ -200,7 +201,7 @@ export class MetricsValidator {
 
     try {
       // Query for kind 10002 event with timeout
-      const event = await this.withTimeout(
+      const event = await withTimeout(
         this.pool.get(this.nostrRelays, {
           kinds: [10002],
           authors: [pubkey],
@@ -274,7 +275,7 @@ export class MetricsValidator {
    */
   private async fetchProfile(pubkey: string): Promise<NostrProfile> {
     try {
-      const event = await this.withTimeout(
+      const event = await withTimeout(
         this.pool.get(this.nostrRelays, {
           kinds: [0], // Metadata event
           authors: [pubkey],
@@ -306,29 +307,28 @@ export class MetricsValidator {
   }
 
   /**
-   * Validate NIP-05 format (basic email-like validation)
-   * @param nip05 - NIP-05 identifier
+   * Validate email-like format (used for both NIP-05 and Lightning Address)
+   * @param address - Email-like address
    * @returns True if format is valid
+   * @private
    */
-  private isValidNip05Format(nip05: string): boolean {
-    if (!nip05 || typeof nip05 !== "string") {
+  private isValidEmailFormat(address: string): boolean {
+    if (!address || typeof address !== "string") {
       return false;
     }
 
     // Basic email-like format: local@domain
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(nip05)) {
+    if (!emailRegex.test(address)) {
       return false;
     }
 
-    // Additional checks
-    const parts = nip05.split("@");
+    const parts = address.split("@");
     if (parts.length !== 2) {
       return false;
     }
 
-    const local = parts[0];
-    const domain = parts[1];
+    const [local, domain] = parts;
 
     // Local part validation
     if (!local || local.length === 0 || local.length > 64) {
@@ -360,56 +360,21 @@ export class MetricsValidator {
   }
 
   /**
+   * Validate NIP-05 format (basic email-like validation)
+   * @param nip05 - NIP-05 identifier
+   * @returns True if format is valid
+   */
+  private isValidNip05Format(nip05: string): boolean {
+    return this.isValidEmailFormat(nip05);
+  }
+
+  /**
    * Validate Lightning Address format (user@domain.com)
    * @param address - Lightning address
    * @returns True if format is valid
    */
   private isValidLightningAddressFormat(address: string): boolean {
-    if (!address || typeof address !== "string") {
-      return false;
-    }
-
-    // Basic email-like format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(address)) {
-      return false;
-    }
-
-    // Additional checks
-    const parts = address.split("@");
-    if (parts.length !== 2) {
-      return false;
-    }
-
-    const [local, domain] = parts;
-
-    // Local part validation (username)
-    if (!local || local.length === 0 || local.length > 64) {
-      return false;
-    }
-
-    // Domain part validation
-    if (!domain || domain.length === 0 || domain.length > 253) {
-      return false;
-    }
-
-    // Check for valid domain characters
-    const domainRegex = /^[a-zA-Z0-9.-]+$/;
-    if (!domainRegex.test(domain)) {
-      return false;
-    }
-
-    // Domain shouldn't start or end with dot or dash
-    if (
-      domain.startsWith(".") ||
-      domain.endsWith(".") ||
-      domain.startsWith("-") ||
-      domain.endsWith("-")
-    ) {
-      return false;
-    }
-
-    return true;
+    return this.isValidEmailFormat(address);
   }
 
   /**
@@ -436,26 +401,6 @@ export class MetricsValidator {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * Execute a promise with timeout
-   * @param promise - Promise to execute
-   * @param timeoutMs - Timeout in milliseconds
-   * @returns Promise result
-   */
-  private async withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-  ): Promise<T> {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error(`Operation timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      );
-    });
-
-    return Promise.race([promise, timeoutPromise]);
   }
 
   /**

@@ -12,7 +12,6 @@ export interface RelatrConfig {
   cacheTtlSeconds: number;
   weights: MetricWeights;
 }
-
 export interface MetricWeights {
   distanceWeight: number;
   nip05Valid: number;
@@ -84,6 +83,27 @@ export interface ManageCacheResult {
   success: boolean;
   metricsCleared?: number;
   message: string;
+}
+
+// Search types
+export interface SearchProfilesParams {
+  query: string;
+  limit?: number;
+  sourcePubkey?: string;
+  weightingScheme?: WeightingScheme;
+}
+
+export interface SearchProfileResult {
+  pubkey: string;
+  profile: NostrProfile;
+  trustScore: number;
+  rank: number;
+}
+
+export interface SearchProfilesResult {
+  results: SearchProfileResult[];
+  totalFound: number;
+  searchTimeMs: number;
 }
 
 // Nostr types
@@ -213,11 +233,7 @@ export interface DatabaseConnection {
 export type CacheKey = string | [string, string];
 
 // Weighting scheme type
-export type WeightingScheme =
-  | "default"
-  | "social"
-  | "validation"
-  | "strict";
+export type WeightingScheme = "default" | "social" | "validation" | "strict";
 
 // Health check component type
 export type HealthComponent = "database" | "socialGraph";

@@ -51,30 +51,58 @@ export function closeDatabase(db: Database): void {
 }
 
 /**
- * Clean up expired cache entries
+ * Clean up expired cache entries from all cache tables
  * @param db - Database instance
  * @returns Object with counts of deleted entries
  * @throws DatabaseError if cleanup fails
  */
-export function cleanupExpiredCache(db: Database): { metricsDeleted: number } {
+export function cleanupExpiredCache(db: Database): {
+  metricsDeleted: number;
+  metadataDeleted: number;
+  searchDeleted: number;
+  totalDeleted: number;
+} {
   try {
     const now = Math.floor(Date.now() / 1000);
 
+    // Clean up all cache tables in one transaction
+    db.run("BEGIN TRANSACTION");
+
     // Clean up expired profile metrics
-    const deleteMetricsQuery = db.query(`
-            DELETE FROM profile_metrics
-            WHERE expires_at < $now
-        `);
-    const metricsResult = deleteMetricsQuery.run({ now });
+    const metricsResult = db
+      .query("DELETE FROM profile_metrics WHERE expires_at < ?")
+      .run(now);
     const metricsDeleted = metricsResult.changes || 0;
 
-    // Vacuum to reclaim space
-    db.run("VACUUM");
+    // Clean up expired metadata
+    const metadataResult = db
+      .query("DELETE FROM pubkey_metadata WHERE expires_at < ?")
+      .run(now);
+    const metadataDeleted = metadataResult.changes || 0;
+
+    // Clean up expired search results
+    const searchResult = db
+      .query("DELETE FROM search_results WHERE expires_at < ?")
+      .run(now);
+    const searchDeleted = searchResult.changes || 0;
+
+    db.run("COMMIT");
+
+    const totalDeleted = metricsDeleted + metadataDeleted + searchDeleted;
+
+    // Only vacuum if significant deletions occurred
+    if (totalDeleted > 100) {
+      db.run("VACUUM");
+    }
 
     return {
       metricsDeleted,
+      metadataDeleted,
+      searchDeleted,
+      totalDeleted,
     };
   } catch (error) {
+    db.run("ROLLBACK");
     throw new DatabaseError(
       `Failed to cleanup expired cache: ${error instanceof Error ? error.message : String(error)}`,
       "CLEANUP_CACHE",
@@ -139,42 +167,18 @@ export function isDatabaseHealthy(db: Database): boolean {
 }
 
 /**
- * Backup database to specified path
+ * Backup database to specified path using SQLite's serialization
  * @param db - Database instance
  * @param backupPath - Path for backup file
  * @throws DatabaseError if backup fails
  */
 export function backupDatabase(db: Database, backupPath: string): void {
   try {
-    const backup = new Database(backupPath, { create: true });
-
-    // Use SQLite backup API through serialization
+    // Serialize the current database
     const serialized = db.serialize();
-    const restored = Database.deserialize(serialized);
 
-    // Copy data to backup database
-    const backupQuery = backup.query(
-      "SELECT name FROM sqlite_master WHERE type='table'",
-    );
-    const tables = backupQuery.all() as { name: string }[];
-
-    for (const table of tables) {
-      if (table.name !== "sqlite_sequence") {
-        const data = db.query(`SELECT * FROM ${table.name}`).all();
-        if (data.length > 0) {
-          // Simple approach - recreate table structure and insert data
-          const schema = db
-            .query(`SELECT sql FROM sqlite_master WHERE name='${table.name}'`)
-            .get() as { sql: string };
-          if (schema?.sql) {
-            backup.run(schema.sql);
-            // This is simplified - in production you'd want proper column mapping
-          }
-        }
-      }
-    }
-
-    backup.close();
+    // Write serialized data to file
+    Bun.write(backupPath, serialized);
   } catch (error) {
     throw new DatabaseError(
       `Failed to backup database to ${backupPath}: ${error instanceof Error ? error.message : String(error)}`,

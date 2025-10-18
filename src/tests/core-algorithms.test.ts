@@ -164,7 +164,7 @@ describe("TrustCalculator - Score Calculation", () => {
       nip05Valid: 0.25,
       lightningAddress: 0.1,
       eventKind10002: 0.1,
-      reciprocity: 0.05
+      reciprocity: 0.05,
     }; // Sum = 1.0
     const sourcePubkey = "custom_weights_source";
     const targetPubkey = "custom_weights_target";
@@ -264,9 +264,7 @@ describe("TrustCalculator - Weight Validation", () => {
       },
     };
 
-    expect(() => new TrustCalculator(invalidConfig)).toThrow(
-      /must sum to 1.0/,
-    );
+    expect(() => new TrustCalculator(invalidConfig)).toThrow(/must sum to 1.0/);
   });
 
   test("should reject weights that sum too high", () => {
@@ -281,9 +279,7 @@ describe("TrustCalculator - Weight Validation", () => {
       },
     };
 
-    expect(() => new TrustCalculator(invalidConfig)).toThrow(
-      /must sum to 1.0/,
-    );
+    expect(() => new TrustCalculator(invalidConfig)).toThrow(/must sum to 1.0/);
   });
 
   test("should validate custom weights passed to calculate()", () => {
@@ -305,7 +301,7 @@ describe("TrustCalculator - Weight Validation", () => {
 
   test("should validate weights on config update", () => {
     const calc = new TrustCalculator(testConfig);
-    
+
     const invalidWeights = {
       distanceWeight: 0.3,
       nip05Valid: 0.2,
@@ -323,20 +319,20 @@ describe("TrustCalculator - Weight Validation", () => {
 describe("TrustCalculator - Score Rounding", () => {
   test("should round score to 3 decimal places", () => {
     const result = calculator.calculate("source", "target", testMetrics, 1);
-    
+
     // Check that score has at most 3 decimal places
     const scoreStr = result.score.toString();
-    const decimalPart = scoreStr.split('.')[1] || '';
+    const decimalPart = scoreStr.split(".")[1] || "";
     expect(decimalPart.length).toBeLessThanOrEqual(3);
   });
 
   test("should round component values to 3 decimal places", () => {
     const result = calculator.calculate("source", "target", testMetrics, 2);
-    
+
     // Check all component values
     const checkDecimalPlaces = (value: number) => {
       const valueStr = value.toString();
-      const decimalPart = valueStr.split('.')[1] || '';
+      const decimalPart = valueStr.split(".")[1] || "";
       expect(decimalPart.length).toBeLessThanOrEqual(3);
     };
 
@@ -352,12 +348,17 @@ describe("TrustCalculator - Score Rounding", () => {
   test("should maintain score accuracy after rounding", () => {
     // Use a distance that creates a long decimal
     const distance = 3.7;
-    const result = calculator.calculate("source", "target", testMetrics, distance);
-    
+    const result = calculator.calculate(
+      "source",
+      "target",
+      testMetrics,
+      distance,
+    );
+
     // Score should be between 0 and 1
     expect(result.score).toBeGreaterThanOrEqual(0);
     expect(result.score).toBeLessThanOrEqual(1);
-    
+
     // Rounding should not create values outside valid range
     expect(result.components.normalizedDistance).toBeGreaterThanOrEqual(0);
     expect(result.components.normalizedDistance).toBeLessThanOrEqual(1);

@@ -12,6 +12,7 @@ export class SimpleCache<T> {
   private ttlSeconds: number;
   private getQuery: any;
   private setQuery: any;
+  private setCustomTTLQuery: any;
   private deleteQuery: any;
   private deleteAllQuery: any;
   private cleanupQuery: any;
@@ -40,9 +41,13 @@ export class SimpleCache<T> {
    * @private
    */
   private initializeTable(): void {
-    // Check if this is one of the existing schema tables
-    if (this.tableName === "profile_metrics") {
-      // Table already exists in schema, no need to create it
+    // Known schema tables don't need initialization
+    const knownTables = new Set([
+      "profile_metrics",
+      "pubkey_metadata",
+      "search_results",
+    ]);
+    if (knownTables.has(this.tableName)) {
       return;
     }
 
@@ -102,6 +107,53 @@ export class SimpleCache<T> {
         this.cleanupQuery = this.db.query(
           `DELETE FROM profile_metrics WHERE expires_at <= ?`,
         );
+      } else if (this.tableName === "pubkey_metadata") {
+        this.getQuery = this.db.query(`
+                    SELECT pubkey as key,
+                           json_object(
+                               'pubkey', pubkey,
+                               'name', name,
+                               'display_name', display_name,
+                               'picture', picture,
+                               'nip05', nip05,
+                               'lud16', lud16,
+                               'about', about
+                           ) as value
+                    FROM pubkey_metadata
+                    WHERE pubkey = ? AND expires_at > ?
+                `);
+
+        this.setQuery = this.db.query(`
+                    INSERT OR REPLACE INTO pubkey_metadata
+                    (pubkey, name, display_name, picture, nip05, lud16, about, expires_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `);
+
+        this.deleteQuery = this.db.query(
+          `DELETE FROM pubkey_metadata WHERE pubkey = ?`,
+        );
+        this.deleteAllQuery = this.db.query(`DELETE FROM pubkey_metadata`);
+        this.cleanupQuery = this.db.query(
+          `DELETE FROM pubkey_metadata WHERE expires_at <= ?`,
+        );
+      } else if (this.tableName === "search_results") {
+        this.getQuery = this.db.query(`
+                    SELECT key, pubkeys as value FROM search_results
+                    WHERE key = ? AND expires_at > ?
+                `);
+
+        this.setQuery = this.db.query(`
+                    INSERT OR REPLACE INTO search_results (key, pubkeys, expires_at, created_at)
+                    VALUES (?, ?, ?, ?)
+                `);
+
+        this.deleteQuery = this.db.query(
+          `DELETE FROM search_results WHERE key = ?`,
+        );
+        this.deleteAllQuery = this.db.query(`DELETE FROM search_results`);
+        this.cleanupQuery = this.db.query(
+          `DELETE FROM search_results WHERE expires_at <= ?`,
+        );
       } else {
         // Generic cache table (for future use)
         this.getQuery = this.db.query(`
@@ -121,6 +173,12 @@ export class SimpleCache<T> {
         this.cleanupQuery = this.db.query(
           `DELETE FROM ${this.tableName} WHERE expires_at <= ?`,
         );
+
+        // Prepare custom TTL query for generic tables
+        this.setCustomTTLQuery = this.db.query(`
+          INSERT OR REPLACE INTO ${this.tableName} (key, value, expires_at, created_at)
+          VALUES (?, ?, ?, ?)
+        `);
       }
     } catch (error) {
       throw new CacheError(
@@ -199,8 +257,23 @@ export class SimpleCache<T> {
           now,
           expiresAt,
         );
+      } else if (this.tableName === "pubkey_metadata") {
+        // Handle pubkey metadata with specific schema
+        const profile = value as any;
+        const keyStr = this.keyToString(key);
+        this.setQuery.run(
+          keyStr,
+          profile.name || null,
+          profile.display_name || null,
+          profile.picture || null,
+          profile.nip05 || null,
+          profile.lud16 || null,
+          profile.about || null,
+          expiresAt,
+          now,
+        );
       } else {
-        // Generic cache handling
+        // Generic cache handling (including search_results)
         const keyStr = this.keyToString(key);
         const serializedValue = JSON.stringify(value);
 
@@ -363,17 +436,8 @@ export class SimpleCache<T> {
       // Serialize value
       const serializedValue = JSON.stringify(value);
 
-      const customSetQuery = this.db.query(`
-                INSERT OR REPLACE INTO ${this.tableName} (key, value, expires_at, created_at)
-                VALUES ($key, $value, $expires_at, $created_at)
-            `);
-
-      customSetQuery.run({
-        key: keyStr,
-        value: serializedValue,
-        expires_at: expiresAt,
-        created_at: now,
-      });
+      // Use pre-prepared query for better performance
+      this.setCustomTTLQuery.run(keyStr, serializedValue, expiresAt, now);
     } catch (error) {
       throw new CacheError(
         `Failed to set cache value with custom TTL for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,

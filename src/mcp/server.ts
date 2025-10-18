@@ -30,6 +30,7 @@ export async function startMCPServer(): Promise<void> {
     registerCalculateTrustScoreTool(server, relatrService);
     registerHealthCheckTool(server, relatrService);
     registerManageCacheTool(server, relatrService);
+    registerSearchProfilesTool(server, relatrService);
 
     // Setup graceful shutdown
     setupGracefulShutdown(server, relatrService);
@@ -302,6 +303,127 @@ function registerManageCacheTool(
             {
               type: "text",
               text: `Error managing cache: ${errorMessage}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Register the search_profiles tool
+ */
+function registerSearchProfilesTool(
+  server: McpServer,
+  relatrService: RelatrService,
+): void {
+  // Input schema
+  const inputSchema = z.object({
+    query: z
+      .string()
+      .min(1, "Search query cannot be empty")
+      .max(100, "Search query too long (max 100 characters)"),
+    limit: z
+      .number()
+      .int("Limit must be an integer")
+      .min(1, "Limit must be at least 1")
+      .max(50, "Limit cannot exceed 50")
+      .optional()
+      .default(7)
+      .describe("Maximum number of results to return (default: 20)"),
+    sourcePubkey: z
+      .string()
+      .length(64, "Source pubkey must be exactly 64 characters (hex)")
+      .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
+      .optional()
+      .describe(
+        "Optional source pubkey for trust score calculation (uses default if not provided)",
+      ),
+    weightingScheme: z
+      .enum(["default", "social", "validation", "strict"])
+      .optional()
+      .describe(
+        "Weighting scheme: 'default' (balanced), 'social' (higher social distance), 'validation' (higher profile validation), 'strict' (highest requirements)",
+      ),
+  });
+
+  // Output schema
+  const outputSchema = z.object({
+    results: z.array(
+      z.object({
+        pubkey: z.string(),
+        profile: z.object({
+          pubkey: z.string(),
+          name: z.string().optional(),
+          display_name: z.string().optional(),
+          picture: z.string().optional(),
+          nip05: z.string().optional(),
+          lud16: z.string().optional(),
+          about: z.string().optional(),
+        }),
+        trustScore: z.number().min(0).max(1),
+        rank: z.number().int().min(1),
+      }),
+    ),
+    totalFound: z.number().int().min(0),
+    searchTimeMs: z.number().int().min(0),
+  });
+
+  server.registerTool(
+    "search_profiles",
+    {
+      title: "Search Profiles",
+      description:
+        "Search for Nostr profiles by name/query and return results sorted by trust score. Queries metadata relays and calculates trust scores for each result.",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params) => {
+      try {
+        // Validate input
+        const validatedParams = inputSchema.parse(params);
+
+        // Search profiles
+        const searchResult =
+          await relatrService.searchProfiles(validatedParams);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(searchResult, null, 2),
+            },
+          ],
+          structuredContent: {
+            results: searchResult.results.map((result) => ({
+              pubkey: result.pubkey,
+              profile: {
+                pubkey: result.profile.pubkey,
+                name: result.profile.name,
+                display_name: result.profile.display_name,
+                picture: result.profile.picture,
+                nip05: result.profile.nip05,
+                lud16: result.profile.lud16,
+                about: result.profile.about,
+              },
+              trustScore: result.trustScore,
+              rank: result.rank,
+            })),
+            totalFound: searchResult.totalFound,
+            searchTimeMs: searchResult.searchTimeMs,
+          },
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error searching profiles: ${errorMessage}`,
             },
           ],
           isError: true,
