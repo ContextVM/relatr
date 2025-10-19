@@ -144,6 +144,11 @@ export class TrustCalculator {
       );
     }
 
+    if (distance <= 1) {
+      // Direct connections (distance 0 or 1) get full trust score
+      return 1.0;
+    }
+
     // Special case: distance = 1000 → normalized = 0.0 (unreachable)
     if (distance === 1000) {
       return 0.0;

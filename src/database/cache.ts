@@ -9,7 +9,7 @@ import type { CacheKey, CacheEntry } from "../types";
 export class SimpleCache<T> {
   private db: Database;
   private tableName: string;
-  private ttlSeconds: number;
+  private ttlSeconds?: number;
   private getQuery: any;
   private setQuery: any;
   private setCustomTTLQuery: any;
@@ -23,7 +23,7 @@ export class SimpleCache<T> {
    * @param tableName - Name of the cache table
    * @param ttlSeconds - Time to live for cache entries in seconds
    */
-  constructor(db: Database, tableName: string, ttlSeconds: number) {
+  constructor(db: Database, tableName: string, ttlSeconds?: number) {
     // Use the provided database instance for consistency
     this.db = db;
     this.tableName = tableName;
@@ -216,7 +216,7 @@ export class SimpleCache<T> {
   async set(key: CacheKey, value: T): Promise<void> {
     try {
       const now = Math.floor(Date.now() / 1000);
-      const expiresAt = now + this.ttlSeconds;
+      const expiresAt = now + (this.ttlSeconds ?? 604800); // 1 week TTL by default
 
       // Validate input value
       if (value === null || value === undefined) {

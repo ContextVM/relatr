@@ -4,17 +4,14 @@ import type {
     TrustScore,
     HealthCheckResult,
     ManageCacheResult,
-    MetricWeights,
     ProfileMetrics,
     SearchProfilesParams,
     SearchProfilesResult,
-    SearchProfileResult,
     NostrProfile,
     WeightingScheme
 } from '../types';
 import { 
     RelatrError, 
-    DatabaseError, 
     SocialGraphError, 
     ValidationError,
     CacheError 
@@ -76,7 +73,7 @@ export class RelatrService {
             this.db = initDatabase(this.config.databasePath);
             // Pass the database instance to cache constructor for consistency
             this.metricsCache = new SimpleCache(this.db, 'profile_metrics', this.config.cacheTtlSeconds);
-            this.metadataCache = new SimpleCache(this.db, 'pubkey_metadata', 3600); // 1 hour TTL for metadata
+            this.metadataCache = new SimpleCache(this.db, 'pubkey_metadata');
             this.socialGraph = new SocialGraph(this.config.graphBinaryPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             // Create weight profile manager and initialize with default profile

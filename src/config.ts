@@ -1,8 +1,5 @@
-import type { MetricWeights, RelatrConfig } from "./types";
-import {
-  WeightProfileManager,
-  type WeightProfile,
-} from "./validators/weight-profiles";
+import type { RelatrConfig } from "./types";
+import { WeightProfileManager } from "./validators/weight-profiles";
 
 /**
  * Load configuration from environment variables
@@ -42,7 +39,7 @@ export function loadConfig(): RelatrConfig {
       ? serverRelays.split(",").map((relay) => relay.trim())
       : [],
     decayFactor: parseFloat(process.env.DECAY_FACTOR || "0.1"),
-    cacheTtlSeconds: parseInt(process.env.CACHE_TTL_SECONDS || "3600", 10),
+    cacheTtlSeconds: parseInt(process.env.CACHE_TTL_SECONDS || "604800", 10),
   };
 }
 
