@@ -1,4 +1,8 @@
 import type { MetricWeights, RelatrConfig } from "./types";
+import {
+  WeightProfileManager,
+  type WeightProfile,
+} from "./validators/weight-profiles";
 
 /**
  * Load configuration from environment variables
@@ -39,137 +43,75 @@ export function loadConfig(): RelatrConfig {
       : [],
     decayFactor: parseFloat(process.env.DECAY_FACTOR || "0.1"),
     cacheTtlSeconds: parseInt(process.env.CACHE_TTL_SECONDS || "3600", 10),
-    weights: mergeWeights(getDefaultWeights(), getCustomWeights()),
   };
 }
 
 /**
- * Get default metric weights
- * @returns Default MetricWeights object
+ * Create a WeightProfileManager with all preset profiles registered
+ * @returns WeightProfileManager instance with all presets
  */
-export function getDefaultWeights(): MetricWeights {
-  return {
+export function createWeightProfileManager(): WeightProfileManager {
+  const manager = new WeightProfileManager();
+
+  // Register all preset profiles
+  manager.registerProfile({
+    name: "default",
+    description:
+      "Balanced approach favoring social graph (50%) with moderate profile validation",
     distanceWeight: 0.5,
-    nip05Valid: 0.15,
-    lightningAddress: 0.1,
-    eventKind10002: 0.1,
-    reciprocity: 0.15,
-  };
-}
+    validatorWeights: new Map([
+      ["nip05Valid", 0.15],
+      ["lightningAddress", 0.1],
+      ["eventKind10002", 0.1],
+      ["reciprocity", 0.15],
+      ["isRootNip05", 0.05],
+    ]),
+  });
 
-/**
- * Get custom weights from environment variables
- * @returns Partial MetricWeights object with custom values
- */
-function getCustomWeights(): Partial<MetricWeights> {
-  const customWeights: Partial<MetricWeights> = {};
+  manager.registerProfile({
+    name: "social",
+    description:
+      "Heavy emphasis on social graph proximity (70%), trusts the network",
+    distanceWeight: 0.7,
+    validatorWeights: new Map([
+      ["nip05Valid", 0.1],
+      ["lightningAddress", 0.05],
+      ["eventKind10002", 0.05],
+      ["reciprocity", 0.1],
+      ["isRootNip05", 0.0],
+    ]),
+  });
 
-  const distanceWeight = process.env.WEIGHT_DISTANCE;
-  if (distanceWeight !== undefined) {
-    customWeights.distanceWeight = parseFloat(distanceWeight);
-  }
+  manager.registerProfile({
+    name: "validation",
+    description:
+      "Heavy emphasis on profile validations (60%), trusts verified identities",
+    distanceWeight: 0.25,
+    validatorWeights: new Map([
+      ["nip05Valid", 0.25],
+      ["lightningAddress", 0.2],
+      ["eventKind10002", 0.15],
+      ["reciprocity", 0.15],
+      ["isRootNip05", 0.1],
+    ]),
+  });
 
-  const nip05Valid = process.env.WEIGHT_NIP05;
-  if (nip05Valid !== undefined) {
-    customWeights.nip05Valid = parseFloat(nip05Valid);
-  }
+  manager.registerProfile({
+    name: "strict",
+    description:
+      "Balanced but demanding - requires both strong connections AND strong validations",
+    distanceWeight: 0.4,
+    validatorWeights: new Map([
+      ["nip05Valid", 0.25],
+      ["lightningAddress", 0.15],
+      ["eventKind10002", 0.1],
+      ["reciprocity", 0.1],
+      ["isRootNip05", 0.05],
+    ]),
+  });
 
-  const lightningAddress = process.env.WEIGHT_LIGHTNING;
-  if (lightningAddress !== undefined) {
-    customWeights.lightningAddress = parseFloat(lightningAddress);
-  }
+  // Activate default profile
+  manager.activateProfile("default");
 
-  const eventKind10002 = process.env.WEIGHT_EVENT;
-  if (eventKind10002 !== undefined) {
-    customWeights.eventKind10002 = parseFloat(eventKind10002);
-  }
-
-  const reciprocity = process.env.WEIGHT_RECIPROCITY;
-  if (reciprocity !== undefined) {
-    customWeights.reciprocity = parseFloat(reciprocity);
-  }
-
-  return customWeights;
-}
-
-/**
- * Merge default weights with custom weights
- * @param defaults - Default MetricWeights
- * @param custom - Partial MetricWeights to override defaults
- * @returns Merged MetricWeights object
- */
-export function mergeWeights(
-  defaults: MetricWeights,
-  custom?: Partial<MetricWeights>,
-): MetricWeights {
-  if (!custom) {
-    return defaults;
-  }
-
-  return {
-    distanceWeight: custom.distanceWeight ?? defaults.distanceWeight,
-    nip05Valid: custom.nip05Valid ?? defaults.nip05Valid,
-    lightningAddress: custom.lightningAddress ?? defaults.lightningAddress,
-    eventKind10002: custom.eventKind10002 ?? defaults.eventKind10002,
-    reciprocity: custom.reciprocity ?? defaults.reciprocity,
-  };
-}
-
-/**
- * Weighting presets for different trust calculation strategies
- *
- * All weights are normalized to sum to 1.0 for consistent scoring.
- *
- * - default: Balanced approach favoring social graph (50%) with moderate profile validation
- * - social: Heavy emphasis on social graph proximity (70%), trusts the network
- * - validation: Heavy emphasis on profile validations (60%), trusts verified identities
- * - strict: Requires both strong connections AND strong validations
- */
-export const WEIGHTING_PRESETS = {
-  default: {
-    distanceWeight: 0.5, // Social graph proximity
-    nip05Valid: 0.15, // NIP-05 verification
-    lightningAddress: 0.1, // Lightning address
-    eventKind10002: 0.1, // Relay list publication
-    reciprocity: 0.15, // Mutual follow
-  },
-  social: {
-    distanceWeight: 0.7, // Prioritize social connections
-    nip05Valid: 0.1,
-    lightningAddress: 0.05,
-    eventKind10002: 0.05,
-    reciprocity: 0.1,
-  },
-  validation: {
-    distanceWeight: 0.25, // Prioritize profile validations
-    nip05Valid: 0.25,
-    lightningAddress: 0.2,
-    eventKind10002: 0.15,
-    reciprocity: 0.15,
-  },
-  strict: {
-    distanceWeight: 0.4, // Balanced but demanding
-    nip05Valid: 0.25,
-    lightningAddress: 0.15,
-    eventKind10002: 0.1,
-    reciprocity: 0.1,
-  },
-} as const;
-
-/**
- * Get weighting preset by name
- * @param presetName - Name of the preset ('default', 'social', 'validation', 'strict')
- * @returns MetricWeights for the specified preset
- * @throws Error if preset name is invalid
- */
-export function getWeightingPreset(
-  presetName: keyof typeof WEIGHTING_PRESETS,
-): MetricWeights {
-  const preset = WEIGHTING_PRESETS[presetName];
-  if (!preset) {
-    throw new Error(
-      `Invalid weighting preset: ${presetName}. Valid options: ${Object.keys(WEIGHTING_PRESETS).join(", ")}`,
-    );
-  }
-  return preset;
+  return manager;
 }

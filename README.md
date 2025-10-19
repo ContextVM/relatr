@@ -89,6 +89,54 @@ Where:
 | Lightning   | Binary (0/1) | 0.1    | Lightning Network address         |
 | Event 10002 | Binary (0/1) | 0.1    | Published relay list              |
 | Reciprocity | Binary (0/1) | 0.15   | Mutual follow relationship        |
+| Exact Match | Binary (0/1) | 0.05   | Exact name/NIP-05 match           |
+| Root NIP-05 | Binary (0/1) | 0.05   | Root domain NIP-05 identifier     |
+
+#### Validation System Architecture
+
+Relatr uses a validation system with complete separation of concerns between validation logic and weight management:
+
+**Core Principles:**
+
+- **Pure Validation Plugins**: Contain only validation logic, no weights
+- **Dynamic Weight Profiles**: Separate weight management from plugins
+- **Flexible Configuration**: Switch between weight schemes without recreating plugins
+- **Automatic Normalization**: Handles weight sums that exceed 1.0 gracefully
+
+**Validation Plugins (Pure Logic):**
+
+- `Nip05Plugin`: Validates NIP-05 identifiers
+- `LightningPlugin`: Validates Lightning addresses (lud16/lud06)
+- `EventPlugin`: Checks for kind 10002 relay list events
+- `ReciprocityPlugin`: Validates mutual follow relationships
+- `ExactMatchPlugin`: Checks for exact name/NIP-05 matches
+- `RootNip05Plugin`: Validates root domain NIP-05 identifiers
+
+**Weight Profiles (Scoring Strategy):**
+
+- **default**: Balanced approach (50% social, 50% validation)
+- **social**: Heavy emphasis on social graph (70% social)
+- **validation**: Heavy emphasis on profile validation (75% validation)
+- **strict**: Balanced but demanding requirements
+
+**Adding Custom Validation Plugins:**
+
+```typescript
+import { ValidationPlugin, ValidationContext } from "./src/validators/plugins";
+
+export class CustomPlugin implements ValidationPlugin {
+  name = "customMetric";
+
+  async validate(ctx: ValidationContext): Promise<number> {
+    // Your validation logic here
+    return 1.0; // or 0.0
+  }
+}
+
+// Register with the validator
+validator.registerPlugin(new CustomPlugin());
+// Note: Weights are defined in weight profiles, not in plugins
+```
 
 ## API Usage
 
@@ -144,25 +192,44 @@ await service.manageCache("stats");
 
 ## Configuration Options
 
-### Weighting Schemes
+### Weight Profiles
 
 All trust scores and component values are rounded to 3 decimal places for consistency and readability.
 
-Available presets (all weights sum to 1.0):
+Weight profiles are managed by the `WeightProfileManager` and can be dynamically switched:
 
 - **default**: Balanced approach favoring social graph (50%) with moderate profile validation
-  - Distance: 0.50, NIP-05: 0.15, Lightning: 0.10, Event: 0.10, Reciprocity: 0.15
+  - Distance: 0.50, Validators: NIP-05: 0.15, Lightning: 0.10, Event: 0.10, Reciprocity: 0.15, Exact Match: 0.05, Root NIP-05: 0.05
 
 - **social**: Heavy emphasis on social graph proximity (70%), trusts the network
-  - Distance: 0.70, NIP-05: 0.10, Lightning: 0.05, Event: 0.05, Reciprocity: 0.10
+  - Distance: 0.70, Validators: NIP-05: 0.10, Lightning: 0.05, Event: 0.05, Reciprocity: 0.10, others: 0.00
 
-- **validation**: Heavy emphasis on profile validations (60%), trusts verified identities
-  - Distance: 0.25, NIP-05: 0.25, Lightning: 0.20, Event: 0.15, Reciprocity: 0.15
+- **validation**: Heavy emphasis on profile validations (75%), trusts verified identities
+  - Distance: 0.25, Validators: NIP-05: 0.25, Lightning: 0.20, Event: 0.15, Reciprocity: 0.15, Exact Match: 0.10, Root NIP-05: 0.10
 
 - **strict**: Balanced but demanding, requires both strong connections AND validations
-  - Distance: 0.40, NIP-05: 0.25, Lightning: 0.15, Event: 0.10, Reciprocity: 0.10
+  - Distance: 0.40, Validators: NIP-05: 0.25, Lightning: 0.15, Event: 0.10, Reciprocity: 0.10, Exact Match: 0.05, Root NIP-05: 0.05
 
-- **custom**: Provide your own weight configuration (must sum to 1.0 ±0.01)
+**Automatic Normalization**: If weights in a profile sum to more than 1.0, they are automatically normalized to prevent system errors.
+
+**Creating Custom Weight Profiles:**
+
+```typescript
+import { WeightProfileManager } from "./src/validators/weight-profiles";
+
+const manager = new WeightProfileManager();
+manager.registerProfile({
+  name: "custom",
+  description: "Custom weight profile",
+  distanceWeight: 0.6,
+  validatorWeights: new Map([
+    ["nip05Valid", 0.2],
+    ["lightningAddress", 0.1],
+    ["eventKind10002", 0.1],
+  ]),
+});
+manager.activateProfile("custom");
+```
 
 ### Cache Settings
 
@@ -180,7 +247,10 @@ src/
 ├── database/         # Database connection and caching
 ├── graph/           # Social graph management
 ├── trust/           # Trust score calculation
-├── validators/      # Profile validation logic
+├── validators/      # Profile validation system
+│   ├── plugins.ts   # Validation plugin implementations
+│   ├── weight-profiles.ts # Weight profile management
+│   └── MetricsValidator.ts
 ├── mcp/             # MCP server implementation
 └── types.ts         # TypeScript type definitions
 ```

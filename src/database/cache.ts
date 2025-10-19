@@ -79,10 +79,7 @@ export class SimpleCache<T> {
                     SELECT pubkey as key,
                            json_object(
                                'pubkey', pubkey,
-                               'nip05Valid', nip05_valid,
-                               'lightningAddress', lightning_address,
-                               'eventKind10002', event_kind_10002,
-                               'reciprocity', reciprocity,
+                               'metrics', json(metrics),
                                'computedAt', computed_at,
                                'expiresAt', expires_at
                            ) as value
@@ -92,8 +89,8 @@ export class SimpleCache<T> {
 
         this.setQuery = this.db.query(`
                     INSERT OR REPLACE INTO profile_metrics
-                    (pubkey, nip05_valid, lightning_address, event_kind_10002, reciprocity, computed_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (pubkey, metrics, computed_at, expires_at)
+                    VALUES (?, ?, ?, ?)
                 `);
 
         this.deleteQuery = this.db.query(
@@ -227,18 +224,11 @@ export class SimpleCache<T> {
       }
 
       if (this.tableName === "profile_metrics") {
-        // Handle profile metrics with specific schema
+        // Handle profile metrics with JSON schema
         const metrics = value as any;
         const keyStr = this.keyToString(key);
-        this.setQuery.run(
-          keyStr,
-          metrics.nip05Valid || 0,
-          metrics.lightningAddress || 0,
-          metrics.eventKind10002 || 0,
-          metrics.reciprocity || 0,
-          now,
-          expiresAt,
-        );
+        const serializedMetrics = JSON.stringify(metrics.metrics || {});
+        this.setQuery.run(keyStr, serializedMetrics, now, expiresAt);
       } else if (this.tableName === "pubkey_metadata") {
         // Handle pubkey metadata with FTS table (uniqueness handled by DELETE + INSERT)
         const profile = value as any;

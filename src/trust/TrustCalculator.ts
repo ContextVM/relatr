@@ -6,6 +6,7 @@ import type {
   ScoreComponents,
 } from "../types";
 import { SocialGraphError, ValidationError } from "../types";
+import { WeightProfileManager } from "../validators/weight-profiles";
 
 /**
  * Trust score calculation using distance normalization and weighted metrics
@@ -13,22 +14,32 @@ import { SocialGraphError, ValidationError } from "../types";
  */
 export class TrustCalculator {
   private config: RelatrConfig;
+  private weightProfileManager: WeightProfileManager;
   private static readonly DECIMAL_PLACES = 3;
   private static readonly WEIGHT_SUM_TOLERANCE = 0.01;
 
   /**
    * Create a new TrustCalculator instance
    * @param config - Relatr configuration
+   * @param weightProfileManager - Weight profile manager for dynamic weights (required)
    */
-  constructor(config: RelatrConfig) {
+  constructor(
+    config: RelatrConfig,
+    weightProfileManager: WeightProfileManager,
+  ) {
     if (!config) {
       throw new SocialGraphError("Config is required", "CONSTRUCTOR");
     }
 
-    // Validate that weights sum to approximately 1.0
-    this.validateWeights(config.weights);
+    if (!weightProfileManager) {
+      throw new SocialGraphError(
+        "WeightProfileManager is required",
+        "CONSTRUCTOR",
+      );
+    }
 
     this.config = config;
+    this.weightProfileManager = weightProfileManager;
   }
 
   /**
@@ -37,7 +48,7 @@ export class TrustCalculator {
    * @param targetPubkey - Target public key
    * @param metrics - Profile metrics for target pubkey
    * @param distance - Social distance between source and target
-   * @param weights - Optional custom weights (overrides config weights)
+   * @param weights - Optional custom weights (overrides profile weights)
    * @returns Complete trust score with all components
    * @throws SocialGraphError if calculation fails
    */
@@ -71,8 +82,11 @@ export class TrustCalculator {
       );
     }
 
+    // Get current weights from profile manager
+    const currentWeights = this.weightProfileManager.getAllWeights();
+
     // Merge and validate weights
-    const finalWeights = this.mergeWeights(this.config.weights, weights);
+    const finalWeights = this.mergeWeights(currentWeights, weights);
     this.validateWeights(finalWeights);
 
     // Normalize distance
@@ -91,15 +105,16 @@ export class TrustCalculator {
     // Create score components with rounded values
     const components: ScoreComponents = {
       distanceWeight: this.roundToDecimalPlaces(finalWeights.distanceWeight),
-      nip05Valid: this.roundToDecimalPlaces(finalWeights.nip05Valid),
-      lightningAddress: this.roundToDecimalPlaces(
-        finalWeights.lightningAddress,
-      ),
-      eventKind10002: this.roundToDecimalPlaces(finalWeights.eventKind10002),
-      reciprocity: this.roundToDecimalPlaces(finalWeights.reciprocity),
+      validators: {},
       socialDistance: this.roundToDecimalPlaces(distance),
       normalizedDistance: this.roundToDecimalPlaces(normalizedDistance),
     };
+
+    // Add rounded validator components
+    for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
+      components.validators[metricName] =
+        this.roundToDecimalPlaces(metricValue);
+    }
 
     // Create trust score object
     return {
@@ -155,13 +170,16 @@ export class TrustCalculator {
     normalizedDistance: number,
     weights: MetricWeights,
   ): number {
-    // Calculate weighted sum and total weight in a single pass
-    const weightedSum =
-      weights.distanceWeight * normalizedDistance +
-      weights.nip05Valid * metrics.nip05Valid +
-      weights.lightningAddress * metrics.lightningAddress +
-      weights.eventKind10002 * metrics.eventKind10002 +
-      weights.reciprocity * metrics.reciprocity;
+    // Calculate weighted sum for distance
+    let weightedSum = weights.distanceWeight * normalizedDistance;
+
+    // Calculate weighted sum for all validator metrics
+    for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
+      const weight = weights.validators[metricName];
+      if (weight !== undefined) {
+        weightedSum += weight * metricValue;
+      }
+    }
 
     // Total weight is always 1.0 due to validation, but keep check for safety
     const totalWeight = 1.0;
@@ -175,7 +193,7 @@ export class TrustCalculator {
 
   /**
    * Merge default weights with custom weights
-   * @param defaults - Default weights from config
+   * @param defaults - Default weights from active profile
    * @param custom - Optional custom weights to override defaults
    * @returns Merged weights
    * @private
@@ -190,10 +208,7 @@ export class TrustCalculator {
 
     return {
       distanceWeight: custom.distanceWeight ?? defaults.distanceWeight,
-      nip05Valid: custom.nip05Valid ?? defaults.nip05Valid,
-      lightningAddress: custom.lightningAddress ?? defaults.lightningAddress,
-      eventKind10002: custom.eventKind10002 ?? defaults.eventKind10002,
-      reciprocity: custom.reciprocity ?? defaults.reciprocity,
+      validators: custom.validators ?? defaults.validators,
     };
   }
 
@@ -210,13 +225,14 @@ export class TrustCalculator {
    * @private
    */
   private sumWeights(weights: MetricWeights): number {
-    return (
-      weights.distanceWeight +
-      weights.nip05Valid +
-      weights.lightningAddress +
-      weights.eventKind10002 +
-      weights.reciprocity
-    );
+    let sum = weights.distanceWeight;
+
+    // Sum all validator weights
+    for (const weight of Object.values(weights.validators)) {
+      sum += weight;
+    }
+
+    return sum;
   }
 
   /**
@@ -265,9 +281,14 @@ export class TrustCalculator {
    * @param newConfig - New configuration to use
    */
   updateConfig(newConfig: Partial<RelatrConfig>): void {
-    if (newConfig.weights) {
-      this.validateWeights(newConfig.weights);
-    }
     this.config = { ...this.config, ...newConfig };
+  }
+
+  /**
+   * Get the weight profile manager
+   * @returns WeightProfileManager instance
+   */
+  getWeightProfileManager(): WeightProfileManager {
+    return this.weightProfileManager;
   }
 }

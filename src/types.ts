@@ -12,23 +12,16 @@ export interface RelatrConfig {
   serverRelays: string[];
   decayFactor: number;
   cacheTtlSeconds: number;
-  weights: MetricWeights;
 }
 export interface MetricWeights {
   distanceWeight: number;
-  nip05Valid: number;
-  lightningAddress: number;
-  eventKind10002: number;
-  reciprocity: number;
+  validators: Record<string, number>; // Dynamic validator weights
 }
 
 // Data types
 export interface ProfileMetrics {
   pubkey: string;
-  nip05Valid: number;
-  lightningAddress: number;
-  eventKind10002: number;
-  reciprocity: number;
+  metrics: Record<string, number>; // Flexible metric storage
   computedAt: number;
   expiresAt: number;
 }
@@ -43,10 +36,7 @@ export interface TrustScore {
 
 export interface ScoreComponents {
   distanceWeight: number;
-  nip05Valid: number;
-  lightningAddress: number;
-  eventKind10002: number;
-  reciprocity: number;
+  validators: Record<string, number>;
   socialDistance: number;
   normalizedDistance: number;
 }
@@ -54,10 +44,7 @@ export interface ScoreComponents {
 // Database types
 export interface ProfileMetricsRow {
   pubkey: string;
-  nip05_valid: number;
-  lightning_address: number;
-  event_kind_10002: number;
-  reciprocity: number;
+  metrics: string; // JSON string
   computed_at: number;
   expires_at: number;
 }

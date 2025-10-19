@@ -26,7 +26,7 @@ import { SimpleCache } from '../database/cache';
 import { SocialGraph } from '../graph/SocialGraph';
 import { TrustCalculator } from '../trust/TrustCalculator';
 import { MetricsValidator } from '../validators/MetricsValidator';
-import { getWeightingPreset } from '../config';
+import { createWeightProfileManager } from '../config';
 import { withTimeout } from '@/utils';
 
 export class RelatrService {
@@ -66,10 +66,7 @@ export class RelatrService {
         if (typeof config.cacheTtlSeconds !== 'number' || config.cacheTtlSeconds <= 0) {
             throw new ValidationError('Invalid cacheTtlSeconds', 'cacheTtlSeconds');
         }
-        if (!config.weights || typeof config.weights !== 'object') {
-            throw new ValidationError('weights required', 'weights');
-        }
-        
+
         this.config = { ...config };
     }
 
@@ -82,8 +79,10 @@ export class RelatrService {
             this.metadataCache = new SimpleCache(this.db, 'pubkey_metadata', 3600); // 1 hour TTL for metadata
             this.socialGraph = new SocialGraph(this.config.graphBinaryPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
-            this.trustCalculator = new TrustCalculator(this.config);
-            this.metricsValidator = new MetricsValidator(this.config.nostrRelays, this.socialGraph, this.metricsCache);
+            // Create weight profile manager and initialize with default profile
+            const weightProfileManager = createWeightProfileManager();
+            this.trustCalculator = new TrustCalculator(this.config, weightProfileManager);
+            this.metricsValidator = new MetricsValidator(this.config.nostrRelays, this.socialGraph, this.metricsCache, weightProfileManager);
             this.searchPool = new SimplePool();
             this.initialized = true;
             
@@ -120,10 +119,15 @@ export class RelatrService {
                 : this.socialGraph!.getDistance(targetPubkey);
 
             const metrics = await this.metricsValidator!.validateAll(targetPubkey, effectiveSourcePubkey);
-            const weights = weightingScheme ? getWeightingPreset(weightingScheme) : this.config.weights;
-
+            
+            // Handle weighting scheme - use the new weight profile system
+            if (weightingScheme) {
+                const weightProfileManager = this.metricsValidator!.getWeightProfileManager();
+                weightProfileManager.activateProfile(weightingScheme);
+            }
+            
             const trustScore = this.trustCalculator!.calculate(
-                effectiveSourcePubkey, targetPubkey, metrics, distance, weights
+                effectiveSourcePubkey, targetPubkey, metrics, distance
             );
             return trustScore;
 

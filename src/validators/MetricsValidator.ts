@@ -1,10 +1,19 @@
 import { SimplePool } from "nostr-tools/pool";
-import { queryProfile } from "nostr-tools/nip05";
 import type { NostrProfile, ProfileMetrics, CacheKey } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import { SimpleCache } from "../database/cache";
 import { withTimeout } from "@/utils";
+import { WeightProfileManager } from "./weight-profiles";
+import {
+  ValidationRegistry,
+  type ValidationContext,
+  Nip05Plugin,
+  LightningPlugin,
+  EventPlugin,
+  ReciprocityPlugin,
+  RootNip05Plugin,
+} from "./plugins";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -16,6 +25,8 @@ export class MetricsValidator {
   private graphManager: SocialGraph;
   private cache: SimpleCache<ProfileMetrics>;
   private timeoutMs: number = 10000;
+  private registry: ValidationRegistry;
+  private weightProfileManager: WeightProfileManager;
 
   /**
    * Create a new MetricsValidator instance
@@ -27,6 +38,7 @@ export class MetricsValidator {
     nostrRelays: string[],
     graphManager: SocialGraph,
     cache: SimpleCache<ProfileMetrics>,
+    weightProfileManager?: WeightProfileManager,
   ) {
     if (!nostrRelays || nostrRelays.length === 0) {
       throw new ValidationError("Nostr relays array cannot be empty");
@@ -44,18 +56,34 @@ export class MetricsValidator {
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
     this.cache = cache;
+
+    // Initialize weight profile manager
+    this.weightProfileManager =
+      weightProfileManager || new WeightProfileManager();
+
+    // Create registry with weight profile manager
+    this.registry = new ValidationRegistry(this.weightProfileManager);
+
+    // Register default plugins
+    this.registry.register(new Nip05Plugin());
+    this.registry.register(new LightningPlugin());
+    this.registry.register(new EventPlugin());
+    this.registry.register(new ReciprocityPlugin());
+    this.registry.register(new RootNip05Plugin());
   }
 
   /**
    * Validate all metrics for a pubkey
-   * Checks cache first, then validates all 4 metrics if not cached
+   * Checks cache first, then validates all registered plugins if not cached
    * @param pubkey - Target public key to validate
    * @param sourcePubkey - Optional source pubkey for reciprocity validation
+   * @param searchQuery - Optional search query for context-aware validations
    * @returns Complete ProfileMetrics object with all validation results
    */
   async validateAll(
     pubkey: string,
     sourcePubkey?: string,
+    searchQuery?: string,
   ): Promise<ProfileMetrics> {
     if (!pubkey || typeof pubkey !== "string") {
       throw new ValidationError("Pubkey must be a non-empty string");
@@ -78,47 +106,44 @@ export class MetricsValidator {
     const expiresAt = now + 3600; // 1 hour TTL
 
     try {
-      // Get profile for NIP-05 and Lightning validation
+      // Get profile for validations
       const profile = await this.fetchProfile(pubkey);
 
-      // Run all validations in parallel for better performance
-      const [nip05Score, lightningScore, eventScore, reciprocityScore] =
-        await Promise.all([
-          this.validateNip05(profile.nip05 || "", pubkey),
-          this.validateLightning(profile),
-          this.validateEvent(pubkey),
-          sourcePubkey
-            ? this.validateReciprocity(sourcePubkey, pubkey)
-            : Promise.resolve(0.0),
-        ]);
-
-      const metrics: ProfileMetrics = {
+      // Create validation context
+      const context: ValidationContext = {
         pubkey,
-        nip05Valid: nip05Score,
-        lightningAddress: lightningScore,
-        eventKind10002: eventScore,
-        reciprocity: reciprocityScore,
+        sourcePubkey,
+        searchQuery,
+        profile,
+        graphManager: this.graphManager,
+        pool: this.pool,
+        relays: this.nostrRelays,
+      };
+
+      // Execute all registered plugins
+      const metrics = await this.registry.executeAll(context);
+
+      const result: ProfileMetrics = {
+        pubkey,
+        metrics,
         computedAt: now,
         expiresAt,
       };
 
       // Cache the results
       try {
-        await this.cache.set(cacheKey, metrics);
+        await this.cache.set(cacheKey, result);
       } catch (error) {
         // Cache error shouldn't prevent returning results
         console.warn("Cache write failed:", error);
       }
 
-      return metrics;
+      return result;
     } catch (error) {
       // Return a default metrics object on validation errors
       const errorMetrics: ProfileMetrics = {
         pubkey,
-        nip05Valid: 0.0,
-        lightningAddress: 0.0,
-        eventKind10002: 0.0,
-        reciprocity: 0.0,
+        metrics: {},
         computedAt: now,
         expiresAt,
       };
@@ -128,144 +153,59 @@ export class MetricsValidator {
   }
 
   /**
-   * Validate NIP-05 identifier
-   * @param nip05 - NIP-05 identifier to validate
-   * @param pubkey - Expected public key
-   * @returns Validation score (0.0 or 1.0)
+   * Register a custom validation plugin
+   * @param plugin - Validation plugin to register
    */
-  private async validateNip05(nip05: string, pubkey: string): Promise<number> {
-    if (!nip05 || typeof nip05 !== "string") {
-      return 0.0;
-    }
-
-    try {
-      // Normalize domain-only NIP-05 (e.g., "domain.com" -> "_@domain.com")
-      const normalizedNip05 = nip05.includes("@") ? nip05 : `_@${nip05}`;
-
-      // Basic format validation
-      if (!this.isValidNip05Format(normalizedNip05)) {
-        return 0.0;
-      }
-
-      // Query the NIP-05 address with timeout
-      const profile = await withTimeout(
-        queryProfile(normalizedNip05),
-        this.timeoutMs,
-      );
-
-      if (!profile || !profile.pubkey) {
-        return 0.0;
-      }
-
-      // Verify pubkey matches
-      return profile.pubkey === pubkey ? 1.0 : 0.0;
-    } catch (error) {
-      // Any error results in failed validation
-      return 0.0;
-    }
+  registerPlugin(plugin: any): void {
+    this.registry.register(plugin);
   }
 
   /**
-   * Validate Lightning address (lud16/lud06)
-   * @param profile - Nostr profile containing lightning addresses
-   * @returns Validation score (0.0 or 1.0)
+   * Get all registered validation plugins
+   * @returns Array of registered plugins
    */
-  private async validateLightning(profile: NostrProfile): Promise<number> {
-    if (!profile) {
-      return 0.0;
-    }
-
-    // Check for lud16 (Lightning Address format) first
-    if (profile.lud16) {
-      return this.isValidLightningAddressFormat(profile.lud16) ? 1.0 : 0.0;
-    }
-
-    // Check for lud06 (LNURL format)
-    if ((profile as any).lud06) {
-      return this.isValidLnurlFormat((profile as any).lud06) ? 1.0 : 0.0;
-    }
-
-    // No Lightning address found
-    return 0.0;
+  getRegisteredPlugins(): any[] {
+    return this.registry.getAll();
   }
 
   /**
-   * Validate presence of kind 10002 events (relay list metadata)
-   * @param pubkey - Public key to check
-   * @returns Validation score (0.0 or 1.0)
+   * Get weights for all registered validation plugins
+   * @returns Record of plugin weights
    */
-  private async validateEvent(pubkey: string): Promise<number> {
-    if (!pubkey || typeof pubkey !== "string") {
-      return 0.0;
-    }
-
-    try {
-      // Query for kind 10002 event with timeout
-      const event = await withTimeout(
-        this.pool.get(this.nostrRelays, {
-          kinds: [10002],
-          authors: [pubkey],
-          limit: 1,
-        }),
-        this.timeoutMs,
-      );
-
-      return event ? 1.0 : 0.0;
-    } catch (error) {
-      // Any error results in failed validation
-      return 0.0;
-    }
+  getPluginWeights(): Record<string, number> {
+    return this.registry.getWeights();
   }
 
   /**
-   * Validate reciprocity (mutual follow relationship)
-   * @param sourcePubkey - Source public key
-   * @param targetPubkey - Target public key
-   * @returns Validation score (0.0 or 1.0)
+   * Get the weight profile manager
+   * @returns WeightProfileManager instance
    */
-  private async validateReciprocity(
-    sourcePubkey: string,
-    targetPubkey: string,
-  ): Promise<number> {
-    if (
-      !sourcePubkey ||
-      !targetPubkey ||
-      typeof sourcePubkey !== "string" ||
-      typeof targetPubkey !== "string"
-    ) {
-      return 0.0;
-    }
+  getWeightProfileManager(): WeightProfileManager {
+    return this.weightProfileManager;
+  }
 
-    try {
-      // Ensure social graph is initialized
-      if (!this.graphManager.isInitialized()) {
-        return 0.0;
-      }
+  /**
+   * Activate a weight profile by name
+   * @param profileName - Name of the profile to activate
+   */
+  activateWeightProfile(profileName: string): void {
+    this.weightProfileManager.activateProfile(profileName);
+  }
 
-      // Check if both pubkeys exist in the graph
-      const sourceInGraph = this.graphManager.isInGraph(sourcePubkey);
-      const targetInGraph = this.graphManager.isInGraph(targetPubkey);
+  /**
+   * Get all weights from the active profile
+   * @returns MetricWeights object with all current weights
+   */
+  getWeights(): import("../types").MetricWeights {
+    return this.weightProfileManager.getAllWeights();
+  }
 
-      if (!sourceInGraph || !targetInGraph) {
-        return 0.0;
-      }
-
-      // Check follow relationships
-      const sourceFollowsTarget = this.graphManager.doesFollow(
-        sourcePubkey,
-        targetPubkey,
-      );
-      const targetFollowsSource = this.graphManager.doesFollow(
-        targetPubkey,
-        sourcePubkey,
-      );
-
-      // Reciprocity is only true if both follow each other
-      return sourceFollowsTarget && targetFollowsSource ? 1.0 : 0.0;
-    } catch (error) {
-      // Any error results in failed validation
-      return 0.0;
-    }
+  /**
+   * Validate coverage between registered plugins and active profile weights
+   * @returns Coverage validation result
+   */
+  validateCoverage(): import("./weight-profiles").CoverageValidationResult {
+    return this.registry.validateCoverage();
   }
 
   /**
@@ -303,103 +243,6 @@ export class MetricsValidator {
     } catch (error) {
       // Return minimal profile on error
       return { pubkey };
-    }
-  }
-
-  /**
-   * Validate email-like format (used for both NIP-05 and Lightning Address)
-   * @param address - Email-like address
-   * @returns True if format is valid
-   * @private
-   */
-  private isValidEmailFormat(address: string): boolean {
-    if (!address || typeof address !== "string") {
-      return false;
-    }
-
-    // Basic email-like format: local@domain
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(address)) {
-      return false;
-    }
-
-    const parts = address.split("@");
-    if (parts.length !== 2) {
-      return false;
-    }
-
-    const [local, domain] = parts;
-
-    // Local part validation
-    if (!local || local.length === 0 || local.length > 64) {
-      return false;
-    }
-
-    // Domain part validation
-    if (!domain || domain.length === 0 || domain.length > 253) {
-      return false;
-    }
-
-    // Check for valid domain characters
-    const domainRegex = /^[a-zA-Z0-9.-]+$/;
-    if (!domainRegex.test(domain)) {
-      return false;
-    }
-
-    // Domain shouldn't start or end with dot or dash
-    if (
-      domain.startsWith(".") ||
-      domain.endsWith(".") ||
-      domain.startsWith("-") ||
-      domain.endsWith("-")
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Validate NIP-05 format (basic email-like validation)
-   * @param nip05 - NIP-05 identifier
-   * @returns True if format is valid
-   */
-  private isValidNip05Format(nip05: string): boolean {
-    return this.isValidEmailFormat(nip05);
-  }
-
-  /**
-   * Validate Lightning Address format (user@domain.com)
-   * @param address - Lightning address
-   * @returns True if format is valid
-   */
-  private isValidLightningAddressFormat(address: string): boolean {
-    return this.isValidEmailFormat(address);
-  }
-
-  /**
-   * Validate LNURL format
-   * @param lnurl - LNURL string
-   * @returns True if format is valid
-   */
-  private isValidLnurlFormat(lnurl: string): boolean {
-    if (!lnurl || typeof lnurl !== "string") {
-      return false;
-    }
-
-    // Check if it's a bech32 encoded LNURL
-    if (lnurl.toLowerCase().startsWith("lnurl")) {
-      // Basic bech32 format check
-      const bech32Regex = /^lnurl1[ac-hj-np-z02-9]{8,}$/;
-      return bech32Regex.test(lnurl.toLowerCase());
-    }
-
-    // Check if it's a URL format
-    try {
-      const url = new URL(lnurl);
-      return url.protocol === "https:" || url.protocol === "http:";
-    } catch {
-      return false;
     }
   }
 
