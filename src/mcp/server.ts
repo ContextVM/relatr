@@ -3,6 +3,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { RelatrService } from "../service/RelatrService.js";
 import { loadConfig } from "../config.js";
+import {
+  ApplesauceRelayPool,
+  NostrServerTransport,
+  PrivateKeySigner,
+} from "@contextvm/sdk";
 
 /**
  * Start the MCP server for Relatr v2
@@ -33,13 +38,21 @@ export async function startMCPServer(): Promise<void> {
     registerSearchProfilesTool(server, relatrService);
 
     // Setup graceful shutdown
-    setupGracefulShutdown(server, relatrService);
+    setupGracefulShutdown(relatrService);
 
     // Start the server
-    const transport = new StdioServerTransport();
+    // const transport = new StdioServerTransport();
+    const transport = new NostrServerTransport({
+      signer: new PrivateKeySigner(config.serverSecretKey),
+      relayHandler: new ApplesauceRelayPool(
+        config.serverRelays.length > 0
+          ? config.serverRelays
+          : ["ws://localhost:10547"],
+      ),
+    });
     await server.connect(transport);
 
-    console.log("[Relatr MCP] Server started successfully");
+    console.error("[Relatr MCP] Server started successfully");
   } catch (error) {
     console.error("[Relatr MCP] Failed to start server:", error);
 
@@ -133,12 +146,7 @@ function registerCalculateTrustScoreTool(
         };
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [],
           structuredContent: {
             trustScore: {
               sourcePubkey: trustScore.sourcePubkey,
@@ -207,12 +215,7 @@ function registerHealthCheckTool(
         const healthResult = await relatrService.healthCheck();
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(healthResult, null, 2),
-            },
-          ],
+          content: [],
           structuredContent: {
             status: healthResult.status,
             database: healthResult.database,
@@ -282,12 +285,7 @@ function registerManageCacheTool(
         );
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [],
           structuredContent: {
             success: result.success,
             metricsCleared: result.metricsCleared,
@@ -354,15 +352,6 @@ function registerSearchProfilesTool(
     results: z.array(
       z.object({
         pubkey: z.string(),
-        profile: z.object({
-          pubkey: z.string(),
-          name: z.string().optional(),
-          display_name: z.string().optional(),
-          picture: z.string().optional(),
-          nip05: z.string().optional(),
-          lud16: z.string().optional(),
-          about: z.string().optional(),
-        }),
         trustScore: z.number().min(0).max(1),
         rank: z.number().int().min(1),
       }),
@@ -388,32 +377,19 @@ function registerSearchProfilesTool(
         // Search profiles
         const searchResult =
           await relatrService.searchProfiles(validatedParams);
+        const result = {
+          results: searchResult.results.map((result) => ({
+            pubkey: result.pubkey,
+            trustScore: result.trustScore,
+            rank: result.rank,
+          })),
+          totalFound: searchResult.totalFound,
+          searchTimeMs: searchResult.searchTimeMs,
+        };
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(searchResult, null, 2),
-            },
-          ],
-          structuredContent: {
-            results: searchResult.results.map((result) => ({
-              pubkey: result.pubkey,
-              profile: {
-                pubkey: result.profile.pubkey,
-                name: result.profile.name,
-                display_name: result.profile.display_name,
-                picture: result.profile.picture,
-                nip05: result.profile.nip05,
-                lud16: result.profile.lud16,
-                about: result.profile.about,
-              },
-              trustScore: result.trustScore,
-              rank: result.rank,
-            })),
-            totalFound: searchResult.totalFound,
-            searchTimeMs: searchResult.searchTimeMs,
-          },
+          content: [],
+          structuredContent: result,
         };
       } catch (error) {
         const errorMessage =
@@ -436,17 +412,16 @@ function registerSearchProfilesTool(
 /**
  * Setup graceful shutdown handlers
  */
-function setupGracefulShutdown(
-  server: McpServer,
-  relatrService: RelatrService,
-): void {
+function setupGracefulShutdown(relatrService: RelatrService): void {
   const gracefulShutdown = async (signal: string): Promise<void> => {
-    console.log(`[Relatr MCP] Received ${signal}, shutting down gracefully...`);
+    console.error(
+      `[Relatr MCP] Received ${signal}, shutting down gracefully...`,
+    );
 
     try {
       // Shutdown RelatrService
       await relatrService.shutdown();
-      console.log("[Relatr MCP] Shutdown complete");
+      console.error("[Relatr MCP] Shutdown complete");
       process.exit(0);
     } catch (error) {
       console.error("[Relatr MCP] Error during shutdown:", error);

@@ -59,7 +59,6 @@ export function closeDatabase(db: Database): void {
 export function cleanupExpiredCache(db: Database): {
   metricsDeleted: number;
   metadataDeleted: number;
-  searchDeleted: number;
   totalDeleted: number;
 } {
   try {
@@ -74,21 +73,12 @@ export function cleanupExpiredCache(db: Database): {
       .run(now);
     const metricsDeleted = metricsResult.changes || 0;
 
-    // Clean up expired metadata
-    const metadataResult = db
-      .query("DELETE FROM pubkey_metadata WHERE expires_at < ?")
-      .run(now);
-    const metadataDeleted = metadataResult.changes || 0;
-
-    // Clean up expired search results
-    const searchResult = db
-      .query("DELETE FROM search_results WHERE expires_at < ?")
-      .run(now);
-    const searchDeleted = searchResult.changes || 0;
+    // FTS5 tables don't have expires_at, so skip cleanup for pubkey_metadata
+    const metadataDeleted = 0;
 
     db.run("COMMIT");
 
-    const totalDeleted = metricsDeleted + metadataDeleted + searchDeleted;
+    const totalDeleted = metricsDeleted + metadataDeleted;
 
     // Only vacuum if significant deletions occurred
     if (totalDeleted > 100) {
@@ -98,7 +88,6 @@ export function cleanupExpiredCache(db: Database): {
     return {
       metricsDeleted,
       metadataDeleted,
-      searchDeleted,
       totalDeleted,
     };
   } catch (error) {

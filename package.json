@@ -16,6 +16,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@contextvm/sdk": "^0.1.31",
     "@modelcontextprotocol/sdk": "^1.20.0",
     "nostr-social-graph": "^1.0.33",
     "nostr-tools": "^2.17.0",

@@ -9,6 +9,8 @@ export function loadConfig(): RelatrConfig {
   const defaultSourcePubkey = process.env.DEFAULT_SOURCE_PUBKEY;
   const graphBinaryPath = process.env.GRAPH_BINARY_PATH;
   const nostrRelays = process.env.NOSTR_RELAYS;
+  const serverSecretKey = process.env.SERVER_SECRET_KEY;
+  const serverRelays = process.env.SERVER_RELAYS;
 
   if (!defaultSourcePubkey) {
     throw new Error("DEFAULT_SOURCE_PUBKEY environment variable is required");
@@ -22,11 +24,19 @@ export function loadConfig(): RelatrConfig {
     throw new Error("NOSTR_RELAYS environment variable is required");
   }
 
+  if (!serverSecretKey) {
+    throw new Error("SERVER_SECRET_KEY environment variable is required");
+  }
+
   return {
     defaultSourcePubkey,
     graphBinaryPath,
     databasePath: process.env.DATABASE_PATH || "./data/relatr.db",
     nostrRelays: nostrRelays.split(",").map((relay) => relay.trim()),
+    serverSecretKey,
+    serverRelays: serverRelays
+      ? serverRelays.split(",").map((relay) => relay.trim())
+      : [],
     decayFactor: parseFloat(process.env.DECAY_FACTOR || "0.1"),
     cacheTtlSeconds: parseInt(process.env.CACHE_TTL_SECONDS || "3600", 10),
     weights: mergeWeights(getDefaultWeights(), getCustomWeights()),

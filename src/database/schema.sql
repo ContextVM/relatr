@@ -16,27 +16,21 @@ CREATE TABLE IF NOT EXISTS profile_metrics (
 
 CREATE INDEX IF NOT EXISTS idx_profile_metrics_expires ON profile_metrics(expires_at);
 
--- Table 2: Pubkey Metadata Cache
-CREATE TABLE IF NOT EXISTS pubkey_metadata (
-    pubkey TEXT PRIMARY KEY,
-    name TEXT,
-    display_name TEXT,
-    picture TEXT,
-    nip05 TEXT,
-    lud16 TEXT,
-    about TEXT,
-    expires_at INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+-- Table 2: Pubkey Metadata FTS5 Virtual Table (uniqueness handled in application layer)
+CREATE VIRTUAL TABLE IF NOT EXISTS pubkey_metadata USING fts5(
+    pubkey UNINDEXED,
+    name,
+    display_name,
+    nip05,
+    lud16,
+    about,
+    created_at UNINDEXED,
+    tokenize='porter unicode61'
 );
 
-CREATE INDEX IF NOT EXISTS idx_pubkey_metadata_expires ON pubkey_metadata(expires_at);
-
--- Table 3: Search Results Cache (pubkeys only)
-CREATE TABLE IF NOT EXISTS search_results (
+-- Table 3: Settings
+CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
-    pubkeys TEXT NOT NULL, -- JSON array of pubkeys
-    expires_at INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_search_results_expires ON search_results(expires_at);

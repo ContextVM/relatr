@@ -8,6 +8,8 @@ export interface RelatrConfig {
   graphBinaryPath: string;
   databasePath: string;
   nostrRelays: string[];
+  serverSecretKey: string;
+  serverRelays: string[];
   decayFactor: number;
   cacheTtlSeconds: number;
   weights: MetricWeights;

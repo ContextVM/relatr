@@ -42,11 +42,7 @@ export class SimpleCache<T> {
    */
   private initializeTable(): void {
     // Known schema tables don't need initialization
-    const knownTables = new Set([
-      "profile_metrics",
-      "pubkey_metadata",
-      "search_results",
-    ]);
+    const knownTables = new Set(["profile_metrics", "pubkey_metadata"]);
     if (knownTables.has(this.tableName)) {
       return;
     }
@@ -114,46 +110,24 @@ export class SimpleCache<T> {
                                'pubkey', pubkey,
                                'name', name,
                                'display_name', display_name,
-                               'picture', picture,
                                'nip05', nip05,
                                'lud16', lud16,
                                'about', about
                            ) as value
                     FROM pubkey_metadata
-                    WHERE pubkey = ? AND expires_at > ?
+                    WHERE pubkey = ?
                 `);
 
         this.setQuery = this.db.query(`
-                    INSERT OR REPLACE INTO pubkey_metadata
-                    (pubkey, name, display_name, picture, nip05, lud16, about, expires_at, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 `);
 
         this.deleteQuery = this.db.query(
           `DELETE FROM pubkey_metadata WHERE pubkey = ?`,
         );
         this.deleteAllQuery = this.db.query(`DELETE FROM pubkey_metadata`);
-        this.cleanupQuery = this.db.query(
-          `DELETE FROM pubkey_metadata WHERE expires_at <= ?`,
-        );
-      } else if (this.tableName === "search_results") {
-        this.getQuery = this.db.query(`
-                    SELECT key, pubkeys as value FROM search_results
-                    WHERE key = ? AND expires_at > ?
-                `);
-
-        this.setQuery = this.db.query(`
-                    INSERT OR REPLACE INTO search_results (key, pubkeys, expires_at, created_at)
-                    VALUES (?, ?, ?, ?)
-                `);
-
-        this.deleteQuery = this.db.query(
-          `DELETE FROM search_results WHERE key = ?`,
-        );
-        this.deleteAllQuery = this.db.query(`DELETE FROM search_results`);
-        this.cleanupQuery = this.db.query(
-          `DELETE FROM search_results WHERE expires_at <= ?`,
-        );
+        this.cleanupQuery = this.db.query(`DELETE FROM pubkey_metadata`);
       } else {
         // Generic cache table (for future use)
         this.getQuery = this.db.query(`
@@ -208,12 +182,20 @@ export class SimpleCache<T> {
    */
   async get(key: CacheKey): Promise<T | null> {
     try {
-      const now = Math.floor(Date.now() / 1000);
       let result;
 
       // Profile metrics and generic cache use string keys
       const keyStr = this.keyToString(key);
-      result = this.getQuery.get(keyStr, now) as { value: string } | undefined;
+
+      // FTS5 tables don't have expires_at, so handle differently
+      if (this.tableName === "pubkey_metadata") {
+        result = this.getQuery.get(keyStr) as { value: string } | undefined;
+      } else {
+        const now = Math.floor(Date.now() / 1000);
+        result = this.getQuery.get(keyStr, now) as
+          | { value: string }
+          | undefined;
+      }
 
       if (!result) {
         return null;
@@ -258,22 +240,23 @@ export class SimpleCache<T> {
           expiresAt,
         );
       } else if (this.tableName === "pubkey_metadata") {
-        // Handle pubkey metadata with specific schema
+        // Handle pubkey metadata with FTS table (uniqueness handled by DELETE + INSERT)
         const profile = value as any;
         const keyStr = this.keyToString(key);
+
+        // Delete existing entry first, then insert new one
+        this.deleteQuery.run(keyStr);
         this.setQuery.run(
           keyStr,
           profile.name || null,
           profile.display_name || null,
-          profile.picture || null,
           profile.nip05 || null,
           profile.lud16 || null,
           profile.about || null,
-          expiresAt,
           now,
         );
       } else {
-        // Generic cache handling (including search_results)
+        // Generic cache handling
         const keyStr = this.keyToString(key);
         const serializedValue = JSON.stringify(value);
 
@@ -326,8 +309,16 @@ export class SimpleCache<T> {
    */
   async cleanup(): Promise<number> {
     try {
-      const now = Math.floor(Date.now() / 1000);
-      const result = this.cleanupQuery.run(now);
+      let result;
+
+      // FTS5 tables don't have expires_at, so handle differently
+      if (this.tableName === "pubkey_metadata") {
+        // Don't delete metadata entries
+      } else {
+        const now = Math.floor(Date.now() / 1000);
+        result = this.cleanupQuery.run(now);
+      }
+
       return result.changes || 0;
     } catch (error) {
       throw new CacheError(
@@ -356,12 +347,17 @@ export class SimpleCache<T> {
       );
       const totalResult = totalQuery.get() as { count: number };
 
-      // Count expired entries
-      const expiredQuery = this.db.query(`
-                SELECT COUNT(*) as count FROM ${this.tableName} 
-                WHERE expires_at <= $now
-            `);
-      const expiredResult = expiredQuery.get({ now }) as { count: number };
+      // Count expired entries (FTS5 tables don't have expires_at)
+      let expiredResult;
+      if (this.tableName === "pubkey_metadata") {
+        expiredResult = { count: 0 }; // FTS5 tables don't expire
+      } else {
+        const expiredQuery = this.db.query(`
+                  SELECT COUNT(*) as count FROM ${this.tableName}
+                  WHERE expires_at <= $now
+              `);
+        expiredResult = expiredQuery.get({ now }) as { count: number };
+      }
 
       return {
         totalEntries: totalResult.count,

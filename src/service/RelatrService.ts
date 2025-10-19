@@ -43,9 +43,9 @@ export class RelatrService {
     private metricsValidator: MetricsValidator | null = null;
     private metricsCache: SimpleCache<ProfileMetrics> | null = null;
     private metadataCache: SimpleCache<NostrProfile> | null = null;
-    private searchCache: SimpleCache<string[]> | null = null; // Store array of pubkeys
     private searchPool: SimplePool | null = null;
     private initialized = false;
+    private cleanupInterval: NodeJS.Timeout | null = null;
 
     constructor(config: RelatrConfig) {
         if (!config) throw new RelatrError('Configuration required', 'CONSTRUCTOR');
@@ -80,13 +80,20 @@ export class RelatrService {
             // Pass the database instance to cache constructor for consistency
             this.metricsCache = new SimpleCache(this.db, 'profile_metrics', this.config.cacheTtlSeconds);
             this.metadataCache = new SimpleCache(this.db, 'pubkey_metadata', 3600); // 1 hour TTL for metadata
-            this.searchCache = new SimpleCache(this.db, 'search_results', 300); // 5 minutes TTL for search results
             this.socialGraph = new SocialGraph(this.config.graphBinaryPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             this.trustCalculator = new TrustCalculator(this.config);
             this.metricsValidator = new MetricsValidator(this.config.nostrRelays, this.socialGraph, this.metricsCache);
             this.searchPool = new SimplePool();
             this.initialized = true;
+            
+            // Start background cleanup - run every 30 minutes (1800000 ms)
+            this.startBackgroundCleanup();
+            
+            // Sync contact profiles asynchronously (non-blocking)
+            this.syncContactProfiles().catch(error => {
+                console.error('[RelatrService] Contact sync failed:', error);
+            });
         } catch (error) {
             await this.cleanup();
             throw new RelatrError(`Init failed: ${error instanceof Error ? error.message : String(error)}`, 'INITIALIZE');
@@ -205,149 +212,95 @@ export class RelatrService {
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         const startTime = Date.now();
         
-        // Normalize query for better cache hit rate
-        const normalizedQuery = query.trim().toLowerCase();
-        const cacheKey = `search:${normalizedQuery}:${effectiveSourcePubkey}:${weightingScheme || 'default'}`;
+        // Step 1: Search local FTS5 database
+        const dbPubkeys = this.db!.query(
+            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
+        ).all(query, limit * 2) as { pubkey: string }[]; // Fetch 2x for better filtering
         
-        // Check search cache first
-        try {
-            const cachedPubkeys = await this.searchCache!.get(cacheKey);
-            if (cachedPubkeys && cachedPubkeys.length > 0) {
-                // Reconstruct results from metadata cache
-                const profilesWithScores = await this.calculateProfileScores(
-                    cachedPubkeys,
-                    effectiveSourcePubkey,
-                    weightingScheme
-                );
-
-                // Sort by trust score (descending)
-                profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
-
-                // Add rank and create final results
-                const results: SearchProfileResult[] = profilesWithScores.map((item, index) => ({
-                    pubkey: item.pubkey,
-                    profile: item.profile,
-                    trustScore: item.trustScore,
-                    rank: index + 1
-                }));
-
-                return {
-                    results,
-                    totalFound: cachedPubkeys.length,
-                    searchTimeMs: Date.now() - startTime
-                };
-            }
-        } catch (error) {
-            // Cache miss - continue with search
-        }
-
-        try {
-            // Query search relays with kind 0 filter + search param
-            const searchFilter = {
-                kinds: [0],
-                search: query, // Use original query for search relays
-                limit: limit
-            };
-
-            const events = await withTimeout(
-                this.searchPool!.querySync(RelatrService.SEARCH_RELAYS, searchFilter),
-                10000 // 10 second timeout
-            ) as any[];
-
-            // Extract unique pubkeys and parse profiles
-            const pubkeyMap = new Map<string, NostrProfile>();
-            const pubkeys: string[] = [];
-            
-            for (const event of events) {
-                if (!pubkeyMap.has(event.pubkey)) {
-                    try {
-                        const profile = JSON.parse(event.content) as Partial<NostrProfile>;
-                        const fullProfile: NostrProfile = {
-                            pubkey: event.pubkey,
-                            name: profile.name,
-                            display_name: profile.display_name,
-                            picture: profile.picture,
-                            nip05: profile.nip05,
-                            lud16: profile.lud16,
-                            about: profile.about,
-                        };
-                        
-                        pubkeyMap.set(event.pubkey, fullProfile);
-                        pubkeys.push(event.pubkey);
-                        
-                        // Cache the metadata
-                        try {
-                            await this.metadataCache!.set(event.pubkey, fullProfile);
-                        } catch (error) {
-                            // Metadata cache failed - continue
-                        }
-                    } catch (error) {
-                        // Skip invalid profile content but still include pubkey
-                        const minimalProfile: NostrProfile = { pubkey: event.pubkey };
-                        pubkeyMap.set(event.pubkey, minimalProfile);
-                        pubkeys.push(event.pubkey);
-                    }
-                }
-            }
-
-            // Calculate trust scores in parallel - sanitize profiles to remove nulls
-            const profilesWithScores = await Promise.all(
-                Array.from(pubkeyMap.entries()).map(async ([pubkey, profile]) => {
-                    try {
-                        const trustScore = await this.calculateTrustScore({
-                            sourcePubkey: effectiveSourcePubkey,
-                            targetPubkey: pubkey,
-                            weightingScheme
-                        });
-                        return {
-                            pubkey,
-                            profile: this.sanitizeProfile(profile),
-                            trustScore: trustScore.score
-                        };
-                    } catch (error) {
-                        return {
-                            pubkey,
-                            profile: this.sanitizeProfile(profile),
-                            trustScore: 0
-                        };
-                    }
-                })
+        const localPubkeys = dbPubkeys.map(row => row.pubkey);
+        
+        // Step 2: If we have enough results, calculate trust scores and return
+        if (localPubkeys.length >= limit) {
+            const profilesWithScores = await this.calculateProfileScores(
+                localPubkeys,
+                effectiveSourcePubkey,
+                weightingScheme
             );
-
-            // Sort by trust score (descending)
+            
             profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
-
-            // Add rank and create final results
-            const results: SearchProfileResult[] = profilesWithScores.map((item, index) => ({
+            
+            const results = profilesWithScores.slice(0, limit).map((item, index) => ({
                 pubkey: item.pubkey,
                 profile: item.profile,
                 trustScore: item.trustScore,
                 rank: index + 1
             }));
-
-            const searchTimeMs = Date.now() - startTime;
-
-            const searchResult: SearchProfilesResult = {
+            
+            return {
                 results,
-                totalFound: events.length,
-                searchTimeMs
+                totalFound: localPubkeys.length,
+                searchTimeMs: Date.now() - startTime
             };
-
-            // Cache the pubkeys for this search
-            try {
-                await this.searchCache!.set(cacheKey, pubkeys);
-            } catch (error) {
-                // Cache set failed - continue and return results
-            }
-
-            return searchResult;
-
-        } catch (error) {
-            if (error instanceof RelatrError || error instanceof ValidationError) {
-                throw error;
-            }
-            throw new RelatrError(`Search failed: ${error instanceof Error ? error.message : String(error)}`, 'SEARCH');
         }
+        
+        // Step 3: Fallback to Nostr for remaining results
+        const remaining = limit - localPubkeys.length;
+        const searchFilter = {
+            kinds: [0],
+            search: query,
+            limit: remaining
+        };
+        
+        const events = await withTimeout(
+            this.searchPool!.querySync(RelatrService.SEARCH_RELAYS, searchFilter),
+            10000
+        );
+        
+        // Extract unique pubkeys not already in local results
+        const nostrPubkeys: string[] = [];
+        for (const event of events) {
+            if (!localPubkeys.includes(event.pubkey)) {
+                nostrPubkeys.push(event.pubkey);
+                
+                // Cache the profile for future use
+                try {
+                    const profile = JSON.parse(event.content);
+                    await this.metadataCache!.set(event.pubkey, {
+                        pubkey: event.pubkey,
+                        name: profile.name,
+                        display_name: profile.display_name,
+                        nip05: profile.nip05,
+                        lud16: profile.lud16,
+                        about: profile.about
+                    });
+                } catch (error) {
+                    // Skip invalid profiles
+                }
+            }
+        }
+        
+        // Step 4: Merge and calculate trust scores
+        const allPubkeys = [...localPubkeys, ...nostrPubkeys];
+        const profilesWithScores = await this.calculateProfileScores(
+            allPubkeys,
+            effectiveSourcePubkey,
+            weightingScheme
+        );
+        
+        profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
+        
+        const results = profilesWithScores.slice(0, limit).map((item, index) => ({
+            pubkey: item.pubkey,
+            profile: item.profile,
+            trustScore: item.trustScore,
+            rank: index + 1
+        }));
+        
+        return {
+            results,
+            totalFound: allPubkeys.length,
+            searchTimeMs: Date.now() - startTime
+        };
     }
 
     async healthCheck(): Promise<HealthCheckResult> {
@@ -416,6 +369,10 @@ export class RelatrService {
         if (this.searchPool) {
             this.searchPool.close(RelatrService.SEARCH_RELAYS);
         }
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+        }
         if (this.db) closeDatabase(this.db);
         
         this.db = null;
@@ -424,9 +381,135 @@ export class RelatrService {
         this.metricsValidator = null;
         this.metricsCache = null;
         this.metadataCache = null;
-        this.searchCache = null;
         this.searchPool = null;
         this.initialized = false;
+    }
+
+    /**
+     * Start background cache cleanup process
+     * @private
+     */
+    private startBackgroundCleanup(): void {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+        }
+        
+        // Run cleanup every 30 minutes (1800000 ms)
+        this.cleanupInterval = setInterval(async () => {
+            try {
+                if (this.db && this.initialized) {
+                    const result = cleanupExpiredCache(this.db);
+                    // Only log if entries were actually deleted
+                    if (result.totalDeleted > 0) {
+                        console.log(`[RelatrService] Background cleanup completed: ${result.totalDeleted} expired entries removed`);
+                    }
+                }
+            } catch (error) {
+                // Log error but don't crash the service
+                console.error('[RelatrService] Background cleanup failed:', error instanceof Error ? error.message : String(error));
+            }
+        }, 60 * 60 * 1000 * 7); // 1 hour
+    }
+
+    /**
+     * Sync contact profiles from source pubkey's contact network
+     * @private
+     */
+    private async syncContactProfiles(): Promise<void> {
+        if (!this.searchPool || !this.db) return;
+        
+        const startTime = Date.now();
+        const syncKey = `contact_sync:${this.config.defaultSourcePubkey}`;
+        const syncInterval = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        
+        try {
+            // Check if we've synced recently
+            const lastSyncResult = this.db.query(
+                'SELECT value FROM settings WHERE key = ?'
+            ).get(syncKey) as { value: string } | undefined;
+            
+            if (lastSyncResult) {
+                const lastSyncTime = parseInt(lastSyncResult.value);
+                const timeSinceLastSync = Date.now() - lastSyncTime;
+                
+                if (timeSinceLastSync < syncInterval) {
+                    const hoursSinceLastSync = Math.floor(timeSinceLastSync / (60 * 60 * 1000));
+                    console.log(`[RelatrService] Skipping contact sync - last sync was ${hoursSinceLastSync} hours ago`);
+                    return;
+                }
+            }
+            
+            console.log('[RelatrService] Starting contact profile sync...');
+            
+            // 1. Fetch kind 3 (contact list) for source pubkey
+            const contactEvents = await this.searchPool.querySync(
+                this.config.nostrRelays,
+                { kinds: [3], authors: [this.config.defaultSourcePubkey], limit: 1 }
+            );
+            
+            if (!contactEvents.length) {
+                console.log('[RelatrService] No contact list found for source pubkey');
+                return;
+            }
+            
+            // 2. Parse contacts (p tags)
+            const contactPubkeys: string[] = [];
+            if (contactEvents[0]?.tags) {
+                for (const tag of contactEvents[0].tags) {
+                    if (tag && tag[0] === 'p' && tag[1]) {
+                        contactPubkeys.push(tag[1]);
+                    }
+                }
+            }
+            
+            if (!contactPubkeys.length) {
+                console.log('[RelatrService] No contacts found in contact list');
+                return;
+            }
+            
+            console.log(`[RelatrService] Found ${contactPubkeys.length} contacts, syncing profiles...`);
+            
+            // 3. Fetch metadata in batches
+            const batchSize = 100;
+            let synced = 0;
+            
+            for (let i = 0; i < contactPubkeys.length; i += batchSize) {
+                const batch = contactPubkeys.slice(i, i + batchSize);
+                const events = await this.searchPool.querySync(
+                    this.config.nostrRelays,
+                    { kinds: [0], authors: batch as string[] }
+                );
+                
+                // 4. Insert into FTS5 table via metadataCache
+                for (const event of events) {
+                    try {
+                        const profile = JSON.parse(event.content);
+                        await this.metadataCache!.set(event.pubkey, {
+                            pubkey: event.pubkey,
+                            name: profile.name,
+                            display_name: profile.display_name,
+                            nip05: profile.nip05,
+                            lud16: profile.lud16,
+                            about: profile.about
+                        });
+                        synced++;
+                    } catch (error) {
+                        // Skip invalid profiles
+                    }
+                }
+            }
+            
+            // Update the last sync time
+            const now = Date.now();
+            this.db.run(
+                'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+                [syncKey, now.toString(), now]
+            );
+            
+            console.log(`[RelatrService] Synced ${synced} contact profiles in ${Date.now() - startTime}ms`);
+        } catch (error) {
+            console.error('[RelatrService] Contact sync error:', error instanceof Error ? error.message : String(error));
+        }
     }
 
     getConfig(): RelatrConfig { return { ...this.config }; }
