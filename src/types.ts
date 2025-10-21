@@ -74,11 +74,25 @@ export interface ManageCacheResult {
   message: string;
 }
 
+
+export interface FetchNostrEventsParams {
+  sourcePubkey?: string;
+  hops?: number;
+  kind: 0 | 3;
+}
+
+export interface FetchNostrEventsResult {
+  success: boolean;
+  eventsFetched: number;
+  message: string;
+  pubkeys?: string[];
+}
 // Search types
 export interface SearchProfilesParams {
   query: string;
   limit?: number;
   sourcePubkey?: string;
+  extendToNostr: boolean;
   weightingScheme?: WeightingScheme;
 }
 

@@ -13,13 +13,15 @@
     "prettier": "^3.6.2"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.1.31",
-    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@contextvm/sdk": "^0.1.34",
+    "@modelcontextprotocol/sdk": "^1.20.1",
+    "applesauce-core": "^4.1.0",
+    "applesauce-relay": "^4.1.0",
     "nostr-social-graph": "^1.0.33",
     "nostr-tools": "^2.17.0",
-    "zod": "3"
+    "zod": "^3.25.76"
   }
 }

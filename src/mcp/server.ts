@@ -10,7 +10,7 @@ import {
 } from "@contextvm/sdk";
 
 /**
- * Start the MCP server for Relatr v2
+ * Start the MCP server for Relatr
  *
  * This function initializes the RelatrService, creates and configures the MCP server,
  * registers the required tools, and handles graceful shutdown.
@@ -36,6 +36,8 @@ export async function startMCPServer(): Promise<void> {
     registerHealthCheckTool(server, relatrService);
     registerManageCacheTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
+    registerFetchContactsTool(server, relatrService);
+    registerFetchMetadataTool(server, relatrService);
 
     // Setup graceful shutdown
     setupGracefulShutdown(relatrService);
@@ -345,8 +347,15 @@ function registerSearchProfilesTool(
       .describe(
         "Weighting scheme: 'default' (balanced), 'social' (higher social distance), 'validation' (higher profile validation), 'strict' (highest requirements)",
       ),
+    extendToNostr: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Whether to extend the search to Nostr to fill remaining results. Defaults to false. If false, Nostr will only be queried when local DB returns zero results.",
+      ),
   });
-
+  
   // Output schema
   const outputSchema = z.object({
     results: z.array(
@@ -359,7 +368,7 @@ function registerSearchProfilesTool(
     totalFound: z.number().int().min(0),
     searchTimeMs: z.number().int().min(0),
   });
-
+  
   server.registerTool(
     "search_profiles",
     {
@@ -373,8 +382,8 @@ function registerSearchProfilesTool(
       try {
         // Validate input
         const validatedParams = inputSchema.parse(params);
-
-        // Search profiles
+  
+        // Search profiles - pass through the extendToNostr flag (if provided)
         const searchResult =
           await relatrService.searchProfiles(validatedParams);
         const result = {
@@ -386,7 +395,7 @@ function registerSearchProfilesTool(
           totalFound: searchResult.totalFound,
           searchTimeMs: searchResult.searchTimeMs,
         };
-
+  
         return {
           content: [],
           structuredContent: result,
@@ -394,7 +403,7 @@ function registerSearchProfilesTool(
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
-
+  
         return {
           content: [
             {
@@ -402,6 +411,139 @@ function registerSearchProfilesTool(
               text: `Error searching profiles: ${errorMessage}`,
             },
           ],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Register the fetch_contacts tool
+ */
+function registerFetchContactsTool(
+  server: McpServer,
+  relatrService: RelatrService,
+): void {
+  const inputSchema = z.object({
+    sourcePubkey: z
+      .string()
+      .length(64, "Source pubkey must be exactly 64 characters (hex)")
+      .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
+      .optional()
+      .describe("Optional source pubkey (uses default if not provided)"),
+    hops: z
+      .number()
+      .int("Hops must be an integer")
+      .min(0, "Hops cannot be negative")
+      .max(5, "Hops cannot exceed 5")
+      .optional()
+      .default(1)
+      .describe("Number of hops to traverse in the social graph (0-5, default: 1)"),
+  });
+
+  const outputSchema = z.object({
+    success: z.boolean(),
+    eventsFetched: z.number(),
+    message: z.string(),
+  });
+
+  server.registerTool(
+    "fetch_contacts",
+    {
+      title: "Fetch Nostr Contacts",
+      description:
+        "Fetches kind 3 events (contact lists) from Nostr for a given pubkey and its social graph hops to build the social graph.",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params) => {
+      try {
+        const validatedParams = inputSchema.parse(params);
+        const result = await relatrService.fetchNostrEvents({
+          ...validatedParams,
+          kind: 3,
+        });
+        return {
+          content: [],
+          structuredContent: {
+            success: result.success,
+            eventsFetched: result.eventsFetched,
+            message: result.message,
+          },
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        return {
+          content: [{ type: "text", text: `Error fetching contacts: ${errorMessage}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Register the fetch_metadata tool
+ */
+function registerFetchMetadataTool(
+  server: McpServer,
+  relatrService: RelatrService,
+): void {
+  const inputSchema = z.object({
+    sourcePubkey: z
+      .string()
+      .length(64, "Source pubkey must be exactly 64 characters (hex)")
+      .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
+      .optional()
+      .describe("Optional source pubkey (uses default if not provided)"),
+    hops: z
+      .number()
+      .int("Hops must be an integer")
+      .min(0, "Hops cannot be negative")
+      .max(5, "Hops cannot exceed 5")
+      .optional()
+      .default(1)
+      .describe("Number of hops to traverse in the social graph (0-5, default: 1)"),
+  });
+
+  const outputSchema = z.object({
+    success: z.boolean(),
+    eventsFetched: z.number(),
+    message: z.string(),
+  });
+
+  server.registerTool(
+    "fetch_metadata",
+    {
+      title: "Fetch Nostr Metadata",
+      description:
+        "Fetches kind 0 events (profile metadata) from Nostr for a given pubkey and its social graph hops, populating the local cache.",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params) => {
+      try {
+        console.error("FETCHING METADATA");
+        const validatedParams = inputSchema.parse(params);
+        const result = await relatrService.fetchNostrEvents({
+          ...validatedParams,
+          kind: 0,
+        });
+        return {
+          content: [],
+          structuredContent: {
+            success: result.success,
+            eventsFetched: result.eventsFetched,
+            message: result.message,
+          },
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        return {
+          content: [{ type: "text", text: `Error fetching metadata: ${errorMessage}` }],
           isError: true,
         };
       }

@@ -8,15 +8,19 @@ import type {
     SearchProfilesParams,
     SearchProfilesResult,
     NostrProfile,
-    WeightingScheme
+    WeightingScheme,
+    FetchNostrEventsParams,
+    FetchNostrEventsResult,
 } from '../types';
-import { 
-    RelatrError, 
-    SocialGraphError, 
+import {
+    RelatrError,
+    SocialGraphError,
     ValidationError,
-    CacheError 
+    CacheError
 } from '../types';
 import { SimplePool } from 'nostr-tools/pool';
+import { RelayPool } from 'applesauce-relay';
+import { EventStore } from 'applesauce-core';
 import { Database } from 'bun:sqlite';
 import { initDatabase, closeDatabase, cleanupExpiredCache, isDatabaseHealthy } from '../database/connection';
 import { SimpleCache } from '../database/cache';
@@ -25,12 +29,13 @@ import { TrustCalculator } from '../trust/TrustCalculator';
 import { MetricsValidator } from '../validators/MetricsValidator';
 import { createWeightProfileManager } from '../config';
 import { withTimeout } from '@/utils';
+import type { Filter, NostrEvent } from 'nostr-tools';
 
 export class RelatrService {
+    private static readonly BATCH_SIZE = 500;
     private static readonly SEARCH_RELAYS = [
         'wss://relay.nostr.band',
         'wss://search.nos.today',
-        'wss://nos.lol'
     ];
 
     private config: RelatrConfig;
@@ -40,6 +45,7 @@ export class RelatrService {
     private metricsValidator: MetricsValidator | null = null;
     private metricsCache: SimpleCache<ProfileMetrics> | null = null;
     private metadataCache: SimpleCache<NostrProfile> | null = null;
+    private pool: RelayPool | null = null;
     private searchPool: SimplePool | null = null;
     private initialized = false;
     private cleanupInterval: NodeJS.Timeout | null = null;
@@ -80,6 +86,7 @@ export class RelatrService {
             const weightProfileManager = createWeightProfileManager();
             this.trustCalculator = new TrustCalculator(this.config, weightProfileManager);
             this.metricsValidator = new MetricsValidator(this.config.nostrRelays, this.socialGraph, this.metricsCache, weightProfileManager);
+            this.pool = new RelayPool();
             this.searchPool = new SimplePool();
             this.initialized = true;
             
@@ -203,100 +210,100 @@ export class RelatrService {
 
     async searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
-
-        const { query, limit = 7, sourcePubkey, weightingScheme } = params;
-        
+    
+        const { query, limit = 7, sourcePubkey, weightingScheme, extendToNostr } = params;
+    
         if (!query || typeof query !== 'string') {
             throw new ValidationError('Invalid search query', 'query');
         }
-
+    
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         const startTime = Date.now();
-        
-        // Step 1: Search local FTS5 database
+    
+        // Step 1: Search local FTS5 database for an initial set of candidates.
         const dbPubkeys = this.db!.query(
             `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
-        ).all(query, limit * 2) as { pubkey: string }[]; // Fetch 2x for better filtering
-        
+        ).all(query, limit * 3) as { pubkey: string }[]; // Fetch 3x for a larger candidate pool
+    
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
-        
-        // Step 2: If we have enough results, calculate trust scores and return
-        if (localPubkeys.length >= limit) {
+    
+        // Fast path: If we have enough local results and are not extending the search, process them directly.
+        if (localPubkeys.length >= limit && !extendToNostr) {
             const profilesWithScores = await this.calculateProfileScores(
                 localPubkeys,
                 effectiveSourcePubkey,
                 weightingScheme
             );
-            
+    
             profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
-            
+    
             const results = profilesWithScores.slice(0, limit).map((item, index) => ({
                 pubkey: item.pubkey,
                 profile: item.profile,
                 trustScore: item.trustScore,
                 rank: index + 1
             }));
-            
+    
             return {
                 results,
                 totalFound: localPubkeys.length,
                 searchTimeMs: Date.now() - startTime
             };
         }
-        
-        // Step 3: Fallback to Nostr for remaining results
-        const remaining = limit - localPubkeys.length;
-        const searchFilter = {
-            kinds: [0],
-            search: query,
-            limit: remaining
-        };
-        
-        const events = await withTimeout(
-            this.searchPool!.querySync(RelatrService.SEARCH_RELAYS, searchFilter),
-            10000
-        );
-        
-        // Extract unique pubkeys not already in local results
+    
+        // Step 2: If needed, query Nostr relays to supplement or extend the search.
         const nostrPubkeys: string[] = [];
-        for (const event of events) {
-            if (!localPubkeys.includes(event.pubkey)) {
-                nostrPubkeys.push(event.pubkey);
-                
-                // Cache the profile for future use
-                try {
-                    const profile = JSON.parse(event.content);
-                    await this.metadataCache!.set(event.pubkey, {
-                        pubkey: event.pubkey,
-                        name: profile.name,
-                        display_name: profile.display_name,
-                        nip05: profile.nip05,
-                        lud16: profile.lud16,
-                        about: profile.about
-                    });
-                } catch (error) {
-                    // Skip invalid profiles
+        const remaining = limit - localPubkeys.length;
+        const shouldQueryNostr = extendToNostr || localPubkeys.length === 0;
+    
+        if (shouldQueryNostr && (extendToNostr || remaining > 0)) {
+            const nostrLimit = extendToNostr ? Math.max(limit, remaining) : remaining;
+            console.debug(`[RelatrService] searchProfiles: querying nostr for up to ${nostrLimit} results`);
+    
+            const searchFilter = { kinds: [0], search: query, limit: nostrLimit };
+    
+            try {
+                const nostrEvents = this.searchPool
+                    ? await withTimeout(
+                        this.searchPool.querySync(RelatrService.SEARCH_RELAYS, searchFilter),
+                        3000 // 3-second timeout for remote search
+                    )
+                    : [];
+    
+                for (const event of nostrEvents) {
+                    if (!localPubkeys.includes(event.pubkey)) {
+                        nostrPubkeys.push(event.pubkey);
+                        // Asynchronously cache profile metadata without awaiting.
+                        const profile = JSON.parse(event.content);
+                        this.metadataCache!.set(event.pubkey, { pubkey: event.pubkey, ...profile }).catch(err => {
+                            console.warn(`[RelatrService] Failed to cache profile for ${event.pubkey}:`, err);
+                        });
+                    }
                 }
+            } catch (error) {
+                console.error(`[RelatrService] Remote search failed or timed out:`, error);
             }
         }
-        
-        // Step 4: Merge and calculate trust scores
-        const allPubkeys = [...localPubkeys, ...nostrPubkeys];
+    
+        // Step 3: Merge local and Nostr results, then calculate scores.
+        const allPubkeys = Array.from(new Set([...localPubkeys, ...nostrPubkeys]));
+    
         const profilesWithScores = await this.calculateProfileScores(
             allPubkeys,
             effectiveSourcePubkey,
             weightingScheme
         );
-        
+    
+        // Step 4: Sort, rank, and return the final results.
         profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
-        
+    
         const results = profilesWithScores.slice(0, limit).map((item, index) => ({
             pubkey: item.pubkey,
             profile: item.profile,
             trustScore: item.trustScore,
             rank: index + 1
         }));
-        
+    
         return {
             results,
             totalFound: allPubkeys.length,
@@ -356,6 +363,119 @@ export class RelatrService {
         }
     }
 
+    async fetchNostrEvents(params: FetchNostrEventsParams): Promise<FetchNostrEventsResult> {
+        console.debug("FETCHING EVENTS");
+        if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
+        const { sourcePubkey, hops = 1, kind } = params;
+        const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
+    
+        if (kind !== 0 && kind !== 3) {
+            throw new ValidationError('Invalid kind specified. Must be 0 or 3.', 'kind');
+        }
+    
+        if (hops < 0 || hops > 5) {
+            throw new ValidationError('Hops must be between 0 and 5.', 'hops');
+        }
+
+        console.debug("HOPS", hops);
+        const NEG_RELAYS = ['wss://relay.damus.io']
+        try {
+            const startTime = Date.now();
+            const eventStore = new EventStore();
+            let pubkeysToCrawl: Set<string> = new Set([effectiveSourcePubkey]);
+            const crawledPubkeys: Set<string> = new Set();
+            let totalEventsFetched = 0;
+    
+            for (let hop = 0; hop <= hops; hop++) {
+                if (pubkeysToCrawl.size === 0) {
+                    console.error(`[RelatrService] Hop ${hop}: No new pubkeys to crawl.`);
+                    break;
+                }
+    
+                const pubkeysForThisHop = Array.from(pubkeysToCrawl);
+                pubkeysForThisHop.forEach(pk => crawledPubkeys.add(pk));
+                pubkeysToCrawl.clear();
+                console.debug("PUBKEYS FOR THIS HOP", pubkeysForThisHop);
+    
+                // Track whether we discover any new pubkeys during this hop; if none, stop early.
+                let newDiscoveredThisHop = 0;
+    
+                for (let i = 0; i < pubkeysForThisHop.length; i += RelatrService.BATCH_SIZE) {
+                    const batch = pubkeysForThisHop.slice(i, i + RelatrService.BATCH_SIZE);
+                    
+                    const events = await this.fetchEventsFromRelays(NEG_RELAYS, {
+                        kinds: [3],
+                        authors: batch,
+                    }, eventStore);
+                    console.debug("EVENTS", events);
+    
+                    for (const event of events) {
+                        // iterate tags and only add truly new pubkeys (not crawled and not already queued)
+                        for (const tag of event.tags) {
+                            if (tag[0] !== 'p') continue;
+                            const candidate = tag[1];
+                            if (!candidate) continue;
+                            if (crawledPubkeys.has(candidate)) continue;
+                            if (pubkeysToCrawl.has(candidate)) continue;
+                            pubkeysToCrawl.add(candidate);
+                            newDiscoveredThisHop++;
+                        }
+                    }
+                }
+    
+                if (newDiscoveredThisHop === 0) {
+                    console.error(`[RelatrService] Hop ${hop}: no new pubkeys discovered, stopping early.`);
+                    break;
+                }
+            }
+    
+            const finalPubkeys = Array.from(crawledPubkeys);
+            for (let i = 0; i < finalPubkeys.length; i += RelatrService.BATCH_SIZE) {
+                const batch = finalPubkeys.slice(i, i + RelatrService.BATCH_SIZE);
+                const events = await this.fetchEventsFromRelays(NEG_RELAYS, {
+                    kinds: [kind],
+                    authors: batch,
+                });
+    
+                if (kind === 0) {
+                    for (const event of events) {
+                        try {
+                            const profile = JSON.parse(event.content);
+                            await this.metadataCache!.set(event.pubkey, {
+                                pubkey: event.pubkey,
+                                name: profile.name,
+                                display_name: profile.display_name,
+                                nip05: profile.nip05,
+                                lud16: profile.lud16,
+                                about: profile.about,
+                            });
+                            totalEventsFetched++;
+                        } catch (e) { /* ignore invalid profile */ }
+                    }
+                } else {
+                    totalEventsFetched += events.length;
+                }
+            }
+    
+            const duration = Date.now() - startTime;
+            const message = `Fetched ${totalEventsFetched} kind ${kind} events for ${crawledPubkeys.size} pubkeys across ${hops} hops in ${duration}ms.`;
+            console.error(`[RelatrService] ${message}`);
+    
+            return {
+                success: true,
+                eventsFetched: totalEventsFetched,
+                message,
+                pubkeys: finalPubkeys,
+            };
+    
+        } catch (error) {
+            if (error instanceof RelatrError || error instanceof ValidationError || error instanceof CacheError) {
+                throw error;
+            }
+            throw new RelatrError(`Event fetch failed: ${error instanceof Error ? error.message : String(error)}`, 'FETCH_EVENTS');
+        }
+    }
+
     async shutdown(): Promise<void> {
         try {
             await this.cleanup();
@@ -382,6 +502,7 @@ export class RelatrService {
         this.metricsValidator = null;
         this.metricsCache = null;
         this.metadataCache = null;
+        this.pool = null;
         this.searchPool = null;
         this.initialized = false;
     }
@@ -402,14 +523,14 @@ export class RelatrService {
                     const result = cleanupExpiredCache(this.db);
                     // Only log if entries were actually deleted
                     if (result.totalDeleted > 0) {
-                        console.log(`[RelatrService] Background cleanup completed: ${result.totalDeleted} expired entries removed`);
+                        console.error(`[RelatrService] Background cleanup completed: ${result.totalDeleted} expired entries removed`);
                     }
                 }
             } catch (error) {
                 // Log error but don't crash the service
                 console.error('[RelatrService] Background cleanup failed:', error instanceof Error ? error.message : String(error));
             }
-        }, 60 * 60 * 1000 * 7); // 1 hour
+        }, 60 * 60 * 1000 * 7);
     }
 
     /**
@@ -417,100 +538,126 @@ export class RelatrService {
      * @private
      */
     private async syncContactProfiles(): Promise<void> {
-        if (!this.searchPool || !this.db) return;
-        
+        if (!this.pool || !this.db || !this.metricsValidator) return;
+    
         const startTime = Date.now();
         const syncKey = `contact_sync:${this.config.defaultSourcePubkey}`;
-        const syncInterval = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-        
+        const syncInterval = 24 * 60 * 60 * 1000; // 24 hours
+    
         try {
-            // Check if we've synced recently
             const lastSyncResult = this.db.query(
                 'SELECT value FROM settings WHERE key = ?'
             ).get(syncKey) as { value: string } | undefined;
-            
+    
             if (lastSyncResult) {
                 const lastSyncTime = parseInt(lastSyncResult.value);
-                const timeSinceLastSync = Date.now() - lastSyncTime;
-                
-                if (timeSinceLastSync < syncInterval) {
-                    const hoursSinceLastSync = Math.floor(timeSinceLastSync / (60 * 60 * 1000));
-                    console.log(`[RelatrService] Skipping contact sync - last sync was ${hoursSinceLastSync} hours ago`);
+                if (Date.now() - lastSyncTime < syncInterval) {
+                    console.debug(`[RelatrService] Skipping contact sync - last sync was recent.`);
                     return;
                 }
             }
+    
+            console.error('[RelatrService] Starting contact profile sync and metrics pre-caching...');
             
-            console.log('[RelatrService] Starting contact profile sync...');
-            
-            // 1. Fetch kind 3 (contact list) for source pubkey
-            const contactEvents = await this.searchPool.querySync(
-                this.config.nostrRelays,
-                { kinds: [3], authors: [this.config.defaultSourcePubkey], limit: 1 }
-            );
-            
-            if (!contactEvents.length) {
-                console.log('[RelatrService] No contact list found for source pubkey');
-                return;
-            }
-            
-            // 2. Parse contacts (p tags)
-            const contactPubkeys: string[] = [];
-            if (contactEvents[0]?.tags) {
-                for (const tag of contactEvents[0].tags) {
-                    if (tag && tag[0] === 'p' && tag[1]) {
-                        contactPubkeys.push(tag[1]);
-                    }
-                }
-            }
-            
-            if (!contactPubkeys.length) {
-                console.log('[RelatrService] No contacts found in contact list');
-                return;
-            }
-            
-            console.log(`[RelatrService] Found ${contactPubkeys.length} contacts, syncing profiles...`);
-            
-            // 3. Fetch metadata in batches
-            const batchSize = 100;
-            let synced = 0;
-            
-            for (let i = 0; i < contactPubkeys.length; i += batchSize) {
-                const batch = contactPubkeys.slice(i, i + batchSize);
-                const events = await this.searchPool.querySync(
-                    this.config.nostrRelays,
-                    { kinds: [0], authors: batch as string[] }
-                );
+            // Step 1: Fetch contact profiles (kind: 0) and get their pubkeys.
+            const { eventsFetched, pubkeys } = await this.fetchNostrEvents({
+                sourcePubkey: this.config.defaultSourcePubkey,
+                hops: 1, // 1 hop for direct contacts
+                kind: 0,
+            });
+    
+            if (pubkeys && pubkeys.length > 0) {
+                console.error(`[RelatrService] Pre-caching metrics for ${pubkeys.length} contact profiles...`);
                 
-                // 4. Insert into FTS5 table via metadataCache
-                for (const event of events) {
+                // Step 2: Pre-cache metrics for each fetched pubkey.
+                for (const pubkey of pubkeys) {
                     try {
-                        const profile = JSON.parse(event.content);
-                        await this.metadataCache!.set(event.pubkey, {
-                            pubkey: event.pubkey,
-                            name: profile.name,
-                            display_name: profile.display_name,
-                            nip05: profile.nip05,
-                            lud16: profile.lud16,
-                            about: profile.about
-                        });
-                        synced++;
+                        // This will fetch, validate, and cache the metrics.
+                        await this.metricsValidator.validateAll(pubkey, this.config.defaultSourcePubkey);
                     } catch (error) {
-                        // Skip invalid profiles
+                        console.warn(`[RelatrService] Failed to pre-cache metrics for ${pubkey}:`, error);
                     }
                 }
             }
-            
-            // Update the last sync time
+    
             const now = Date.now();
             this.db.run(
                 'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
                 [syncKey, now.toString(), now]
             );
-            
-            console.log(`[RelatrService] Synced ${synced} contact profiles in ${Date.now() - startTime}ms`);
+    
+            console.error(`[RelatrService] Synced ${eventsFetched} profiles and pre-cached metrics in ${Date.now() - startTime}ms`);
         } catch (error) {
             console.error('[RelatrService] Contact sync error:', error instanceof Error ? error.message : String(error));
         }
+    }
+
+    private async fetchEventsFromRelays(relays: string[], filter: Filter, eventStore?: EventStore): Promise<NostrEvent[]> {
+        if (!this.pool) {
+            throw new RelatrError('Relay pool not initialized', 'NOT_INITIALIZED');
+        }
+        console.debug("FETCHING EVENTS FROM", relays);
+        // Negentropy sync: subscribe and collect events, then end collection on inactivity or overall timeout.
+        const eventsObservable = this.pool.sync(relays, eventStore || new EventStore(), filter);
+    
+        const collected: NostrEvent[] = [];
+        const inactivityMs = 500; // consider sync finished if no events for 500ms
+        const overallTimeoutMs = 10000; // hard cap for the whole operation
+    
+        return await new Promise<NostrEvent[]>((resolve) => {
+            let inactiveTimer: NodeJS.Timeout | null = null;
+            const clearInactive = () => {
+                if (inactiveTimer) {
+                    clearTimeout(inactiveTimer);
+                    inactiveTimer = null;
+                }
+            };
+    
+            const maxTimer = setTimeout(() => {
+                try {
+                    subscription.unsubscribe();
+                } catch (_) { /* ignore */ }
+                clearInactive();
+                console.error(`[RelatrService] fetchEventsFromRelays overall timeout after ${overallTimeoutMs}ms for ${JSON.stringify(relays)}`);
+                resolve(collected);
+            }, overallTimeoutMs);
+    
+            const endDueToInactivity = () => {
+                try {
+                    subscription.unsubscribe();
+                } catch (_) { /* ignore */ }
+                clearTimeout(maxTimer);
+                clearInactive();
+                resolve(collected);
+            };
+    
+            const resetInactivity = () => {
+                clearInactive();
+                inactiveTimer = setTimeout(endDueToInactivity, inactivityMs);
+            };
+    
+            const subscription = eventsObservable.subscribe({
+                next: (ev: NostrEvent) => {
+                    collected.push(ev);
+                    resetInactivity();
+                },
+                error: (err) => {
+                    console.error(`[RelatrService] fetchEventsFromRelays observable error for ${JSON.stringify(relays)}:`, err instanceof Error ? err.message : String(err));
+                    clearTimeout(maxTimer);
+                    clearInactive();
+                    try { subscription.unsubscribe(); } catch (_) {}
+                    resolve(collected);
+                },
+                complete: () => {
+                    clearTimeout(maxTimer);
+                    clearInactive();
+                    resolve(collected);
+                }
+            });
+    
+            // Start the inactivity timer in case the observable emits immediately or never emits
+            resetInactivity();
+        });
     }
 
     getConfig(): RelatrConfig { return { ...this.config }; }
