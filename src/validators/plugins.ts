@@ -1,4 +1,3 @@
-import { SimplePool } from "nostr-tools/pool";
 import { queryProfile } from "nostr-tools/nip05";
 import type { NostrProfile } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
@@ -7,6 +6,8 @@ import {
   WeightProfileManager,
   type CoverageValidationResult,
 } from "./weight-profiles";
+import type { RelayPool } from "applesauce-relay";
+import type { NostrEvent } from "nostr-social-graph";
 
 /**
  * Validation context passed to all validation plugins
@@ -16,7 +17,7 @@ export interface ValidationContext {
   sourcePubkey?: string;
   profile?: NostrProfile;
   graphManager: SocialGraph;
-  pool: SimplePool;
+  pool: RelayPool;
   relays: string[];
   searchQuery?: string; // For context-aware validations
 }
@@ -223,14 +224,35 @@ export class EventPlugin implements ValidationPlugin {
     }
 
     try {
-      const event = await withTimeout(
-        ctx.pool.get(ctx.relays, {
-          kinds: [10002],
-          authors: [ctx.pubkey],
-          limit: 1,
-        }),
-        this.timeoutMs,
-      );
+      const event = await new Promise<NostrEvent | null>((resolve, reject) => {
+        const subscription = ctx.pool
+          .request(
+            ctx.relays,
+            {
+              kinds: [10002],
+              authors: [ctx.pubkey],
+              limit: 1,
+            },
+            {
+              retries: 1,
+            },
+          )
+          .subscribe({
+            next: (event) => {
+              resolve(event);
+              subscription.unsubscribe();
+            },
+            error: (error) => {
+              reject(error);
+            },
+          });
+
+        // Auto-unsubscribe after timeout
+        setTimeout(() => {
+          subscription.unsubscribe();
+          resolve(null);
+        }, this.timeoutMs);
+      });
 
       return event ? 1.0 : 0.0;
     } catch (error) {
@@ -299,3 +321,14 @@ export class RootNip05Plugin implements ValidationPlugin {
     return username === "_" ? 1.0 : 0.0;
   }
 }
+
+/**
+ * Array of all available validation plugins for easy iteration
+ */
+export const ALL_PLUGINS: ValidationPlugin[] = [
+  new Nip05Plugin(),
+  new LightningPlugin(),
+  new EventPlugin(),
+  new ReciprocityPlugin(),
+  new RootNip05Plugin(),
+];

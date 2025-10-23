@@ -1,5 +1,44 @@
 import type { RelatrConfig } from "./types";
 import { WeightProfileManager } from "./validators/weight-profiles";
+import { z } from "zod";
+
+const GIGI_PUBKEY =
+  "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93";
+/**
+ * Zod schema for configuration validation
+ */
+export const RelatrConfigSchema = z.object({
+  defaultSourcePubkey: z
+    .string()
+    .min(1, "DEFAULT_SOURCE_PUBKEY is required")
+    .default(GIGI_PUBKEY),
+  graphBinaryPath: z
+    .string()
+    .min(1, "GRAPH_BINARY_PATH is required")
+    .default("./data/socialGraph.bin"),
+  databasePath: z.string().default("./data/relatr.db"),
+  nostrRelays: z
+    .array(z.string())
+    .min(1, "At least one NOSTR_RELAY is required")
+    .default([
+      "wss://relay.damus.io",
+      "wss://relay.nostr.band",
+      "wss://relay.snort.social",
+    ]),
+  serverSecretKey: z.string().min(1, "SERVER_SECRET_KEY is required"),
+  serverRelays: z.array(z.string()).default(["wss://relay.contextvm.org"]),
+  decayFactor: z.number().min(0).default(0.1),
+  cacheTtlSeconds: z.number().positive().default(604800),
+  numberOfHops: z.number().int().positive().default(1),
+  syncInterval: z
+    .number()
+    .positive()
+    .default(24 * 60 * 60 * 1000), // 24 hours in ms
+  cleanupInterval: z
+    .number()
+    .positive()
+    .default(60 * 60 * 1000 * 7), // 7 hours in ms
+});
 
 /**
  * Load configuration from environment variables
@@ -7,40 +46,44 @@ import { WeightProfileManager } from "./validators/weight-profiles";
  * @throws Error if required environment variables are missing
  */
 export function loadConfig(): RelatrConfig {
-  const defaultSourcePubkey = process.env.DEFAULT_SOURCE_PUBKEY;
-  const graphBinaryPath = process.env.GRAPH_BINARY_PATH;
-  const nostrRelays = process.env.NOSTR_RELAYS;
-  const serverSecretKey = process.env.SERVER_SECRET_KEY;
-  const serverRelays = process.env.SERVER_RELAYS;
-
-  if (!defaultSourcePubkey) {
-    throw new Error("DEFAULT_SOURCE_PUBKEY environment variable is required");
-  }
-
-  if (!graphBinaryPath) {
-    throw new Error("GRAPH_BINARY_PATH environment variable is required");
-  }
-
-  if (!nostrRelays) {
-    throw new Error("NOSTR_RELAYS environment variable is required");
-  }
-
-  if (!serverSecretKey) {
-    throw new Error("SERVER_SECRET_KEY environment variable is required");
-  }
-
-  return {
-    defaultSourcePubkey,
-    graphBinaryPath,
-    databasePath: process.env.DATABASE_PATH || "./data/relatr.db",
-    nostrRelays: nostrRelays.split(",").map((relay) => relay.trim()),
-    serverSecretKey,
-    serverRelays: serverRelays
-      ? serverRelays.split(",").map((relay) => relay.trim())
-      : [],
-    decayFactor: parseFloat(process.env.DECAY_FACTOR || "0.1"),
-    cacheTtlSeconds: parseInt(process.env.CACHE_TTL_SECONDS || "604800", 10),
+  const configData = {
+    defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY,
+    graphBinaryPath: process.env.GRAPH_BINARY_PATH,
+    databasePath: process.env.DATABASE_PATH,
+    nostrRelays: process.env.NOSTR_RELAYS?.split(",").map((relay) =>
+      relay.trim(),
+    ),
+    serverSecretKey: process.env.SERVER_SECRET_KEY,
+    serverRelays: process.env.SERVER_RELAYS?.split(",").map((relay) =>
+      relay.trim(),
+    ),
+    decayFactor: process.env.DECAY_FACTOR
+      ? parseFloat(process.env.DECAY_FACTOR)
+      : undefined,
+    cacheTtlSeconds: process.env.CACHE_TTL_SECONDS
+      ? parseInt(process.env.CACHE_TTL_SECONDS, 10)
+      : undefined,
+    numberOfHops: process.env.NUMBER_OF_HOPS
+      ? parseInt(process.env.NUMBER_OF_HOPS, 10)
+      : undefined,
+    syncInterval: process.env.SYNC_INTERVAL
+      ? parseInt(process.env.SYNC_INTERVAL, 10)
+      : undefined,
+    cleanupInterval: process.env.CLEANUP_INTERVAL
+      ? parseInt(process.env.CLEANUP_INTERVAL, 10)
+      : undefined,
   };
+
+  const result = RelatrConfigSchema.safeParse(configData);
+
+  if (!result.success) {
+    const errorMessages = result.error.errors
+      .map((err) => `${err.path.join(".")}: ${err.message}`)
+      .join(", ");
+    throw new Error(`Configuration validation failed: ${errorMessages}`);
+  }
+
+  return result.data;
 }
 
 /**

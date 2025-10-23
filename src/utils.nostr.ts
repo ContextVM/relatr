@@ -1,17 +1,17 @@
-import { EventStore, lastValueFrom } from "applesauce-core";
+import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-social-graph";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "./types";
 import type { RelayPool } from "applesauce-relay";
-import { toArray, timeout, catchError } from "rxjs/operators";
-import { of } from "rxjs";
+import { Database, SQLiteError } from "bun:sqlite";
+import { BunSqliteEventDatabase } from "applesauce-sqlite/bun";
 
 export async function negSyncFromRelays(
   pool: RelayPool | null,
   relays: string[],
   filter: Filter,
-  eventStore?: EventStore,
-  signal?: AbortSignal,
+  signal: AbortSignal,
+  eventStore: EventStore,
 ): Promise<NostrEvent[]> {
   if (!pool) {
     throw new RelatrError("Relay pool not initialized", "NOT_INITIALIZED");
@@ -20,72 +20,57 @@ export async function negSyncFromRelays(
     `[Utils] 📡 Fetching events from ${relays.join(", ")} - Kind: ${filter.kinds?.join(", ")}, Authors: ${filter.authors?.length || 0}`,
   );
 
-  const eventsObservable = pool.sync(
-    relays,
-    eventStore || new EventStore(),
-    filter,
-  );
+  const eventsObservable = pool.sync(relays, eventStore, filter);
 
   try {
     // If an AbortSignal is provided, subscribe manually so we can unsubscribe on abort.
-    if (signal) {
-      return await new Promise<NostrEvent[]>((resolve) => {
-        const collected: NostrEvent[] = [];
-        const sub = eventsObservable.subscribe({
-          next: (evt) => {
-            collected.push(evt);
-          },
-          error: (err) => {
-            console.warn(
-              `[Utils] ⚠️ Stream error from ${relays.join(", ")}:`,
-              err,
-            );
-            resolve([]);
-          },
-          complete: () => resolve(collected),
-        });
-
-        if (signal.aborted) {
-          sub.unsubscribe();
-          resolve([]);
-          return;
-        }
-
-        signal.addEventListener(
-          "abort",
-          () => {
-            console.warn(`[Utils] 🛑 Request aborted for ${relays.join(", ")}`);
-            try {
-              sub.unsubscribe();
-            } catch (_) {}
-            resolve([]);
-          },
-          { once: true },
-        );
-      });
-    }
-
-    // Backwards-compatible behavior: if no AbortSignal is provided, keep the original timeout-based approach.
-    const events = await lastValueFrom(
-      eventsObservable.pipe(
-        toArray(),
-        timeout(60000), // 60-second timeout
-        catchError((err) => {
-          if (err && (err as any).name === "TimeoutError") {
-            console.warn(
-              `[Utils] ⏰ Request timed out after 60s for ${relays.join(", ")}`,
-            );
-          } else {
-            console.warn(
-              `[Utils] ⚠️ Stream error from ${relays.join(", ")}:`,
-              err,
-            );
+    return await new Promise<NostrEvent[]>((resolve) => {
+      const collected: NostrEvent[] = [];
+      const sub = eventsObservable.subscribe({
+        next: (evt) => {
+          // The event should already be in the event store due to the sync call
+          // But let's explicitly add it to ensure it's stored
+          try {
+            eventStore.add(evt);
+          } catch (error) {
+            if (error instanceof SQLiteError) {
+              console.warn(
+                `[Utils] ⚠️ Failed to add event to event store:`,
+                error.message,
+                "Skipping...",
+              );
+            }
           }
-          return of([]); // Return empty array on any error from the stream
-        }),
-      ),
-    );
-    return events;
+          collected.push(evt);
+        },
+        error: (err) => {
+          console.warn(
+            `[Utils] ⚠️ Stream error from ${relays.join(", ")}:`,
+            err,
+          );
+          resolve([]);
+        },
+        complete: () => resolve(collected),
+      });
+
+      if (signal.aborted) {
+        sub.unsubscribe();
+        resolve([]);
+        return;
+      }
+
+      signal.addEventListener(
+        "abort",
+        () => {
+          console.warn(`[Utils] 🛑 Request aborted for ${relays.join(", ")}`);
+          try {
+            sub.unsubscribe();
+          } catch (_) {}
+          resolve([]);
+        },
+        { once: true },
+      );
+    });
   } catch (error) {
     console.warn(`[Utils] ❌ Request failed for ${relays.join(", ")}:`, error);
     return [];
@@ -104,7 +89,7 @@ export async function fetchEventsForPubkeys(
   kind: number,
   relays: string[] = ["wss://relay.damus.io"],
   pool: RelayPool,
-  eventStore: EventStore | null = null,
+  eventStore?: EventStore,
 ): Promise<NostrEvent[]> {
   const allEvents: NostrEvent[] = [];
 
@@ -131,8 +116,8 @@ export async function fetchEventsForPubkeys(
           kinds: [kind],
           authors: batch,
         },
-        eventStore || undefined,
         signal,
+        eventStore || new EventStore(),
       );
     } finally {
       clearTimeout(timer);

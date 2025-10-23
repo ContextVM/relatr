@@ -1,26 +1,32 @@
-import { SimplePool } from "nostr-tools/pool";
-import type { NostrProfile, ProfileMetrics, DataStoreKey } from "../types";
+import type {
+  NostrProfile,
+  ProfileMetrics,
+  DataStoreKey,
+  MetricWeights,
+} from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import { withTimeout } from "@/utils";
-import { WeightProfileManager } from "./weight-profiles";
+import {
+  WeightProfileManager,
+  type CoverageValidationResult,
+} from "./weight-profiles";
 import {
   ValidationRegistry,
   type ValidationContext,
-  Nip05Plugin,
-  LightningPlugin,
-  EventPlugin,
-  ReciprocityPlugin,
-  RootNip05Plugin,
+  ALL_PLUGINS,
+  type ValidationPlugin,
 } from "./plugins";
 import type { DataStore } from "@/database/data-store";
+import type { RelayPool } from "applesauce-relay";
+import type { NostrEvent } from "nostr-social-graph";
 
 /**
  * Consolidated validator class for all profile metrics
  * Implements NIP-05, Lightning, Event, and Reciprocity validations
  */
 export class MetricsValidator {
-  private pool: SimplePool;
+  private pool: RelayPool;
   private nostrRelays: string[];
   private graphManager: SocialGraph;
   private dataStore: DataStore<ProfileMetrics>;
@@ -30,16 +36,25 @@ export class MetricsValidator {
 
   /**
    * Create a new MetricsValidator instance
+   * @param pool - Shared RelayPool instance for Nostr operations
    * @param nostrRelays - Array of Nostr relay URLs
    * @param graphManager - SocialGraph instance for reciprocity checks
    * @param dataStore - Cache instance for storing profile metrics
+   * @param plugins - Array of validation plugins to register (defaults to all available plugins)
+   * @param weightProfileManager - Optional weight profile manager
    */
   constructor(
+    pool: RelayPool,
     nostrRelays: string[],
     graphManager: SocialGraph,
     dataStore: DataStore<ProfileMetrics>,
+    plugins: ValidationPlugin[] = ALL_PLUGINS,
     weightProfileManager?: WeightProfileManager,
   ) {
+    if (!pool) {
+      throw new ValidationError("RelayPool instance is required");
+    }
+
     if (!nostrRelays || nostrRelays.length === 0) {
       throw new ValidationError("Nostr relays array cannot be empty");
     }
@@ -52,7 +67,7 @@ export class MetricsValidator {
       throw new ValidationError("Cache instance is required");
     }
 
-    this.pool = new SimplePool();
+    this.pool = pool;
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
     this.dataStore = dataStore;
@@ -64,12 +79,10 @@ export class MetricsValidator {
     // Create registry with weight profile manager
     this.registry = new ValidationRegistry(this.weightProfileManager);
 
-    // Register default plugins
-    this.registry.register(new Nip05Plugin());
-    this.registry.register(new LightningPlugin());
-    this.registry.register(new EventPlugin());
-    this.registry.register(new ReciprocityPlugin());
-    this.registry.register(new RootNip05Plugin());
+    // Register provided plugins
+    for (const plugin of plugins) {
+      this.registry.register(plugin);
+    }
   }
 
   /**
@@ -105,7 +118,6 @@ export class MetricsValidator {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const expiresAt = now + 3600; // 1 hour TTL
 
     try {
       // Get profile for validations
@@ -129,7 +141,6 @@ export class MetricsValidator {
         pubkey,
         metrics,
         computedAt: now,
-        expiresAt,
       };
 
       // Cache the results
@@ -147,7 +158,6 @@ export class MetricsValidator {
         pubkey,
         metrics: {},
         computedAt: now,
-        expiresAt,
       };
 
       return errorMetrics;
@@ -158,7 +168,7 @@ export class MetricsValidator {
    * Register a custom validation plugin
    * @param plugin - Validation plugin to register
    */
-  registerPlugin(plugin: any): void {
+  registerPlugin(plugin: ValidationPlugin): void {
     this.registry.register(plugin);
   }
 
@@ -166,7 +176,7 @@ export class MetricsValidator {
    * Get all registered validation plugins
    * @returns Array of registered plugins
    */
-  getRegisteredPlugins(): any[] {
+  getRegisteredPlugins(): ValidationPlugin[] {
     return this.registry.getAll();
   }
 
@@ -198,7 +208,7 @@ export class MetricsValidator {
    * Get all weights from the active profile
    * @returns MetricWeights object with all current weights
    */
-  getWeights(): import("../types").MetricWeights {
+  getWeights(): MetricWeights {
     return this.weightProfileManager.getAllWeights();
   }
 
@@ -206,7 +216,7 @@ export class MetricsValidator {
    * Validate coverage between registered plugins and active profile weights
    * @returns Coverage validation result
    */
-  validateCoverage(): import("./weight-profiles").CoverageValidationResult {
+  validateCoverage(): CoverageValidationResult {
     return this.registry.validateCoverage();
   }
 
@@ -217,43 +227,59 @@ export class MetricsValidator {
    */
   private async fetchProfile(pubkey: string): Promise<NostrProfile> {
     try {
-      const event = await withTimeout(
-        this.pool.get(this.nostrRelays, {
-          kinds: [0], // Metadata event
-          authors: [pubkey],
-          limit: 1,
-        }),
-        this.timeoutMs,
-      );
+      const event = await new Promise<NostrEvent | null>((resolve, reject) => {
+        const subscription = this.pool
+          .request(
+            this.nostrRelays,
+            {
+              kinds: [0], // Metadata event
+              authors: [pubkey],
+              limit: 1,
+            },
+            {
+              retries: 1,
+            },
+          )
+          .subscribe({
+            next: (event) => {
+              resolve(event);
+              subscription.unsubscribe();
+            },
+            error: (error) => {
+              reject(error);
+            },
+          });
+
+        // Auto-unsubscribe after timeout to prevent hanging subscriptions
+        setTimeout(() => {
+          subscription.unsubscribe();
+          resolve(null);
+        }, this.timeoutMs);
+      });
 
       if (!event || !event.content) {
         return { pubkey };
       }
 
-      // Parse profile content
-      const profile = JSON.parse(event.content) as Partial<NostrProfile>;
-
-      return {
-        pubkey,
-        name: profile.name,
-        display_name: profile.display_name,
-        picture: profile.picture,
-        nip05: profile.nip05,
-        lud16: profile.lud16,
-        about: profile.about,
-      };
+      // Parse profile content with error handling
+      try {
+        const profile = JSON.parse(event.content) as Partial<NostrProfile>;
+        return {
+          pubkey,
+          name: profile.name,
+          display_name: profile.display_name,
+          picture: profile.picture,
+          nip05: profile.nip05,
+          lud16: profile.lud16,
+          about: profile.about,
+        };
+      } catch {
+        // Return minimal profile on parse error
+        return { pubkey };
+      }
     } catch (error) {
       // Return minimal profile on error
       return { pubkey };
-    }
-  }
-
-  /**
-   * Clean up resources
-   */
-  cleanup(): void {
-    if (this.pool) {
-      this.pool.close(this.nostrRelays);
     }
   }
 }

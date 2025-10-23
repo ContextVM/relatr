@@ -39,13 +39,9 @@ interface DiscoveryResult {
 export class SocialGraphBuilder {
   private config: RelatrConfig;
   private pool: RelayPool;
-  private eventStore: EventStore | null;
+  private eventStore?: EventStore;
 
-  constructor(
-    config: RelatrConfig,
-    pool: RelayPool,
-    eventStore: EventStore | null,
-  ) {
+  constructor(config: RelatrConfig, pool: RelayPool, eventStore?: EventStore) {
     this.config = config;
     this.pool = pool;
     this.eventStore = eventStore;

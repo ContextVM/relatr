@@ -28,13 +28,13 @@ export interface MetadataFetchResult {
  */
 export class PubkeyMetadataFetcher {
   private pool: RelayPool;
-  private eventStore: EventStore;
+  private eventStore?: EventStore;
   private metadataCache: DataStore<NostrProfile>;
 
   constructor(
     pool: RelayPool,
-    eventStore: EventStore,
     metadataCache: DataStore<NostrProfile>,
+    eventStore?: EventStore,
   ) {
     this.pool = pool;
     this.eventStore = eventStore;
@@ -64,7 +64,6 @@ export class PubkeyMetadataFetcher {
     );
 
     try {
-      // Fetch profile events (kind 0) for the pubkeys
       const profileEvents = await fetchEventsForPubkeys(
         pubkeys,
         0,
@@ -83,7 +82,7 @@ export class PubkeyMetadataFetcher {
       }
 
       // Cache the metadata
-      await this.cacheProfileMetadata(profileEvents);
+      await this.storeProfileMetadata(profileEvents);
 
       const message = `Fetched and cached metadata for ${profileEvents.length} profiles.`;
       console.log(`[PubkeyMetadataFetcher] ✅ ${message}`);
@@ -104,7 +103,7 @@ export class PubkeyMetadataFetcher {
    * Cache profile metadata from kind 0 events
    * @param events Profile events to cache
    */
-  private async cacheProfileMetadata(events: NostrEvent[]): Promise<void> {
+  private async storeProfileMetadata(events: NostrEvent[]): Promise<void> {
     for (const event of events) {
       try {
         const profile = JSON.parse(event.content);

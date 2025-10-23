@@ -8,6 +8,8 @@ import {
   NostrServerTransport,
   PrivateKeySigner,
 } from "@contextvm/sdk";
+import { getPublicKey } from "nostr-tools";
+import { hexToBytes } from "nostr-tools/utils";
 
 /**
  * Start the MCP server for Relatr
@@ -43,15 +45,15 @@ export async function startMCPServer(): Promise<void> {
     // const transport = new StdioServerTransport();
     const transport = new NostrServerTransport({
       signer: new PrivateKeySigner(config.serverSecretKey),
-      relayHandler: new ApplesauceRelayPool(
-        config.serverRelays.length > 0
-          ? config.serverRelays
-          : ["ws://localhost:10547"],
-      ),
+      relayHandler: new ApplesauceRelayPool(config.serverRelays),
     });
     await server.connect(transport);
 
     console.error("[Relatr MCP] Server started successfully");
+    console.error(
+      "[Relatr MCP] With key:",
+      getPublicKey(hexToBytes(config.serverSecretKey)),
+    );
   } catch (error) {
     console.error("[Relatr MCP] Failed to start server:", error);
 

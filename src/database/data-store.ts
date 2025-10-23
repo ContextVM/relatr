@@ -84,18 +84,19 @@ export class DataStore<T> {
                     SELECT pubkey as key,
                            json_object(
                                'pubkey', pubkey,
-                               'metrics', json(metrics),
+                               'metrics', json_group_object(metric_key, metric_value),
                                'computedAt', computed_at,
                                'expiresAt', expires_at
                            ) as value
                     FROM profile_metrics
                     WHERE pubkey = ? AND expires_at > ?
+                    GROUP BY pubkey, computed_at, expires_at
                 `);
 
         this.setQuery = this.db.query(`
                     INSERT OR REPLACE INTO profile_metrics
-                    (pubkey, metrics, computed_at, expires_at)
-                    VALUES (?, ?, ?, ?)
+                    (pubkey, metric_key, metric_value, computed_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?)
                 `);
 
         this.deleteQuery = this.db.query(
@@ -184,27 +185,19 @@ export class DataStore<T> {
    */
   async get(key: DataStoreKey): Promise<T | null> {
     try {
-      let result;
-
-      // Profile metrics and generic cache use string keys
       const keyStr = this.keyToString(key);
+      const now = Math.floor(Date.now() / 1000);
 
-      // FTS5 tables don't have expires_at, so handle differently
+      let result;
       if (this.tableName === "pubkey_metadata") {
         result = this.getQuery.get(keyStr) as { value: string } | undefined;
       } else {
-        const now = Math.floor(Date.now() / 1000);
         result = this.getQuery.get(keyStr, now) as
           | { value: string }
           | undefined;
       }
 
-      if (!result) {
-        return null;
-      }
-
-      // Deserialize value
-      return JSON.parse(result.value) as T;
+      return result ? (JSON.parse(result.value) as T) : null;
     } catch (error) {
       throw new DataStoreError(
         `Failed to get cache value for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,
@@ -229,11 +222,20 @@ export class DataStore<T> {
       }
 
       if (this.tableName === "profile_metrics") {
-        // Handle profile metrics with JSON schema
+        // Handle profile metrics with normalized schema
         const metrics = value as any;
         const keyStr = this.keyToString(key);
-        const serializedMetrics = JSON.stringify(metrics.metrics || {});
-        this.setQuery.run(keyStr, serializedMetrics, now, expiresAt);
+
+        // Delete existing metrics for this pubkey to avoid duplicates
+        this.deleteQuery.run(keyStr);
+
+        // Insert each metric as a separate row - optimized to avoid object creation in loop
+        const metricEntries = metrics.metrics || {};
+        for (const [metricKey, metricValue] of Object.entries(metricEntries)) {
+          if (typeof metricValue === "number") {
+            this.setQuery.run(keyStr, metricKey, metricValue, now, expiresAt);
+          }
+        }
       } else if (this.tableName === "pubkey_metadata") {
         // Handle pubkey metadata with FTS table (uniqueness handled by DELETE + INSERT)
         const profile = value as any;
@@ -431,6 +433,128 @@ export class DataStore<T> {
       throw new DataStoreError(
         `Failed to set cache value with custom TTL for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,
         "SET_WITH_TTL",
+      );
+    }
+  }
+
+  /**
+   * Get specific metric for a pubkey
+   * @param pubkey - Public key
+   * @param metricKey - Specific metric key to retrieve
+   * @returns Metric value or null if not found/expired
+   */
+  async getMetric(pubkey: string, metricKey: string): Promise<number | null> {
+    if (this.tableName !== "profile_metrics") {
+      throw new DataStoreError(
+        "getMetric is only supported for profile_metrics table",
+        "INVALID_OPERATION",
+      );
+    }
+
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const query = this.db.query(`
+        SELECT metric_value 
+        FROM profile_metrics 
+        WHERE pubkey = ? AND metric_key = ? AND expires_at > ?
+        ORDER BY computed_at DESC 
+        LIMIT 1
+      `);
+
+      const result = query.get(pubkey, metricKey, now) as
+        | { metric_value: number }
+        | undefined;
+      return result?.metric_value ?? null;
+    } catch (error) {
+      throw new DataStoreError(
+        `Failed to get metric ${metricKey} for pubkey ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_METRIC",
+      );
+    }
+  }
+
+  /**
+   * Get all metrics for a pubkey
+   * @param pubkey - Public key
+   * @returns Object with all metrics or null if not found/expired
+   */
+  async getAllMetrics(pubkey: string): Promise<Record<string, number> | null> {
+    if (this.tableName !== "profile_metrics") {
+      throw new DataStoreError(
+        "getAllMetrics is only supported for profile_metrics table",
+        "INVALID_OPERATION",
+      );
+    }
+
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const query = this.db.query(`
+        SELECT metric_key, metric_value 
+        FROM profile_metrics 
+        WHERE pubkey = ? AND expires_at > ?
+        ORDER BY computed_at DESC
+      `);
+
+      const results = query.all(pubkey, now) as Array<{
+        metric_key: string;
+        metric_value: number;
+      }>;
+
+      if (results.length === 0) {
+        return null;
+      }
+
+      const metrics: Record<string, number> = {};
+      for (const row of results) {
+        metrics[row.metric_key] = row.metric_value;
+      }
+
+      return metrics;
+    } catch (error) {
+      throw new DataStoreError(
+        `Failed to get all metrics for pubkey ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_ALL_METRICS",
+      );
+    }
+  }
+
+  /**
+   * Get metrics by key across multiple pubkeys
+   * @param metricKey - Metric key to query
+   * @param limit - Maximum number of results (optional)
+   * @returns Array of pubkey-value pairs
+   */
+  async getMetricsByKey(
+    metricKey: string,
+    limit?: number,
+  ): Promise<Array<{ pubkey: string; value: number }>> {
+    if (this.tableName !== "profile_metrics") {
+      throw new DataStoreError(
+        "getMetricsByKey is only supported for profile_metrics table",
+        "INVALID_OPERATION",
+      );
+    }
+
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const limitClause = limit ? `LIMIT ${limit}` : "";
+      const query = this.db.query(`
+        SELECT DISTINCT pubkey, metric_value as value
+        FROM profile_metrics 
+        WHERE metric_key = ? AND expires_at > ?
+        ORDER BY computed_at DESC
+        ${limitClause}
+      `);
+
+      const results = query.all(metricKey, now) as Array<{
+        pubkey: string;
+        value: number;
+      }>;
+      return results;
+    } catch (error) {
+      throw new DataStoreError(
+        `Failed to get metrics by key ${metricKey}: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_METRICS_BY_KEY",
       );
     }
   }

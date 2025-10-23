@@ -14,6 +14,9 @@ export interface RelatrConfig {
   serverRelays: string[];
   decayFactor: number;
   cacheTtlSeconds: number;
+  numberOfHops: number;
+  syncInterval: number;
+  cleanupInterval: number;
 }
 export interface MetricWeights {
   distanceWeight: number;
@@ -25,7 +28,6 @@ export interface ProfileMetrics {
   pubkey: string;
   metrics: Record<string, number>; // Flexible metric storage
   computedAt: number;
-  expiresAt: number;
 }
 
 export interface TrustScore {
@@ -43,10 +45,19 @@ export interface ScoreComponents {
   normalizedDistance: number;
 }
 
-// Database types
-export interface ProfileMetricsRow {
+export interface NormalizedProfileMetricRow {
+  id: number;
   pubkey: string;
-  metrics: string; // JSON string
+  metric_key: string;
+  metric_value: number;
+  computed_at: number;
+  expires_at: number;
+}
+
+export interface ProfileMetricEntry {
+  pubkey: string;
+  metric_key: string;
+  metric_value: number;
   computed_at: number;
   expires_at: number;
 }

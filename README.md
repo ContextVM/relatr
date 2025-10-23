@@ -47,6 +47,22 @@ DECAY_FACTOR=0.1
 CACHE_TTL_SECONDS=3600
 ```
 
+### Building the Application
+
+```bash
+# Build the application (bundled JavaScript)
+bun run build
+
+# The built application will be in the dist/ directory
+bun run dist/index.js --help
+
+# Compile to standalone binary (recommended for production)
+bun run compile
+
+# Run the compiled binary
+./relatr --help
+```
+
 ### Running the Service
 
 ```bash
@@ -55,6 +71,81 @@ bun run mcp
 
 # Or run directly
 bun run index.ts
+
+# Or run the built version
+bun run dist/index.js
+```
+
+## Docker Deployment
+
+Relatr can be easily containerized using Docker for consistent deployment across different environments. The Docker image compiles the application into a standalone binary for optimal performance.
+
+### Building the Docker Image
+
+```bash
+# Build the Docker image
+docker build --pull -t relatr .
+
+# Or build with a specific tag
+docker build --pull -t relatr:latest .
+```
+
+### Running with Docker
+
+The Docker image runs the ContextVM MCP server by default, which provides tools for trust score calculation, profile search, and health checks.
+
+```bash
+# Minimal configuration - only server secret key required
+docker run -d -p 3000:3000 \
+  -e SERVER_SECRET_KEY=your_server_privkey_here \
+  -e LOG_DESTINATION=file \
+  -e LOG_FILE=/tmp/app.log \
+  relatr
+
+# With custom relays
+docker run -d -p 3000:3000 \
+  -e SERVER_SECRET_KEY=your_server_privkey_here \
+  -e SERVER_RELAYS=wss://nostr.example.com,wss://relay.com \
+  -e LOG_DESTINATION=file \
+  -e LOG_FILE=/tmp/app.log \
+  relatr
+
+# With persistent data storage
+docker run -d -p 3000:3000 \
+  -e SERVER_SECRET_KEY=your_server_privkey_here \
+  -e LOG_DESTINATION=file \
+  -e LOG_FILE=/tmp/app.log \
+  -v $(pwd)/data:/usr/src/app/data \
+  relatr
+
+# With environment file (recommended for production)
+docker run -d -p 3000:3000 \
+  --env-file .env \
+  relatr
+```
+
+### Docker Compose
+
+For more complex deployments, you can use Docker Compose. The container runs the MCP server by default.
+
+```yaml
+# docker-compose.yml
+version: "0.1"
+services:
+  relatr:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - SERVER_SECRET_KEY=your_server_privkey_here
+      - LOG_DESTINATION=file
+      - LOG_FILE=/tmp/app.log
+      # Optional: Add other environment variables as needed
+      # - SERVER_RELAYS=wss://nostr.example.com,wss://relay.com
+      # - DEFAULT_SOURCE_PUBKEY=your_pubkey_here
+    volumes:
+      - ./data:/usr/src/app/data
+    restart: unless-stopped
 ```
 
 ## Architecture

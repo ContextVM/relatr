@@ -3,7 +3,6 @@ import type {
     CalculateTrustScoreParams,
     TrustScore,
     HealthCheckResult,
-    ManageCacheResult,
     ProfileMetrics,
     SearchProfilesParams,
     SearchProfilesResult,
@@ -14,11 +13,8 @@ import {
     RelatrError,
     SocialGraphError,
     ValidationError,
-    DataStoreError
 } from '../types';
-import { SimplePool } from 'nostr-tools/pool';
 import { RelayPool } from 'applesauce-relay';
-import { EventStore } from 'applesauce-core';
 import { Database } from 'bun:sqlite';
 import { initDatabase, closeDatabase, cleanupExpiredCache, isDatabaseHealthy } from '../database/connection';
 import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
@@ -26,19 +22,16 @@ import { SocialGraphBuilder } from '../graph/SocialGraphBuilder';
 import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { TrustCalculator } from '../trust/TrustCalculator';
 import { MetricsValidator } from '../validators/MetricsValidator';
-import { createWeightProfileManager } from '../config';
-import { sanitizeProfile, withTimeout } from '@/utils';
+import { createWeightProfileManager, RelatrConfigSchema } from '../config';
+import { sanitizeProfile } from '@/utils';
 import { DataStore } from '@/database/data-store';
+import type { NostrEvent } from 'nostr-social-graph';
 
 export class RelatrService {
-    private static readonly BATCH_SIZE = 500;
     private static readonly SEARCH_RELAYS = [
         'wss://relay.nostr.band',
         'wss://search.nos.today',
     ];
-    private static readonly SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-    private static readonly CLEANUP_INTERVAL_MS = 60 * 60 * 1000 * 7; // 7 hours
-
     private config: RelatrConfig;
     private db: Database | null = null;
     private socialGraph: RelatrSocialGraph | null = null;
@@ -49,32 +42,23 @@ export class RelatrService {
     private metricsStore: DataStore<ProfileMetrics> | null = null;
     private metadataStore: DataStore<NostrProfile> | null = null;
     private pool: RelayPool | null = null;
-    private searchPool: SimplePool | null = null;
     private initialized = false;
     private cleanupInterval: NodeJS.Timeout | null = null;
     private syncInterval: NodeJS.Timeout | null = null;
-    private eventStore: EventStore | null = null;
 
     constructor(config: RelatrConfig) {
         if (!config) throw new RelatrError('Configuration required', 'CONSTRUCTOR');
         
-        const required = ['defaultSourcePubkey', 'graphBinaryPath', 'databasePath'] as const;
-        for (const field of required) {
-            if (!config[field] || typeof config[field] !== 'string') {
-                throw new ValidationError(`${field} required`, field);
-            }
-        }
-        if (!config.nostrRelays?.length || !Array.isArray(config.nostrRelays)) {
-            throw new ValidationError('nostrRelays required', 'nostrRelays');
-        }
-        if (typeof config.decayFactor !== 'number' || config.decayFactor < 0) {
-            throw new ValidationError('Invalid decayFactor', 'decayFactor');
-        }
-        if (typeof config.cacheTtlSeconds !== 'number' || config.cacheTtlSeconds <= 0) {
-            throw new ValidationError('Invalid cacheTtlSeconds', 'cacheTtlSeconds');
+        const result = RelatrConfigSchema.safeParse(config);
+        
+        if (!result.success) {
+            const errorMessages = result.error.errors.map(err =>
+                `${err.path.join('.')}: ${err.message}`
+            ).join(', ');
+            throw new ValidationError(`Configuration validation failed: ${errorMessages}`, 'config');
         }
 
-        this.config = { ...config };
+        this.config = result.data;
     }
 
     async initialize(): Promise<void> {
@@ -87,48 +71,45 @@ export class RelatrService {
             
             // Step 2: Initialize network components and builders first
             this.pool = new RelayPool();
-            this.searchPool = new SimplePool();
-            this.eventStore = new EventStore();
-            this.socialGraphBuilder = new SocialGraphBuilder(this.config, this.pool!, this.eventStore);
-            this.pubkeyMetadataFetcher = new PubkeyMetadataFetcher(this.pool!, this.eventStore, this.metadataStore!);
+            this.socialGraphBuilder = new SocialGraphBuilder(this.config, this.pool);
+            this.pubkeyMetadataFetcher = new PubkeyMetadataFetcher(this.pool,this.metadataStore );
             
             // Step 3: Check if social graph exists and handle first-time setup
-            const file = Bun.file(this.config.graphBinaryPath);
-            const exists = await file.exists();
+            const graphExists = await Bun.file(this.config.graphBinaryPath).exists();
             
-            if (!exists) {
+            if (!graphExists) {
                 console.log(`[RelatrService] 🆕 Social graph not found at ${this.config.graphBinaryPath}. Creating new graph...`);
                 
                 await this.socialGraphBuilder.createGraph({
                 sourcePubkey: this.config.defaultSourcePubkey,
-                hops: 2
+                hops: this.config.numberOfHops
             });
     
                 console.log('[RelatrService] ✅ Social graph created successfully.');
             }
             
-            // Step 4: Initialize the social graph (after creation or if it already exists)
+            // Step 4: Initialize the social graph
             this.socialGraph = new RelatrSocialGraph(this.config.graphBinaryPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             
             // Step 5: Initialize trust calculation components
             const weightProfileManager = createWeightProfileManager();
             this.trustCalculator = new TrustCalculator(this.config, weightProfileManager);
-            this.metricsValidator = new MetricsValidator(this.config.nostrRelays, this.socialGraph, this.metricsStore, weightProfileManager);
+            this.metricsValidator = new MetricsValidator(this.pool, this.config.nostrRelays, this.socialGraph, this.metricsStore, undefined, weightProfileManager);
             
             this.initialized = true;
             
             // Step 6: If this is the first time running, fetch initial metadata
-            if (!exists) {
+            if (!graphExists && (await this.metadataStore.getStats()).totalEntries === 0) {
                 console.log('[RelatrService] 👤 Fetching initial profile metadata...');
-                const pubkeys = this.socialGraph.getUsersUpToDistance(2);
-                console.log(`[RelatrService] 📊 Found ${pubkeys.length.toLocaleString()} pubkeys within 2 hops for metadata fetching`);
+                const pubkeys = this.socialGraph.getUsersUpToDistance(this.config.numberOfHops);
+                console.log(`[RelatrService] 📊 Found ${pubkeys.length.toLocaleString()} pubkeys within ${this.config.numberOfHops} hops for metadata fetching`);
                 await this.pubkeyMetadataFetcher.fetchMetadata({
                     pubkeys,
                     sourcePubkey: this.config.defaultSourcePubkey
                 });
             }
-            
+            console.log('[RelatrService] Starting background processes...');
             // Step 7: Start background processes
             this.startBackgroundCleanup();
             this.startPeriodicSync();
@@ -171,8 +152,8 @@ export class RelatrService {
             return trustScore;
 
         } catch (error) {
-            if (error instanceof RelatrError || error instanceof ValidationError || 
-                error instanceof SocialGraphError || error instanceof DataStoreError) {
+            if (error instanceof RelatrError || error instanceof ValidationError ||
+                error instanceof SocialGraphError) {
                 throw error;
             }
             throw new RelatrError(`Calc failed: ${error instanceof Error ? error.message : String(error)}`, 'CALCULATE');
@@ -181,7 +162,7 @@ export class RelatrService {
 
 
     /**
-     * Helper method to calculate trust scores for profiles
+     * Helper method to calculate trust scores for profiles with optimized object creation
      * @private
      */
     private async calculateProfileScores(
@@ -228,7 +209,7 @@ export class RelatrService {
 
     async searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
-    
+        if (!this.db) throw new RelatrError('Database not initialized', 'DATABASE_NOT_INITIALIZED');
         const { query, limit = 7, sourcePubkey, weightingScheme, extendToNostr } = params;
     
         if (!query || typeof query !== 'string') {
@@ -237,14 +218,17 @@ export class RelatrService {
     
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         const startTime = Date.now();
+
+        const prepared = this.db.prepare(
+            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
+        )
     
         // Step 1: Search local FTS5 database for an initial set of candidates.
-        const dbPubkeys = this.db!.query(
-            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
-        ).all(query, limit * 3) as { pubkey: string }[];
+        const dbPubkeys = prepared.all(query, limit * 3) as { pubkey: string }[];
     
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
     
+        const shouldQueryNostr = extendToNostr || localPubkeys.length < limit;
         // Fast path: If we have enough local results and are not extending the search, process them directly.
         if (localPubkeys.length >= limit && !extendToNostr) {
             const profilesWithScores = await this.calculateProfileScores(
@@ -261,41 +245,63 @@ export class RelatrService {
                 trustScore: item.trustScore,
                 rank: index + 1
             }));
-    
-            return {
-                results,
-                totalFound: localPubkeys.length,
-                searchTimeMs: Date.now() - startTime
-            };
+            if (!shouldQueryNostr) {
+                return {
+                    results,
+                    totalFound: localPubkeys.length,
+                    searchTimeMs: Date.now() - startTime
+                };
+            }
         }
     
         // Step 2: If needed, query Nostr relays to extend the search.
         const nostrPubkeys: string[] = [];
         const remaining = limit - localPubkeys.length;
-        const shouldQueryNostr = extendToNostr || localPubkeys.length === 0;
     
-        if (shouldQueryNostr && (extendToNostr || remaining > 0)) {
+        if (shouldQueryNostr && remaining > 0) {
             const nostrLimit = extendToNostr ? Math.max(limit, remaining) : remaining;
             console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${nostrLimit} results`);
     
             const searchFilter = { kinds: [0], search: query, limit: nostrLimit };
     
             try {
-                const nostrEvents = this.searchPool
-                    ? await withTimeout(
-                        this.searchPool.querySync(RelatrService.SEARCH_RELAYS, searchFilter),
-                        3000 // 3-second timeout for remote search
-                    )
-                    : [];
-    
-                for (const event of nostrEvents) {
-                    if (!localPubkeys.includes(event.pubkey)) {
-                        nostrPubkeys.push(event.pubkey);
-                        // Asynchronously cache profile metadata without awaiting.
-                        const profile = JSON.parse(event.content);
-                        this.metadataStore!.set(event.pubkey, { pubkey: event.pubkey, ...profile }).catch(err => {
-                            console.warn(`[RelatrService] ⚠️ Failed to cache profile for ${event.pubkey}:`, err);
+                if (this.pool) {
+                    const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
+                        const events: NostrEvent[] = [];
+                        const subscription = this.pool!.request(
+                            RelatrService.SEARCH_RELAYS,
+                            searchFilter,
+                            {
+                                retries: 1
+                            }
+                        ).subscribe({
+                            next: (event) => {
+                                events.push(event);
+                            },
+                            error: (error) => {
+                                reject(error);
+                            },
+                            complete: () => {
+                                resolve(events);
+                            }
                         });
+
+                        // Auto-unsubscribe after timeout
+                        setTimeout(() => {
+                            subscription.unsubscribe();
+                            resolve(events);
+                        }, 5000);
+                    });
+
+                    for (const event of nostrEvents) {
+                        if (!localPubkeys.includes(event.pubkey)) {
+                            nostrPubkeys.push(event.pubkey);
+                            // Asynchronously cache profile metadata without awaiting.
+                            const profile = JSON.parse(event.content);
+                            this.metadataStore!.set(event.pubkey, { pubkey: event.pubkey, ...profile }).catch(err => {
+                                console.warn(`[RelatrService] ⚠️ Failed to cache profile for ${event.pubkey}:`, err);
+                            });
+                        }
                     }
                 }
             } catch (error) {
@@ -340,48 +346,6 @@ export class RelatrService {
         }
     }
 
-    async manageCache(action: 'clear' | 'cleanup' | 'stats', targetPubkey?: string): Promise<ManageCacheResult> {
-        if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
-
-        try {
-            switch (action) {
-                case 'clear': {
-                    const metricsCleared = targetPubkey
-                        ? await this.metricsStore!.clear(targetPubkey)
-                        : await this.metricsStore!.clear();
-                    
-                    return {
-                        success: true,
-                        metricsCleared,
-                        message: targetPubkey ? `Cleared ${targetPubkey}` : 'Cleared all'
-                    };
-                }
-                case 'cleanup': {
-                    const metricsDeleted = await this.metricsStore!.cleanup();
-                    return {
-                        success: true,
-                        metricsCleared: metricsDeleted,
-                        message: `Cleaned ${metricsDeleted} metrics`
-                    };
-                }
-                case 'stats': {
-                    const metricsStats = await this.metricsStore!.getStats();
-
-                    return {
-                        success: true,
-                        message: `Metrics: ${metricsStats.totalEntries}/${metricsStats.expiredEntries}`
-                    };
-                }
-                default:
-                    throw new ValidationError(`Invalid action: ${action}`, 'action');
-            }
-        } catch (error) {
-            if (error instanceof ValidationError || error instanceof DataStoreError) throw error;
-            throw new DataStoreError(`Cache failed: ${error instanceof Error ? error.message : String(error)}`, action);
-        }
-    }
-
-
     async shutdown(): Promise<void> {
         try {
             await this.cleanup();
@@ -391,11 +355,7 @@ export class RelatrService {
     }
 
     private async cleanup(): Promise<void> {
-        this.metricsValidator?.cleanup();
         this.socialGraph?.cleanup();
-        if (this.searchPool) {
-            this.searchPool.close(RelatrService.SEARCH_RELAYS);
-        }
         if (this.cleanupInterval) {
             clearInterval(this.cleanupInterval);
             this.cleanupInterval = null;
@@ -413,8 +373,6 @@ export class RelatrService {
         this.metricsStore = null;
         this.metadataStore = null;
         this.pool = null;
-        this.searchPool = null;
-        this.eventStore = null;
         this.initialized = false;
     }
 
@@ -440,7 +398,7 @@ export class RelatrService {
                 // Log error but don't crash the service
                 console.error('[RelatrService] Background cleanup failed:', error instanceof Error ? error.message : String(error));
             }
-        }, RelatrService.CLEANUP_INTERVAL_MS);
+        }, this.config.cleanupInterval);
     }
 
     /**
@@ -450,14 +408,14 @@ export class RelatrService {
      * @param sourcePubkey Source pubkey to sync from
      */
     async syncProfiles(force: boolean = false, hops: number = 1, sourcePubkey?: string): Promise<void> {
+        console.log('[RelatrService] Starting profile sync and metrics pre-caching...');
         if (!this.pool || !this.db || !this.metricsValidator || !this.socialGraph) {
             throw new RelatrError('Service not properly initialized', 'NOT_INITIALIZED');
         }
-    
         const startTime = Date.now();
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         const syncKey = `contact_sync:${effectiveSourcePubkey}`;
-    
+        console.log(`[RelatrService] Syncing profiles for ${hops} hops from ${effectiveSourcePubkey}`);
         try {
             // Check last sync time unless forced
             if (!force) {
@@ -467,7 +425,7 @@ export class RelatrService {
     
                 if (lastSyncResult) {
                     const lastSyncTime = parseInt(lastSyncResult.value);
-                    if (Date.now() - lastSyncTime < RelatrService.SYNC_INTERVAL_MS) {
+                    if (Date.now() - lastSyncTime < this.config.syncInterval) {
                         console.log(`[RelatrService] Skipping contact sync - last sync was recent.`);
                         return;
                     }
@@ -477,27 +435,12 @@ export class RelatrService {
             console.log('[RelatrService] Starting profile sync and metrics pre-caching...');
             
             // Use the PubkeyMetadataFetcher to cache profile metadata
-            const discoveredPubkeys = this.socialGraph.getUsersUpToDistance(2);
+            const discoveredPubkeys = this.socialGraph.getUsersUpToDistance(this.config.numberOfHops);
 
             await this.pubkeyMetadataFetcher!.fetchMetadata({
                 pubkeys: discoveredPubkeys,
                 sourcePubkey: effectiveSourcePubkey
             });
-    
-            // Pre-cache metrics for discovered pubkeys
-            if (discoveredPubkeys.length > 0) {
-                console.log(`[RelatrService] Pre-caching metrics for ${discoveredPubkeys.length} profiles...`);
-                
-                const preCachePromises = discoveredPubkeys.map(async (pubkey) => {
-                    try {
-                        await this.metricsValidator!.validateAll(pubkey, effectiveSourcePubkey);
-                    } catch (error) {
-                        console.warn(`[RelatrService] Failed to pre-cache metrics for ${pubkey}:`, error);
-                    }
-                });
-                
-                await Promise.allSettled(preCachePromises);
-            }
     
             const now = Date.now();
             this.db.run(
@@ -526,14 +469,14 @@ export class RelatrService {
             try {
                 if (this.initialized) {
                     console.log('[RelatrService] Starting periodic background sync...');
-                    await this.syncProfiles(false, 1); // Non-forced, 1 hop sync
+                    await this.syncProfiles(false, 1);
                     console.log('[RelatrService] Periodic sync completed');
                 }
             } catch (error) {
                 // Log error but don't crash the service
                 console.error('[RelatrService] Periodic sync failed:', error instanceof Error ? error.message : String(error));
             }
-        }, RelatrService.SYNC_INTERVAL_MS);
+        }, this.config.syncInterval);
     }
 
     getConfig(): RelatrConfig { return { ...this.config }; }
