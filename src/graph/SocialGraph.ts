@@ -34,27 +34,24 @@ export class SocialGraph {
     }
 
     try {
-      // Load the social graph from binary file
-      const file = Bun.file(this.binaryPath);
-      const exists = await file.exists();
-
-      if (!exists) {
-        throw new SocialGraphError(
-          `Binary file not found: ${this.binaryPath}`,
-          "INITIALIZE",
-        );
-      }
-
-      const binary = new Uint8Array(await file.arrayBuffer());
-
-      // Use provided root pubkey or a default placeholder
       const root =
         rootPubkey ||
         "0000000000000000000000000000000000000000000000000000000000000000";
       this.rootPubkey = root;
 
-      // Load the graph with root pubkey
-      this.graph = await NostrSocialGraph.fromBinary(root, binary);
+      const file = Bun.file(this.binaryPath);
+      const exists = await file.exists();
+
+      if (exists) {
+        const binary = new Uint8Array(await file.arrayBuffer());
+        this.graph = await NostrSocialGraph.fromBinary(root, binary);
+      } else {
+        console.warn(
+          `[SocialGraph] Binary file not found at ${this.binaryPath}. Creating a new empty graph.`,
+        );
+        this.graph = new NostrSocialGraph(root);
+      }
+
       this.initialized = true;
     } catch (error) {
       throw new SocialGraphError(
@@ -323,6 +320,24 @@ export class SocialGraph {
       throw new SocialGraphError(
         `Failed to get distance between ${sourcePubkey} and ${targetPubkey}: ${error instanceof Error ? error.message : String(error)}`,
         "GET_DISTANCE_BETWEEN",
+      );
+    }
+  }
+
+  /*
+   * Get users by follow distance
+   * @param distance - Distance to get users for
+   * @returns Array of users
+   */
+  public getUsersUpToDistance(distance: number): string[] {
+    this.ensureInitialized();
+
+    try {
+      return Array.from(this.graph!.userIterator(distance));
+    } catch (error) {
+      throw new SocialGraphError(
+        `Failed to get users by distance: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_USERS_BY_DISTANCE",
       );
     }
   }

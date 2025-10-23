@@ -1,12 +1,17 @@
+/**
+ * @file Data store implementation using persistent database
+ * @deprecated This file was renamed from cache.ts but the functionality remains the same.
+ * The name change was made for better semantic clarity.
+ */
 import { Database } from "bun:sqlite";
-import { CacheError } from "../types";
-import type { CacheKey, CacheEntry } from "../types";
+import { DataStoreError } from "../types";
+import type { DataStoreKey } from "../types";
 
 /**
- * Generic cache implementation using persistent database
+ * Generic data store implementation using persistent database
  * @template T - Type of cached values
  */
-export class SimpleCache<T> {
+export class DataStore<T> {
   private db: Database;
   private tableName: string;
   private ttlSeconds?: number;
@@ -18,7 +23,7 @@ export class SimpleCache<T> {
   private cleanupQuery: any;
 
   /**
-   * Create a new SimpleCache instance with persistent database
+   * Create a new DataStore instance with persistent database
    * @param db - Database instance to use for caching
    * @param tableName - Name of the cache table
    * @param ttlSeconds - Time to live for cache entries in seconds
@@ -60,7 +65,7 @@ export class SimpleCache<T> {
     try {
       this.db.run(createTableSQL);
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to initialize cache table ${this.tableName}: ${error instanceof Error ? error.message : String(error)}`,
         "INIT_TABLE",
       );
@@ -152,7 +157,7 @@ export class SimpleCache<T> {
         `);
       }
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to prepare cache statements: ${error instanceof Error ? error.message : String(error)}`,
         "PREPARE_STATEMENTS",
       );
@@ -165,7 +170,7 @@ export class SimpleCache<T> {
    * @returns String representation of key
    * @private
    */
-  private keyToString(key: CacheKey): string {
+  private keyToString(key: DataStoreKey): string {
     if (Array.isArray(key)) {
       return key.join(":");
     }
@@ -177,7 +182,7 @@ export class SimpleCache<T> {
    * @param key - Cache key
    * @returns Cached value or null if not found/expired
    */
-  async get(key: CacheKey): Promise<T | null> {
+  async get(key: DataStoreKey): Promise<T | null> {
     try {
       let result;
 
@@ -201,7 +206,7 @@ export class SimpleCache<T> {
       // Deserialize value
       return JSON.parse(result.value) as T;
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to get cache value for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,
         "GET",
       );
@@ -213,7 +218,7 @@ export class SimpleCache<T> {
    * @param key - Cache key
    * @param value - Value to cache
    */
-  async set(key: CacheKey, value: T): Promise<void> {
+  async set(key: DataStoreKey, value: T): Promise<void> {
     try {
       const now = Math.floor(Date.now() / 1000);
       const expiresAt = now + (this.ttlSeconds ?? 604800); // 1 week TTL by default
@@ -262,7 +267,7 @@ export class SimpleCache<T> {
         this.setQuery.run(keyStr, serializedValue, expiresAt, now);
       }
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to set cache value for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,
         "SET",
       );
@@ -274,7 +279,7 @@ export class SimpleCache<T> {
    * @param key - Cache key to clear (optional, if not provided clears all)
    * @returns Number of entries deleted
    */
-  async clear(key?: CacheKey): Promise<number> {
+  async clear(key?: DataStoreKey): Promise<number> {
     try {
       if (key) {
         // Profile metrics and generic cache use string keys
@@ -286,7 +291,7 @@ export class SimpleCache<T> {
         return result.changes || 0;
       }
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to clear cache: ${error instanceof Error ? error.message : String(error)}`,
         "CLEAR",
       );
@@ -311,7 +316,7 @@ export class SimpleCache<T> {
 
       return result.changes || 0;
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to cleanup expired cache entries: ${error instanceof Error ? error.message : String(error)}`,
         "CLEANUP",
       );
@@ -325,7 +330,6 @@ export class SimpleCache<T> {
   async getStats(): Promise<{
     totalEntries: number;
     expiredEntries: number;
-    hitRate: number;
     lastCleanup: number;
   }> {
     try {
@@ -352,11 +356,10 @@ export class SimpleCache<T> {
       return {
         totalEntries: totalResult.count,
         expiredEntries: expiredResult.count,
-        hitRate: 0, // Would need to track hits/misses separately
         lastCleanup: now,
       };
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to get cache stats: ${error instanceof Error ? error.message : String(error)}`,
         "GET_STATS",
       );
@@ -368,7 +371,7 @@ export class SimpleCache<T> {
    * @param key - Cache key
    * @returns True if key exists and is not expired
    */
-  async has(key: CacheKey): Promise<boolean> {
+  async has(key: DataStoreKey): Promise<boolean> {
     try {
       const value = await this.get(key);
       return value !== null;
@@ -383,7 +386,7 @@ export class SimpleCache<T> {
    * @param factory - Function to create value if not in cache
    * @returns Value from cache or factory
    */
-  async getOrSet(key: CacheKey, factory: () => Promise<T>): Promise<T> {
+  async getOrSet(key: DataStoreKey, factory: () => Promise<T>): Promise<T> {
     try {
       // Try to get from cache first
       const cached = await this.get(key);
@@ -396,7 +399,7 @@ export class SimpleCache<T> {
       await this.set(key, value);
       return value;
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to get or set cache value for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,
         "GET_OR_SET",
       );
@@ -410,7 +413,7 @@ export class SimpleCache<T> {
    * @param customTtlSeconds - Custom TTL in seconds
    */
   async setWithTTL(
-    key: CacheKey,
+    key: DataStoreKey,
     value: T,
     customTtlSeconds: number,
   ): Promise<void> {
@@ -425,7 +428,7 @@ export class SimpleCache<T> {
       // Use pre-prepared query for better performance
       this.setCustomTTLQuery.run(keyStr, serializedValue, expiresAt, now);
     } catch (error) {
-      throw new CacheError(
+      throw new DataStoreError(
         `Failed to set cache value with custom TTL for key ${JSON.stringify(key)}: ${error instanceof Error ? error.message : String(error)}`,
         "SET_WITH_TTL",
       );

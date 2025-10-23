@@ -65,7 +65,7 @@ bun run index.ts
 2. **SocialGraph**: Manages Nostr social graph data and distance calculations
 3. **TrustCalculator**: Computes final trust scores from metrics
 4. **MetricsValidator**: Validates profile characteristics
-5. **SimpleCache**: Persistent caching layer using SQLite
+5. **DataStore**: Persistent caching layer using SQLite
 
 ### Trust Score Calculation
 

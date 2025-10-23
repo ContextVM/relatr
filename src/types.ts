@@ -1,3 +1,5 @@
+import type { NostrEvent } from "nostr-tools";
+
 /**
  * Core type definitions for Relatr v2
  */
@@ -74,7 +76,6 @@ export interface ManageCacheResult {
   message: string;
 }
 
-
 export interface FetchNostrEventsParams {
   sourcePubkey?: string;
   hops?: number;
@@ -86,7 +87,19 @@ export interface FetchNostrEventsResult {
   eventsFetched: number;
   message: string;
   pubkeys?: string[];
+  events?: NostrEvent[];
 }
+
+export interface CreateSocialGraphResult {
+  success: boolean;
+  message: string;
+  eventsFetched: number;
+  graphSize: {
+    users: number;
+    follows: number;
+  };
+}
+
 // Search types
 export interface SearchProfilesParams {
   query: string;
@@ -195,13 +208,13 @@ export class ValidationError extends RelatrError {
   }
 }
 
-export class CacheError extends RelatrError {
+export class DataStoreError extends RelatrError {
   constructor(
     message: string,
     public operation?: string,
   ) {
     super(message, "CACHE_ERROR");
-    this.name = "CacheError";
+    this.name = "DataStoreError";
   }
 }
 
@@ -233,7 +246,7 @@ export interface DatabaseConnection {
 }
 
 // Cache key types
-export type CacheKey = string | [string, string];
+export type DataStoreKey = string | [string, string];
 
 // Weighting scheme type
 export type WeightingScheme = "default" | "social" | "validation" | "strict";

@@ -1,8 +1,7 @@
 import { SimplePool } from "nostr-tools/pool";
-import type { NostrProfile, ProfileMetrics, CacheKey } from "../types";
+import type { NostrProfile, ProfileMetrics, DataStoreKey } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import { SimpleCache } from "../database/cache";
 import { withTimeout } from "@/utils";
 import { WeightProfileManager } from "./weight-profiles";
 import {
@@ -14,6 +13,7 @@ import {
   ReciprocityPlugin,
   RootNip05Plugin,
 } from "./plugins";
+import type { DataStore } from "@/database/data-store";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -23,7 +23,7 @@ export class MetricsValidator {
   private pool: SimplePool;
   private nostrRelays: string[];
   private graphManager: SocialGraph;
-  private cache: SimpleCache<ProfileMetrics>;
+  private dataStore: DataStore<ProfileMetrics>;
   private timeoutMs: number = 10000;
   private registry: ValidationRegistry;
   private weightProfileManager: WeightProfileManager;
@@ -32,12 +32,12 @@ export class MetricsValidator {
    * Create a new MetricsValidator instance
    * @param nostrRelays - Array of Nostr relay URLs
    * @param graphManager - SocialGraph instance for reciprocity checks
-   * @param cache - Cache instance for storing profile metrics
+   * @param dataStore - Cache instance for storing profile metrics
    */
   constructor(
     nostrRelays: string[],
     graphManager: SocialGraph,
-    cache: SimpleCache<ProfileMetrics>,
+    dataStore: DataStore<ProfileMetrics>,
     weightProfileManager?: WeightProfileManager,
   ) {
     if (!nostrRelays || nostrRelays.length === 0) {
@@ -48,14 +48,14 @@ export class MetricsValidator {
       throw new ValidationError("SocialGraph instance is required");
     }
 
-    if (!cache) {
+    if (!dataStore) {
       throw new ValidationError("Cache instance is required");
     }
 
     this.pool = new SimplePool();
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
-    this.cache = cache;
+    this.dataStore = dataStore;
 
     // Initialize weight profile manager
     this.weightProfileManager =
@@ -89,11 +89,13 @@ export class MetricsValidator {
       throw new ValidationError("Pubkey must be a non-empty string");
     }
 
-    const cacheKey: CacheKey = sourcePubkey ? [pubkey, sourcePubkey] : pubkey;
+    const dataStoreKey: DataStoreKey = sourcePubkey
+      ? [pubkey, sourcePubkey]
+      : pubkey;
 
     try {
       // Check cache first
-      const cached = await this.cache.get(cacheKey);
+      const cached = await this.dataStore.get(dataStoreKey);
       if (cached) {
         return cached;
       }
@@ -132,7 +134,7 @@ export class MetricsValidator {
 
       // Cache the results
       try {
-        await this.cache.set(cacheKey, result);
+        await this.dataStore.set(dataStoreKey, result);
       } catch (error) {
         // Cache error shouldn't prevent returning results
         console.warn("Cache write failed:", error);

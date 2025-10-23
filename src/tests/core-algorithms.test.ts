@@ -2,7 +2,6 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { Database } from "bun:sqlite";
 import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
-import { SimpleCache } from "../database/cache";
 import { WeightProfileManager } from "../validators/weight-profiles";
 import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
 
