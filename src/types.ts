@@ -125,6 +125,7 @@ export interface SearchProfileResult {
   profile: NostrProfile;
   trustScore: number;
   rank: number;
+  exactMatch?: boolean;
 }
 
 export interface SearchProfilesResult {

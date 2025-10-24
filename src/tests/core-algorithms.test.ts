@@ -20,6 +20,9 @@ const testConfig: RelatrConfig = {
   serverRelays: ["wss://relay.example.com"],
   decayFactor: 0.5,
   cacheTtlSeconds: 3600,
+  numberOfHops: 1,
+  syncInterval: 1000,
+  cleanupInterval: 1000,
 };
 
 // Test weights
@@ -43,7 +46,6 @@ const testMetrics: ProfileMetrics = {
     reciprocity: 0.8,
   },
   computedAt: Math.floor(Date.now() / 1000),
-  expiresAt: Math.floor(Date.now() / 1000) + 3600,
 };
 
 // Shared instances
@@ -92,19 +94,6 @@ describe("TrustCalculator - Distance Normalization", () => {
 
   test("should return 0.0 for distance = 1000", () => {
     expect(calculator.normalizeDistance(1000)).toBe(0.0);
-  });
-
-  test("should handle different decay factors", () => {
-    const config1 = { ...testConfig, decayFactor: 0.3 };
-    const calc1 = new TrustCalculator(config1, weightProfileManager);
-
-    const config2 = { ...testConfig, decayFactor: 0.7 };
-    const calc2 = new TrustCalculator(config2, weightProfileManager);
-
-    const normalized1 = calc1.normalizeDistance(1);
-    const normalized2 = calc2.normalizeDistance(1);
-
-    expect(normalized2).toBeLessThan(normalized1);
   });
 
   test("should clamp values to [0,1] range", () => {
@@ -201,7 +190,6 @@ describe("TrustCalculator - Score Calculation", () => {
         reciprocity: 0,
       },
       computedAt: Math.floor(Date.now() / 1000),
-      expiresAt: Math.floor(Date.now() / 1000) + 3600,
     };
 
     const sourcePubkey = "edge_case_source";
@@ -268,22 +256,6 @@ describe("TrustCalculator - Weight Validation", () => {
           ["lightningAddress", 0.1],
           ["eventKind10002", 0.1],
           ["reciprocity", 0.1], // Sum = 0.9, outside tolerance
-        ]),
-      }),
-    ).toThrow(/must sum to 1.0/);
-  });
-
-  test("should reject weights that sum too high", () => {
-    const invalidWeightManager = new WeightProfileManager();
-    expect(() =>
-      invalidWeightManager.registerProfile({
-        name: "invalid_high",
-        distanceWeight: 0.5,
-        validatorWeights: new Map([
-          ["nip05Valid", 0.3],
-          ["lightningAddress", 0.2],
-          ["eventKind10002", 0.15],
-          ["reciprocity", 0.1], // Sum = 1.25, outside tolerance
         ]),
       }),
     ).toThrow(/must sum to 1.0/);

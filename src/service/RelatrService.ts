@@ -138,9 +138,25 @@ export class RelatrService {
             const distance = effectiveSourcePubkey !== this.socialGraph!.getCurrentRoot()
                 ? await this.socialGraph!.getDistanceBetween(effectiveSourcePubkey, targetPubkey)
                 : this.socialGraph!.getDistance(targetPubkey);
-
-            const metrics = await this.metricsValidator!.validateAll(targetPubkey, effectiveSourcePubkey);
             
+            // Return a trust score of 0 if the target pubkey is far in distance
+            // This avoids expensive validateAll calls for distant profiles, making search faster
+            if (distance > 3) {
+                return {
+                    score: 0,
+                    sourcePubkey: effectiveSourcePubkey,
+                    targetPubkey,
+                    components: {
+                        distanceWeight: 0,
+                        validators: {},
+                        socialDistance: distance,
+                        normalizedDistance: 0
+                    },
+                    computedAt: Date.now()
+                };
+            }
+            
+            const metrics = await this.metricsValidator!.validateAll(targetPubkey, effectiveSourcePubkey);
             if (weightingScheme) {
                 const weightProfileManager = this.metricsValidator!.getWeightProfileManager();
                 weightProfileManager.activateProfile(weightingScheme);
@@ -168,8 +184,9 @@ export class RelatrService {
     private async calculateProfileScores(
         pubkeys: string[],
         effectiveSourcePubkey: string,
-        weightingScheme?: WeightingScheme
-    ): Promise<{ pubkey: string; profile: NostrProfile; trustScore: number }[]> {
+        weightingScheme?: WeightingScheme,
+        searchQuery?: string
+    ): Promise<{ pubkey: string; profile: NostrProfile; trustScore: number; exactMatch: boolean }[]> {
         return Promise.all(
             pubkeys.map(async (pubkey) => {
                 try {
@@ -190,17 +207,38 @@ export class RelatrService {
                         weightingScheme
                     });
                     
+                    // Calculate relevance boost and exact match status
+                    let relevanceBoost = 0;
+                    let exactMatch = false;
+                    
+                    if (searchQuery) {
+                        const query = searchQuery.toLowerCase();
+                        const name = profile.name?.toLowerCase() || '';
+                        const displayName = profile.display_name?.toLowerCase() || '';
+                        
+                        // Calculate relevance boost and exact match status
+                        if ((name === query || displayName === query) && trustScore.score > 0.5) {
+                            relevanceBoost = 0.5; // Strong boost for exact matches
+                            exactMatch = true;
+                        }
+                    }
+                    
+                    // Combine trust score and relevance boost, normalize to 0-1 range
+                    const combinedScore = Math.min(1, trustScore.score + relevanceBoost);
+                    
                     return {
                         pubkey,
                         profile: sanitizedProfile,
-                        trustScore: trustScore.score
+                        trustScore: combinedScore,
+                        exactMatch
                     };
                 } catch (error) {
                     // Assign score 0 on error but include in results
                     return {
                         pubkey,
                         profile: { pubkey },
-                        trustScore: 0
+                        trustScore: 0,
+                        exactMatch: false
                     };
                 }
             })
@@ -222,35 +260,35 @@ export class RelatrService {
         const prepared = this.db.prepare(
             `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
         )
-    
-        // Step 1: Search local FTS5 database for an initial set of candidates.
-        const dbPubkeys = prepared.all(query, limit * 3) as { pubkey: string }[];
+        
+        // Use FTS5 prefix matching (query*) to support partial matches
+        const dbPubkeys = prepared.all(`${query}*`, limit * 7) as { pubkey: string }[];
     
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
     
-        const shouldQueryNostr = extendToNostr || localPubkeys.length < limit;
         // Fast path: If we have enough local results and are not extending the search, process them directly.
         if (localPubkeys.length >= limit && !extendToNostr) {
             const profilesWithScores = await this.calculateProfileScores(
                 localPubkeys,
                 effectiveSourcePubkey,
-                weightingScheme
+                weightingScheme,
+                query
             );
     
+            // Sort by combined score (trust score + relevance boost)
             profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
     
             const results = profilesWithScores.slice(0, limit).map((item, index) => ({
                 pubkey: item.pubkey,
                 profile: item.profile,
                 trustScore: item.trustScore,
-                rank: index + 1
+                rank: index + 1,
+                exactMatch: item.exactMatch
             }));
-            if (!shouldQueryNostr) {
                 return {
                     results,
                     totalFound: localPubkeys.length,
                     searchTimeMs: Date.now() - startTime
-                };
             }
         }
     
@@ -258,7 +296,7 @@ export class RelatrService {
         const nostrPubkeys: string[] = [];
         const remaining = limit - localPubkeys.length;
     
-        if (shouldQueryNostr && remaining > 0) {
+        if (extendToNostr || localPubkeys.length == 0) {
             const nostrLimit = extendToNostr ? Math.max(limit, remaining) : remaining;
             console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${nostrLimit} results`);
     
@@ -315,17 +353,20 @@ export class RelatrService {
         const profilesWithScores = await this.calculateProfileScores(
             allPubkeys,
             effectiveSourcePubkey,
-            weightingScheme
+            weightingScheme,
+            query
         );
     
         // Step 4: Sort, rank, and return the final results.
+        // Sort by combined score (trust score + relevance boost)
         profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
     
         const results = profilesWithScores.slice(0, limit).map((item, index) => ({
             pubkey: item.pubkey,
             profile: item.profile,
             trustScore: item.trustScore,
-            rank: index + 1
+            rank: index + 1,
+            exactMatch: item.exactMatch
         }));
     
         return {
