@@ -91,7 +91,7 @@ export class RelatrService {
             // Step 4: Initialize the social graph
             this.socialGraph = new RelatrSocialGraph(this.config.graphBinaryPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
-            
+            console.log('[RelatrService] Social graph stats', this.socialGraph.getStats());
             // Step 5: Initialize trust calculation components
             const weightProfileManager = createWeightProfileManager();
             this.trustCalculator = new TrustCalculator(this.config, weightProfileManager);

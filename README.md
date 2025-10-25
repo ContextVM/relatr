@@ -93,6 +93,22 @@ Relatr uses a modular architecture with clear separation of concerns:
 - **MetricsValidator**: Validates profile characteristics using plugin system
 - **DataStore**: Persistent caching layer using SQLite
 
+## System Requirements
+
+Relatr is designed to be resource-efficient with minimal hardware requirements:
+
+### Minimum Requirements
+- **CPU**: 1 core (x86-64 or ARM64)
+- **RAM**: 256MB (50MB app + headroom)
+- **Storage**: 256MB
+
+### Recommended for Production
+- **CPU**: 2 cores
+- **RAM**: 1MB
+- **Storage**: 1GB SSD
+
+**Memory is the primary bottleneck** - the social graph binary must be fully loaded in memory for fast distance calculations. CPU requirements are modest for most operations.
+
 ## Development
 
 For development and contributing to Relatr, see the development documentation in the repository.
