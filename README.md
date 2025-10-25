@@ -48,6 +48,7 @@ Relatr uses environment variables for configuration. The application automatical
 - `SERVER_RELAYS` - Comma-separated relay URLs for server operations
 - `GRAPH_BINARY_PATH` - Path to social graph binary file
 - `DATABASE_PATH` - SQLite database path
+- `DATA_DIR` - Data directory path (default: ./app/data)
 - `DECAY_FACTOR` - Alpha parameter in distance formula (default: 0.1)
 - `NUMBER_OF_HOPS` - Social graph traversal depth (default: 2)
 - `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
@@ -56,6 +57,7 @@ Relatr uses environment variables for configuration. The application automatical
 
 ```bash
 # Minimal configuration - only server secret key required
+# The entrypoint script automatically handles data directory permissions
 docker run -d \
   -e SERVER_SECRET_KEY=your_server_privkey_here \
   -v $(pwd)/data:/usr/src/app/data \
@@ -64,13 +66,14 @@ docker run -d \
 
 #### Advanced Configuration
 
+```bash
 # With environment file (recommended for production)
-
+# Copy .env.example to .env and customize
 docker run -d \
- --env-file .env \
- ghcr.io/contextvm/relatr:latest
-
-````
+  --env-file .env \
+  -v $(pwd)/data:/usr/src/app/data \
+  ghcr.io/contextvm/relatr:latest
+```
 
 ### Docker Compose
 
@@ -90,7 +93,7 @@ services:
     volumes:
       - ./data:/usr/src/app/data
     restart: unless-stopped
-````
+```
 
 ## Architecture Overview
 

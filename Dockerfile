@@ -32,10 +32,12 @@ COPY --from=prerelease /usr/src/app/relatr .
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
 
-# create data directory and set proper permissions
-RUN mkdir -p /usr/src/app/data && chown -R bun:bun /usr/src/app/data
+# copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# run the compiled binary
+# run the compiled binary with entrypoint
 USER bun
 EXPOSE 3000/tcp
-ENTRYPOINT [ "./relatr" ]
+ENTRYPOINT [ "/usr/local/bin/docker-entrypoint.sh" ]
+CMD [ "./relatr" ]
