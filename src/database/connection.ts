@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { DatabaseError } from "../types";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readFileSync, statSync } from "fs";
+import { join, dirname, resolve } from "path";
 
 /**
  * Initialize database with schema and optimizations
@@ -11,8 +11,52 @@ import { join } from "path";
  */
 export function initDatabase(path: string): Database {
   try {
+    const resolvedPath = resolve(path);
+    const dirPath = dirname(resolvedPath);
+    const effectiveUid =
+      typeof process.getuid === "function" ? process.getuid() : null;
+    const effectiveGid =
+      typeof process.getgid === "function" ? process.getgid() : null;
+
+    console.debug(
+      `[Database] Requested SQLite path ${
+        path !== resolvedPath ? `${path} -> ${resolvedPath}` : resolvedPath
+      } (cwd: ${process.cwd()})`,
+    );
+    console.debug(
+      `[Database] Effective runtime identity uid=${String(
+        effectiveUid ?? "unknown",
+      )} gid=${String(effectiveGid ?? "unknown")}`,
+    );
+
+    try {
+      const dirStats = statSync(dirPath);
+      const mode = dirStats.mode & 0o777;
+      const writableByCaller = Boolean(
+        (effectiveUid !== null &&
+          dirStats.uid === effectiveUid &&
+          mode & 0o200) ||
+          (effectiveGid !== null &&
+            dirStats.gid === effectiveGid &&
+            mode & 0o020) ||
+          mode & 0o002,
+      );
+
+      console.debug(
+        `[Database] Directory ${dirPath} owner=${dirStats.uid}:${dirStats.gid} mode=${mode.toString(
+          8,
+        )} writableByCaller=${writableByCaller}`,
+      );
+    } catch (statError) {
+      console.warn(
+        `[Database] Unable to stat parent directory ${dirPath}: ${
+          statError instanceof Error ? statError.message : String(statError)
+        }`,
+      );
+    }
+
     // Create database with WAL mode for better performance
-    const db = new Database(path, { create: true });
+    const db = new Database(resolvedPath, { create: true });
 
     // Enable SQLite optimizations
     db.run("PRAGMA foreign_keys = ON");
