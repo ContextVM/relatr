@@ -57,10 +57,11 @@ Relatr uses environment variables for configuration. The application automatical
 
 ```bash
 # Minimal configuration - only server secret key required
-# The entrypoint script automatically handles data directory permissions
+# Use --user flag to match host user permissions for data persistence
 docker run -d \
   -e SERVER_SECRET_KEY=your_server_privkey_here \
   -v $(pwd)/data:/usr/src/app/data \
+  --user $(id -u):$(id -g) \
   ghcr.io/contextvm/relatr:latest
 ```
 
@@ -72,6 +73,7 @@ docker run -d \
 docker run -d \
   --env-file .env \
   -v $(pwd)/data:/usr/src/app/data \
+  --user $(id -u):$(id -g) \
   ghcr.io/contextvm/relatr:latest
 ```
 
@@ -85,6 +87,7 @@ version: "3.8"
 services:
   relatr:
     image: ghcr.io/contextvm/relatr:latest
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       - SERVER_SECRET_KEY=your_server_privkey_here
       - DEFAULT_SOURCE_PUBKEY=your_source_pubkey_here

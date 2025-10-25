@@ -32,12 +32,8 @@ COPY --from=prerelease /usr/src/app/relatr .
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
 
-# copy entrypoint script
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# run the compiled binary with entrypoint
-USER bun
+# run the compiled binary directly
+# Use --user flag when running docker to match host user UID
+# Example: docker run --user $(id -u):$(id -g) ...
 EXPOSE 3000/tcp
-ENTRYPOINT [ "/usr/local/bin/docker-entrypoint.sh" ]
 CMD [ "./relatr" ]
