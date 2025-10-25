@@ -18,7 +18,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.1.36",
+    "@contextvm/sdk": "^0.1.37",
     "@modelcontextprotocol/sdk": "^1.20.2",
     "applesauce-core": "^4.1.0",
     "applesauce-relay": "^4.1.0",

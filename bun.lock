@@ -10,6 +10,7 @@
         "applesauce-relay": "^4.1.0",
         "nostr-social-graph": "^1.0.33",
         "nostr-tools": "^2.17.0",
+        "pino": "^10.1.0",
         "pino-pretty": "^13.1.2",
         "zod": "^3.25.76",
       },
@@ -23,7 +24,7 @@
     },
   },
   "packages": {
-    "@contextvm/sdk": ["@contextvm/sdk@0.1.36", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.20.0", "applesauce-relay": "^4.0.0", "nostr-tools": "^2.17.0", "pino": "^10.0.0", "pino-pretty": "^13.1.2" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-9HCVlG+ZItIjIzKr7lYxN6Psv96MqQLpnSJ+WWF6ElS5a76RrNpn3N3DPK37qmtLwzbjbDbbTVDprzxXJP/12Q=="],
+    "@contextvm/sdk": ["@contextvm/sdk@0.1.37", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.20.0", "applesauce-relay": "^4.0.0", "nostr-tools": "^2.17.0", "pino": "^10.0.0", "pino-pretty": "^13.1.2" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-0AY5C7fT7oFwNOOd6nG4hFNRpCRn3WW9wXHBveRKuuOPxlA0su32y3NJ+W1vgynTeutUN1z8h09jnoOjsXSMLQ=="],
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.20.2", "", { "dependencies": { "ajv": "^6.12.6", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.0.1", "express-rate-limit": "^7.5.0", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.23.8", "zod-to-json-schema": "^3.24.1" } }, "sha512-6rqTdFt67AAAzln3NOKsXRmv5ZzPkgbfaebKBqUbts7vK1GZudqnrun5a8d3M/h955cam9RHZ6Jb4Y1XhnmFPg=="],
 
