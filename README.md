@@ -33,32 +33,44 @@ docker pull ghcr.io/contextvm/relatr:master-5d0b2be
 
 The Docker image runs the ContextVM MCP server by default, which provides tools for trust score calculation, profile search, and health checks.
 
+#### Environment Variables
+
+Relatr uses environment variables for configuration. The application automatically loads and validates these variables on startup:
+
+**Required Variables:**
+
+- `SERVER_SECRET_KEY` - Server's Nostr private key (hex format)
+
+**Optional Variables:**
+
+- `DEFAULT_SOURCE_PUBKEY` - Default perspective pubkey for trust calculations (hex format) (defaults to Gigi's pubkey)
+- `NOSTR_RELAYS` - Comma-separated relay URLs for social graph data
+- `SERVER_RELAYS` - Comma-separated relay URLs for server operations
+- `GRAPH_BINARY_PATH` - Path to social graph binary file
+- `DATABASE_PATH` - SQLite database path
+- `DECAY_FACTOR` - Alpha parameter in distance formula (default: 0.1)
+- `NUMBER_OF_HOPS` - Social graph traversal depth (default: 2)
+- `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
+
 #### Basic Configuration
 
 ```bash
 # Minimal configuration - only server secret key required
-docker run -d -p 3000:3000 \
+docker run -d \
   -e SERVER_SECRET_KEY=your_server_privkey_here \
+  -v $(pwd)/data:/usr/src/app/data \
   ghcr.io/contextvm/relatr:latest
 ```
 
 #### Advanced Configuration
 
-```bash
-# With custom relays and persistent data storage
-docker run -d -p 3000:3000 \
-  -e SERVER_SECRET_KEY=your_server_privkey_here \
-  -e SERVER_RELAYS=wss://nostr.example.com,wss://relay.com \
-  -e LOG_DESTINATION=file \
-  -e LOG_FILE=/tmp/app.log \
-  -v $(pwd)/data:/usr/src/app/data \
-  ghcr.io/contextvm/relatr:latest
-
 # With environment file (recommended for production)
-docker run -d -p 3000:3000 \
-  --env-file .env \
-  ghcr.io/contextvm/relatr:latest
-```
+
+docker run -d \
+ --env-file .env \
+ ghcr.io/contextvm/relatr:latest
+
+````
 
 ### Docker Compose
 
@@ -70,16 +82,15 @@ version: "3.8"
 services:
   relatr:
     image: ghcr.io/contextvm/relatr:latest
-    ports:
-      - "3000:3000"
     environment:
       - SERVER_SECRET_KEY=your_server_privkey_here
-      - LOG_DESTINATION=file
-      - LOG_FILE=/tmp/app.log
+      - DEFAULT_SOURCE_PUBKEY=your_source_pubkey_here
+      - NOSTR_RELAYS=wss://relay.damus.io,wss://relay.nostr.band
+      - SERVER_RELAYS=wss://relay.contextvm.org
     volumes:
       - ./data:/usr/src/app/data
     restart: unless-stopped
-```
+````
 
 ## Architecture Overview
 
@@ -98,11 +109,13 @@ Relatr uses a modular architecture with clear separation of concerns:
 Relatr is designed to be resource-efficient with minimal hardware requirements:
 
 ### Minimum Requirements
+
 - **CPU**: 1 core (x86-64 or ARM64)
 - **RAM**: 256MB (50MB app + headroom)
 - **Storage**: 256MB
 
 ### Recommended for Production
+
 - **CPU**: 2 cores
 - **RAM**: 1MB
 - **Storage**: 1GB SSD

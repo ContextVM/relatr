@@ -58,6 +58,7 @@ export class SocialGraphBuilder {
     const { sourcePubkey, hops } = params;
 
     console.log("[SocialGraphBuilder] 🚀 Starting social graph creation...");
+    console.log(`[SocialGraphBuilder] Pubkey ${sourcePubkey}, Hops ${hops}`);
 
     try {
       // Discover pubkeys in the social graph

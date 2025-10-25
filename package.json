@@ -24,7 +24,6 @@
     "applesauce-relay": "^4.1.0",
     "nostr-social-graph": "^1.0.33",
     "nostr-tools": "^2.17.0",
-    "pino-pretty": "^13.1.2",
     "zod": "^3.25.76"
   }
 }
