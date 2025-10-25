@@ -26,6 +26,7 @@ import { createWeightProfileManager, RelatrConfigSchema } from '../config';
 import { sanitizeProfile } from '@/utils';
 import { DataStore } from '@/database/data-store';
 import type { NostrEvent } from 'nostr-social-graph';
+import { dirname } from 'path';
 
 export class RelatrService {
     private static readonly SEARCH_RELAYS = [
@@ -64,6 +65,9 @@ export class RelatrService {
     async initialize(): Promise<void> {
         if (this.initialized) return;
         try {
+            // Step 0: Ensure data directory exists with proper permissions
+            await this.ensureDataDirectory();
+            
             // Step 1: Initialize database and caches
             this.db = initDatabase(this.config.databasePath);
             this.metricsStore = new DataStore(this.db, 'profile_metrics', this.config.cacheTtlSeconds);
@@ -524,4 +528,66 @@ export class RelatrService {
     isInitialized(): boolean { return this.initialized; }
     getSocialGraph(): RelatrSocialGraph | null { return this.socialGraph; }
     getTrustCalculator(): TrustCalculator | null { return this.trustCalculator; }
+
+    /**
+     * Ensure data directory exists with proper permissions
+     * @private
+     */
+    private async ensureDataDirectory(): Promise<void> {
+        try {
+            // Extract data directory from database path (default: ./data/relatr.db)
+            const dataDir = this.extractDataDirectory(this.config.databasePath);
+            
+            // Check if directory exists
+            let dirExists = false;
+            try {
+                await Bun.$`stat ${dataDir}`;
+                dirExists = true;
+            } catch {
+                dirExists = false;
+            }
+            
+            if (!dirExists) {
+                console.log(`[RelatrService] 📁 Creating data directory: ${dataDir}`);
+                
+                // Create directory recursively
+                await Bun.$`mkdir -p ${dataDir}`;
+                
+                console.log(`[RelatrService] ✅ Data directory created`);
+            } else {
+                // Check if directory is writable by current user
+                try {
+                    // Try to create a test file to check write permissions
+                    const testFile = `${dataDir}/.write_test_${Date.now()}`;
+                    await Bun.write(testFile, "test");
+                    await Bun.$`rm ${testFile}`;
+                } catch (writeError) {
+                    const effectiveUid = typeof process.getuid === "function" ? process.getuid() : null;
+                    const effectiveGid = typeof process.getgid === "function" ? process.getgid() : null;
+                    
+                    throw new RelatrError(
+                        `Data directory exists but is not writable by current user (uid=${effectiveUid} gid=${effectiveGid}). ` +
+                        `Please ensure the data directory has proper permissions or remove it to let the application create it.`,
+                        'DATA_DIRECTORY_PERMISSIONS'
+                    );
+                }
+            }
+        } catch (error) {
+            if (error instanceof RelatrError) {
+                throw error;
+            }
+            throw new RelatrError(
+                `Failed to ensure data directory: ${error instanceof Error ? error.message : String(error)}`,
+                'DATA_DIRECTORY'
+            );
+        }
+    }
+
+    /**
+     * Extract data directory path from file path
+     * @private
+     */
+    private extractDataDirectory(filePath: string): string {
+        return dirname(filePath);
+    }
 }

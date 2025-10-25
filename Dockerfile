@@ -26,22 +26,14 @@ RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relat
 
 # copy production dependencies and compiled binary into final image
 FROM base AS release
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/relatr .
 
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
 
-# entrypoint responsible for setting up runtime user/group and writable data directory
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh && mkdir -p /usr/src/app/data
-
+# run the compiled binary directly
+# Use --user flag when running docker to match host user UID
+# Example: docker run --user $(id -u):$(id -g) ...
 EXPOSE 3000/tcp
-
-ENTRYPOINT [ "docker-entrypoint.sh" ]
 CMD [ "./relatr" ]
