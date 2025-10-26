@@ -74,11 +74,24 @@ export interface CalculateTrustScoreResult {
   computationTimeMs: number;
 }
 
-export interface HealthCheckResult {
-  status: "healthy" | "unhealthy";
-  database: boolean;
-  socialGraph: boolean;
+export interface StatsResult {
   timestamp: number;
+  sourcePubkey: string;
+  database: {
+    metrics: {
+      totalEntries: number;
+    };
+    metadata: {
+      totalEntries: number;
+    };
+  };
+  socialGraph: {
+    stats: {
+      users: number;
+      follows: number;
+    };
+    rootPubkey: string;
+  };
 }
 
 export interface ManageCacheResult {

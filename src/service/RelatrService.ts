@@ -2,7 +2,7 @@ import type {
     RelatrConfig,
     CalculateTrustScoreParams,
     TrustScore,
-    HealthCheckResult,
+    StatsResult,
     ProfileMetrics,
     SearchProfilesParams,
     SearchProfilesResult,
@@ -380,14 +380,59 @@ export class RelatrService {
         };
     }
 
-    async healthCheck(): Promise<HealthCheckResult> {
+
+    async getStats(): Promise<StatsResult> {
         const timestamp = Math.floor(Date.now() / 1000);
+        
         try {
-            const database = this.db ? isDatabaseHealthy(this.db) : false;
-            const socialGraph = this.socialGraph?.isInitialized() || false;
-            return { status: (database && socialGraph) ? 'healthy' : 'unhealthy', database, socialGraph, timestamp };
-        } catch {
-            return { status: 'unhealthy', database: false, socialGraph: false, timestamp };
+            // Get database stats
+            let metricsTotalEntries = 0;
+            let metadataTotalEntries = 0;
+            
+            if (this.metricsStore) {
+                const metricsStats = await this.metricsStore.getStats();
+                metricsTotalEntries = metricsStats.totalEntries;
+            }
+            if (this.metadataStore) {
+                const metadataStats = await this.metadataStore.getStats();
+                metadataTotalEntries = metadataStats.totalEntries;
+            }
+
+            // Get social graph stats
+            let socialGraphStats = { users: 0, follows: 0 };
+            let rootPubkey = "";
+            
+            if (this.socialGraph) {
+                socialGraphStats = this.socialGraph.getStats();
+                rootPubkey = this.socialGraph.getCurrentRoot();
+            }
+
+            return {
+                timestamp,
+                sourcePubkey: this.config.defaultSourcePubkey,
+                database: {
+                    metrics: { totalEntries: metricsTotalEntries },
+                    metadata: { totalEntries: metadataTotalEntries }
+                },
+                socialGraph: {
+                    stats: socialGraphStats,
+                    rootPubkey
+                }
+            };
+        } catch (error) {
+            // Return minimal stats on error
+            return {
+                timestamp,
+                sourcePubkey: this.config.defaultSourcePubkey,
+                database: {
+                    metrics: { totalEntries: 0 },
+                    metadata: { totalEntries: 0 }
+                },
+                socialGraph: {
+                    stats: { users: 0, follows: 0 },
+                    rootPubkey: ""
+                }
+            };
         }
     }
 

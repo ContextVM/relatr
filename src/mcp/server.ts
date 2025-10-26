@@ -35,7 +35,7 @@ export async function startMCPServer(): Promise<void> {
 
     // Register tools
     registerCalculateTrustScoreTool(server, relatrService);
-    registerHealthCheckTool(server, relatrService);
+    registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
 
     // Setup graceful shutdown
@@ -86,12 +86,6 @@ function registerCalculateTrustScoreTool(
       .string()
       .length(64, "Target pubkey must be exactly 64 characters (hex)")
       .regex(/^[0-9a-fA-F]+$/, "Target pubkey must be a valid hex string"),
-    sourcePubkey: z
-      .string()
-      .length(64, "Source pubkey must be exactly 64 characters (hex)")
-      .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
-      .optional()
-      .describe("Optional source pubkey (uses default if not provided)"),
     weightingScheme: z
       .enum(["default", "social", "validation", "strict"])
       .optional()
@@ -180,9 +174,9 @@ function registerCalculateTrustScoreTool(
 }
 
 /**
- * Register the health_check tool
+ * Register the stats tool
  */
-function registerHealthCheckTool(
+function registerStatsTool(
   server: McpServer,
   relatrService: RelatrService,
 ): void {
@@ -191,31 +185,51 @@ function registerHealthCheckTool(
 
   // Output schema
   const outputSchema = z.object({
-    status: z.enum(["healthy", "unhealthy"]),
-    database: z.boolean(),
-    socialGraph: z.boolean(),
     timestamp: z.number(),
+    sourcePubkey: z.string(),
+    database: z.object({
+      metrics: z.object({
+        totalEntries: z.number(),
+      }),
+      metadata: z.object({
+        totalEntries: z.number(),
+      }),
+    }),
+    socialGraph: z.object({
+      stats: z.object({
+        users: z.number(),
+        follows: z.number(),
+      }),
+      rootPubkey: z.string(),
+    }),
   });
 
   server.registerTool(
-    "health_check",
+    "stats",
     {
-      title: "Health Check",
-      description: "Check the health status of the Relatr service",
+      title: "Stats",
+      description:
+        "Get comprehensive statistics about the Relatr service including database stats, social graph stats, and the source public key",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
     async () => {
       try {
-        const healthResult = await relatrService.healthCheck();
+        const statsResult = await relatrService.getStats();
 
         return {
           content: [],
           structuredContent: {
-            status: healthResult.status,
-            database: healthResult.database,
-            socialGraph: healthResult.socialGraph,
-            timestamp: healthResult.timestamp,
+            timestamp: statsResult.timestamp,
+            sourcePubkey: statsResult.sourcePubkey,
+            database: {
+              metrics: statsResult.database.metrics,
+              metadata: statsResult.database.metadata,
+            },
+            socialGraph: {
+              stats: statsResult.socialGraph.stats,
+              rootPubkey: statsResult.socialGraph.rootPubkey,
+            },
           },
         };
       } catch (error) {
@@ -226,7 +240,7 @@ function registerHealthCheckTool(
           content: [
             {
               type: "text",
-              text: `Error during health check: ${errorMessage}`,
+              text: `Error getting stats: ${errorMessage}`,
             },
           ],
           isError: true,
@@ -257,14 +271,6 @@ function registerSearchProfilesTool(
       .optional()
       .default(7)
       .describe("Maximum number of results to return (default: 20)"),
-    sourcePubkey: z
-      .string()
-      .length(64, "Source pubkey must be exactly 64 characters (hex)")
-      .regex(/^[0-9a-fA-F]+$/, "Source pubkey must be a valid hex string")
-      .optional()
-      .describe(
-        "Optional source pubkey for trust score calculation (uses default if not provided)",
-      ),
     weightingScheme: z
       .enum(["default", "social", "validation", "strict"])
       .optional()
