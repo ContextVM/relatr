@@ -1,7 +1,7 @@
 import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-social-graph";
-import { fetchEventsForPubkeys } from "@/utils.nostr";
+import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrProfile } from "@/types";
 import type { DataStore } from "@/database/data-store";
 

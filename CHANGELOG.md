@@ -1,5 +1,11 @@
 # relatr
 
+## 0.0.3
+
+### Patch Changes
+
+- feat(nostr): add support for npub/nprofile pubkey formats and reorganize utils
+
 ## 0.0.2
 
 ### Patch Changes

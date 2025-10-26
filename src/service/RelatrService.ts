@@ -23,10 +23,11 @@ import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { TrustCalculator } from '../trust/TrustCalculator';
 import { MetricsValidator } from '../validators/MetricsValidator';
 import { createWeightProfileManager, RelatrConfigSchema } from '../config';
-import { sanitizeProfile } from '@/utils';
+import { sanitizeProfile } from '@/utils/utils';
 import { DataStore } from '@/database/data-store';
 import type { NostrEvent } from 'nostr-social-graph';
 import { dirname } from 'path';
+import { validateAndDecodePubkey } from '@/utils/utils.nostr';
 
 export class RelatrService {
     private static readonly SEARCH_RELAYS = [
@@ -133,23 +134,35 @@ export class RelatrService {
             throw new ValidationError('Invalid target pubkey', 'targetPubkey');
         }
 
+        // Decode target pubkey from any supported format (hex, npub, nprofile)
+        const decodedTargetPubkey = validateAndDecodePubkey(targetPubkey);
+        if (!decodedTargetPubkey) {
+            throw new ValidationError('Invalid target pubkey format. Must be hex, npub, or nprofile', 'targetPubkey');
+        }
+
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         if (!effectiveSourcePubkey || typeof effectiveSourcePubkey !== 'string') {
             throw new ValidationError('Invalid source pubkey', 'sourcePubkey');
         }
 
+        // Decode source pubkey from any supported format (hex, npub, nprofile)
+        const decodedSourcePubkey = validateAndDecodePubkey(effectiveSourcePubkey);
+        if (!decodedSourcePubkey) {
+            throw new ValidationError('Invalid source pubkey format. Must be hex, npub, or nprofile', 'sourcePubkey');
+        }
+
         try {
-            const distance = effectiveSourcePubkey !== this.socialGraph!.getCurrentRoot()
-                ? await this.socialGraph!.getDistanceBetween(effectiveSourcePubkey, targetPubkey)
-                : this.socialGraph!.getDistance(targetPubkey);
+            const distance = decodedSourcePubkey !== this.socialGraph!.getCurrentRoot()
+                ? await this.socialGraph!.getDistanceBetween(decodedSourcePubkey, decodedTargetPubkey)
+                : this.socialGraph!.getDistance(decodedTargetPubkey);
             
             // Return a trust score of 0 if the target pubkey is far in distance
             // This avoids expensive validateAll calls for distant profiles, making search faster
             if (distance > 3) {
                 return {
                     score: 0,
-                    sourcePubkey: effectiveSourcePubkey,
-                    targetPubkey,
+                    sourcePubkey: decodedSourcePubkey,
+                    targetPubkey: decodedTargetPubkey,
                     components: {
                         distanceWeight: 0,
                         validators: {},
@@ -160,14 +173,14 @@ export class RelatrService {
                 };
             }
             
-            const metrics = await this.metricsValidator!.validateAll(targetPubkey, effectiveSourcePubkey);
+            const metrics = await this.metricsValidator!.validateAll(decodedTargetPubkey, decodedSourcePubkey);
             if (weightingScheme) {
                 const weightProfileManager = this.metricsValidator!.getWeightProfileManager();
                 weightProfileManager.activateProfile(weightingScheme);
             }
             
             const trustScore = this.trustCalculator!.calculate(
-                effectiveSourcePubkey, targetPubkey, metrics, distance
+                decodedSourcePubkey, decodedTargetPubkey, metrics, distance
             );
             return trustScore;
 

@@ -1,10 +1,10 @@
 import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-social-graph";
 import type { Filter } from "nostr-tools";
-import { RelatrError } from "./types";
+import { RelatrError } from "../types";
 import type { RelayPool } from "applesauce-relay";
-import { Database, SQLiteError } from "bun:sqlite";
-import { BunSqliteEventDatabase } from "applesauce-sqlite/bun";
+import { SQLiteError } from "bun:sqlite";
+import { decode, npubEncode, nprofileEncode } from "nostr-tools/nip19";
 
 export async function negSyncFromRelays(
   pool: RelayPool | null,
@@ -128,3 +128,96 @@ export async function fetchEventsForPubkeys(
 
   return allEvents;
 }
+
+/**
+ * Validates if a string is a valid hex key (32 bytes = 64 hex characters)
+ * @param value The string to validate
+ * @returns True if valid hex key, false otherwise
+ */
+export function isHexKey(value: string): boolean {
+  if (!value || typeof value !== "string") return false;
+  return /^[0-9a-fA-F]{64}$/.test(value);
+}
+
+/**
+ * Validates and decodes a nostr identifier (hex pubkey, npub, or nprofile)
+ * @param identifier The identifier to validate and decode
+ * @returns The hex pubkey if valid, null otherwise
+ */
+export function validateAndDecodePubkey(identifier: string): string | null {
+  if (!identifier) return null;
+
+  // Check if it's a hex pubkey
+  if (isHexKey(identifier)) {
+    return identifier.toLowerCase();
+  }
+
+  try {
+    // Try to decode as nip19
+    const { type, data } = decode(identifier);
+
+    if (type === "npub") {
+      return data as string;
+    } else if (type === "nprofile") {
+      const profile = data as { pubkey: string; relays?: string[] };
+      return profile.pubkey;
+    }
+  } catch (error) {
+    // Invalid nip19 format
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Encodes a hex pubkey to npub format
+ * @param hexPubkey The hex pubkey to encode
+ * @returns The npub encoded string
+ */
+export function encodeNpub(hexPubkey: string): string {
+  return npubEncode(hexPubkey);
+}
+
+/**
+ * Encodes a hex pubkey and optional relays to nprofile format
+ * @param hexPubkey The hex pubkey to encode
+ * @param relays Optional array of relay URLs
+ * @returns The nprofile encoded string
+ */
+export function encodeNprofile(hexPubkey: string, relays?: string[]): string {
+  return nprofileEncode({ pubkey: hexPubkey, relays: relays || [] });
+}
+
+/**
+ * Type guard functions for nostr identifiers
+ */
+export const NostrIdentifierTypeGuard = {
+  isNpub: (value: string): boolean => {
+    if (!value) return false;
+    try {
+      const { type } = decode(value);
+      return type === "npub";
+    } catch {
+      return false;
+    }
+  },
+
+  isNprofile: (value: string): boolean => {
+    if (!value) return false;
+    try {
+      const { type } = decode(value);
+      return type === "nprofile";
+    } catch {
+      return false;
+    }
+  },
+
+  isHexPubkey: (value: string): boolean => {
+    return isHexKey(value);
+  },
+
+  isValidPubkeyIdentifier: (value: string): boolean => {
+    return validateAndDecodePubkey(value) !== null;
+  },
+};

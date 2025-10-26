@@ -1,4 +1,4 @@
-import type { NostrProfile } from "./types";
+import type { NostrProfile } from "../types";
 
 export async function withTimeout<T>(
   promise: Promise<T>,

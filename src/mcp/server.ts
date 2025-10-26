@@ -10,6 +10,7 @@ import {
 } from "@contextvm/sdk";
 import { getPublicKey } from "nostr-tools";
 import { hexToBytes } from "nostr-tools/utils";
+import { validateAndDecodePubkey } from "@/utils/utils.nostr.js";
 
 /**
  * Start the MCP server for Relatr
@@ -84,8 +85,11 @@ function registerCalculateTrustScoreTool(
   const inputSchema = z.object({
     targetPubkey: z
       .string()
-      .length(64, "Target pubkey must be exactly 64 characters (hex)")
-      .regex(/^[0-9a-fA-F]+$/, "Target pubkey must be a valid hex string"),
+      .min(1, "Target pubkey cannot be empty")
+      .refine(
+        (value) => validateAndDecodePubkey(value) !== null,
+        "Target pubkey must be a valid hex, npub, or nprofile format",
+      ),
     weightingScheme: z
       .enum(["default", "social", "validation", "strict"])
       .optional()

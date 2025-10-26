@@ -1,7 +1,7 @@
 import { queryProfile } from "nostr-tools/nip05";
 import type { NostrProfile } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import { withTimeout } from "@/utils";
+import { withTimeout } from "@/utils/utils";
 import {
   WeightProfileManager,
   type CoverageValidationResult,

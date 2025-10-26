@@ -3,7 +3,7 @@ import { EventStore } from "applesauce-core";
 import { SocialGraph as NostrSocialGraph } from "nostr-social-graph";
 import type { RelatrConfig } from "../types";
 import { SimplePool } from "nostr-tools/pool";
-import { fetchEventsForPubkeys } from "@/utils.nostr";
+import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrEvent } from "nostr-tools";
 
 /**

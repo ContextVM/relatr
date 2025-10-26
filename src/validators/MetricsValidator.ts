@@ -6,7 +6,7 @@ import type {
 } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import { withTimeout } from "@/utils";
+import { withTimeout } from "@/utils/utils";
 import {
   WeightProfileManager,
   type CoverageValidationResult,
