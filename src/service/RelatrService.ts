@@ -235,7 +235,7 @@ export class RelatrService {
                         
                         // Calculate relevance boost and exact match status
                         if ((name === query || displayName === query) && trustScore.score > 0.5) {
-                            relevanceBoost = 0.5; // Strong boost for exact matches
+                            relevanceBoost = 0.15;
                             exactMatch = true;
                         }
                     }
