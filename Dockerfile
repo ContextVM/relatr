@@ -32,6 +32,13 @@ COPY --from=prerelease /usr/src/app/relatr .
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
 
+# Create volume for data directory
+VOLUME /usr/src/app/data
+
+# Set database paths
+ENV DATABASE_PATH=/usr/src/app/data/relatr.db
+ENV GRAPH_BINARY_PATH=/usr/src/app/data/socialGraph.bin
+
 # run the compiled binary directly
 # Use --user flag when running docker to match host user UID
 # Example: docker run --user $(id -u):$(id -g) ...
