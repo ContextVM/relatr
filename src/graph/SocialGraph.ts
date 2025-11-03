@@ -170,7 +170,11 @@ export class SocialGraph {
    * @returns Object with graph statistics
    * @throws SocialGraphError if operation fails
    */
-  getStats(): { users: number; follows: number } {
+  getStats(): {
+    users: number;
+    follows: number;
+    mutes: number;
+  } {
     this.ensureInitialized();
 
     try {

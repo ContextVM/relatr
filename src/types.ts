@@ -89,6 +89,7 @@ export interface StatsResult {
     stats: {
       users: number;
       follows: number;
+      mutes: number;
     };
     rootPubkey: string;
   };
