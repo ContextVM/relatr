@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  relatr:
+    # Use the pre-built image from GitHub Container Registry
+    # image: ghcr.io/contextvm/relatr:latest
+
+    # Alternatively, build from local Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: relatr
+
+    # Match host user permissions for data directory
+    user: "${UID:-1000}:${GID:-1000}"
+
+    # Environment variables - see .env.example for all options
+    environment:
+      # Required
+      SERVER_SECRET_KEY: ${SERVER_SECRET_KEY}
+
+      # Optional defaults will be used if not specified
+      DEFAULT_SOURCE_PUBKEY: 6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93
+      SERVER_RELAYS: wss://relay.contextvm.org
+
+    # Persist data directory for database and social graph
+    volumes:
+      - ./data:/usr/src/app/data
+
+    # Restart policy for production reliability
+    restart: unless-stopped
+# Volumes definition (optional, uses bind mount by default)
+# volumes:
+#   relatr-data:
+#     driver: local
+

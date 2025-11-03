@@ -17,25 +17,40 @@ Relatr measures relative trust between Nostr public keys by analyzing social gra
 
 ## Getting Started
 
-### Pull the Latest Docker Image
+### Docker Compose
 
-Relatr is automatically built and published to GitHub Container Registry on every commit to the master branch. You can pull the latest image using:
+The easiest way to run Relatr is using Docker Compose. A complete `docker-compose.yml` is included in the repository.
+
+#### Quick Start
 
 ```bash
-# Pull the latest image from GitHub Container Registry
-docker pull ghcr.io/contextvm/relatr:latest
+# Clone the repository
+git clone https://github.com/contextvm/relatr.git
+cd relatr
 
-# Or pull a specific commit-based tag (example)
-docker pull ghcr.io/contextvm/relatr:master-5d0b2be
+# Copy the example environment file
+cp .env.example .env
+
+# Generate a server secret key
+openssl rand -hex 32
+
+# Edit .env and set your SERVER_SECRET_KEY
+nano .env
+
+# Start the service
+docker compose up -d
+
+# View logs
+docker compose logs -f
 ```
 
-### Run the Container
+#### Environment Configuration
 
-The Docker image runs the ContextVM MCP server by default, which provides tools for trust score calculation, profile search, and health checks.
+Create a `.env` file with at minimum:
 
-#### Environment Variables
-
-Relatr uses environment variables for configuration. The application automatically loads and validates these variables on startup:
+```bash
+SERVER_SECRET_KEY=your_generated_hex_key_here
+```
 
 **Required Variables:**
 
@@ -46,56 +61,32 @@ Relatr uses environment variables for configuration. The application automatical
 - `DEFAULT_SOURCE_PUBKEY` - Default perspective pubkey for trust calculations (hex format) (defaults to Gigi's pubkey)
 - `NOSTR_RELAYS` - Comma-separated relay URLs for social graph data
 - `SERVER_RELAYS` - Comma-separated relay URLs for server operations
-- `GRAPH_BINARY_PATH` - Path to social graph binary file
-- `DATABASE_PATH` - SQLite database path
-- `DATA_DIR` - Data directory path (default: ./app/data)
+- `GRAPH_BINARY_PATH` - Path to social graph binary file (default: ./data/socialGraph.bin)
+- `DATABASE_PATH` - SQLite database path (default: ./data/relatr.db)
 - `DECAY_FACTOR` - Alpha parameter in distance formula (default: 0.1)
-- `NUMBER_OF_HOPS` - Social graph traversal depth (default: 2)
+- `NUMBER_OF_HOPS` - Social graph traversal depth (default: 1)
 - `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
 
-#### Basic Configuration
+See `.env.example` for a complete configuration template with all available options.
+
+#### Managing the Service
 
 ```bash
-# Minimal configuration - only server secret key required
-# Use --user flag to match host user permissions for data persistence
-docker run -d \
-  -e SERVER_SECRET_KEY=your_server_privkey_here \
-  -v $(pwd)/data:/usr/src/app/data \
-  --user $(id -u):$(id -g) \
-  ghcr.io/contextvm/relatr:latest
-```
+# Start the service
+docker compose up -d
 
-#### Advanced Configuration
+# View logs
+docker compose logs -f
 
-```bash
-# With environment file (recommended for production)
-# Copy .env.example to .env and customize
-docker run -d \
-  --env-file .env \
-  -v $(pwd)/data:/usr/src/app/data \
-  --user $(id -u):$(id -g) \
-  ghcr.io/contextvm/relatr:latest
-```
+# Stop the service
+docker compose down
 
-### Docker Compose
+# Restart the service
+docker compose restart
 
-For production deployments, use Docker Compose:
-
-```yaml
-# docker-compose.yml
-version: "3.8"
-services:
-  relatr:
-    image: ghcr.io/contextvm/relatr:latest
-    user: "${UID:-1000}:${GID:-1000}"
-    environment:
-      - SERVER_SECRET_KEY=your_server_privkey_here
-      - DEFAULT_SOURCE_PUBKEY=your_source_pubkey_here
-      - NOSTR_RELAYS=wss://relay.damus.io,wss://relay.nostr.band
-      - SERVER_RELAYS=wss://relay.contextvm.org
-    volumes:
-      - ./data:/usr/src/app/data
-    restart: unless-stopped
+# Update to latest version
+docker compose pull
+docker compose up -d
 ```
 
 ## Architecture Overview
