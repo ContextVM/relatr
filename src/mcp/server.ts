@@ -203,6 +203,7 @@ function registerStatsTool(
       stats: z.object({
         users: z.number(),
         follows: z.number(),
+        mutes: z.number(),
       }),
       rootPubkey: z.string(),
     }),

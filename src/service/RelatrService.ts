@@ -412,11 +412,16 @@ export class RelatrService {
             }
 
             // Get social graph stats
-            let socialGraphStats = { users: 0, follows: 0 };
+            let socialGraphStats = { users: 0, follows: 0, mutes: 0 };
             let rootPubkey = "";
             
             if (this.socialGraph) {
-                socialGraphStats = this.socialGraph.getStats();
+                const fullStats = this.socialGraph.getStats();
+                socialGraphStats = {
+                    users: fullStats.users,
+                    follows: fullStats.follows,
+                    mutes: fullStats.mutes
+                };
                 rootPubkey = this.socialGraph.getCurrentRoot();
             }
 
@@ -442,7 +447,7 @@ export class RelatrService {
                     metadata: { totalEntries: 0 }
                 },
                 socialGraph: {
-                    stats: { users: 0, follows: 0 },
+                    stats: { users: 0, follows: 0, mutes: 0 },
                     rootPubkey: ""
                 }
             };
