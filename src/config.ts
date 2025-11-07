@@ -1,3 +1,4 @@
+import { normalizeToPubkey } from "applesauce-core/helpers";
 import type { RelatrConfig } from "./types";
 import { WeightProfileManager } from "./validators/weight-profiles";
 import { z } from "zod";
@@ -47,7 +48,7 @@ export const RelatrConfigSchema = z.object({
  */
 export function loadConfig(): RelatrConfig {
   const configData = {
-    defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY,
+    defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY ? normalizeToPubkey(process.env.DEFAULT_SOURCE_PUBKEY) : undefined,
     graphBinaryPath: process.env.GRAPH_BINARY_PATH,
     databasePath: process.env.DATABASE_PATH,
     nostrRelays: process.env.NOSTR_RELAYS?.split(",").map((relay) =>

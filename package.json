@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "start": "bun run process-pastry --cmd \"bun run index.ts\" --env .env --example-env .env.example --port 3000",
     "mcp": "bun run src/mcp/server.ts",
     "format": "prettier --write .",
     "build": "bun build ./index.ts --outdir ./dist --target bun",
@@ -25,6 +26,7 @@
     "applesauce-relay": "^4.1.0",
     "nostr-social-graph": "^1.0.33",
     "nostr-tools": "^2.17.0",
+    "process-pastry": "https://github.com/hzrd149/process-pastry",
     "zod": "^3.25.76"
   }
 }

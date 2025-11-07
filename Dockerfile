@@ -32,6 +32,9 @@ COPY --from=prerelease /usr/src/app/relatr .
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
 
+# copy .env.example for process-pastry schema
+COPY --from=prerelease /usr/src/app/.env.example ./.env.example
+
 # Create volume for data directory
 VOLUME /usr/src/app/data
 
@@ -39,8 +42,8 @@ VOLUME /usr/src/app/data
 ENV DATABASE_PATH=/usr/src/app/data/relatr.db
 ENV GRAPH_BINARY_PATH=/usr/src/app/data/socialGraph.bin
 
-# run the compiled binary directly
+# run process-pastry with the main app
 # Use --user flag when running docker to match host user UID
 # Example: docker run --user $(id -u):$(id -g) ...
 EXPOSE 3000/tcp
-CMD [ "./relatr" ]
+CMD [ "bun", "run", "process-pastry", "--cmd", "./relatr", "--env", "./data/.env", "--example-env", ".env.example", "--port", "3000" ]

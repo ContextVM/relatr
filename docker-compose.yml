@@ -28,6 +28,9 @@ services:
     volumes:
       - ./data:/usr/src/app/data
 
+    ports:
+      - 3000:3000
+
     # Restart policy for production reliability
     restart: unless-stopped
 # Volumes definition (optional, uses bind mount by default)
