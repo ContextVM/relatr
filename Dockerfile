@@ -35,6 +35,9 @@ COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schem
 # copy .env.example for process-pastry schema
 COPY --from=prerelease /usr/src/app/.env.example ./.env.example
 
+# Copy the config UI app
+COPY --from=prerelease /usr/src/app/config-ui/* ./config-ui/
+
 # Create volume for data directory
 VOLUME /usr/src/app/data
 
@@ -46,4 +49,4 @@ ENV GRAPH_BINARY_PATH=/usr/src/app/data/socialGraph.bin
 # Use --user flag when running docker to match host user UID
 # Example: docker run --user $(id -u):$(id -g) ...
 EXPOSE 3000/tcp
-CMD [ "bun", "run", "process-pastry", "--cmd", "./relatr", "--env", "./data/.env", "--example-env", ".env.example", "--port", "3000" ]
+CMD [ "./relatr" ]

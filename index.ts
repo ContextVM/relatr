@@ -1,6 +1,6 @@
 import { parseArgs } from "util";
-import { RelatrService } from "./src/service/RelatrService";
-import { loadConfig } from "./src/config";
+import { startServer } from "process-pastry";
+import configApp from "./config-ui/index.html";
 
 const printHelp = () => {
   console.log(`
@@ -28,30 +28,12 @@ if (values.help) {
   process.exit(0);
 }
 
-const config = loadConfig();
-const relatrService = new RelatrService(config);
-
-const main = async () => {
-  console.log("Initializing RelatrService...");
-  try {
-    await relatrService.initialize();
-  } catch (error) {
-    console.error("An error occurred:", error);
-    process.exit(1);
-  }
-};
-
-main().catch((error) => {
-  console.error("Unhandled error in main:", error);
-  process.exit(1);
+// Start process-pastry server with the bundled HTML
+startServer({
+  port: 3000,
+  envPath: ".env",
+  command: ["bun", "run", "src/app.ts"],
+  htmlRoute: "/",
+  html: configApp,
+  exampleEnvPath: ".env.example"
 });
-
-const gracefulShutdown = async (signal: string) => {
-  console.log(`\nReceived ${signal}. Shutting down gracefully...`);
-  await relatrService.shutdown();
-  console.log("Shutdown complete.");
-  process.exit(0);
-};
-
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

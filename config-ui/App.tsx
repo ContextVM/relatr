@@ -1,0 +1,230 @@
+import { useState, useEffect } from "react";
+import { ServerSettings } from "./components/ServerSettings";
+import { SocialGraphSettings } from "./components/SocialGraphSettings";
+import { StatusIndicator } from "./components/StatusIndicator";
+import {
+  loadConfig,
+  updateConfig,
+  getStatus,
+  loadExample,
+  getExisting,
+  type ConfigResponse,
+  type StatusResponse,
+  type ExampleResponse,
+  stringToArray,
+  arrayToString,
+} from "./api";
+
+function App() {
+  const [config, setConfig] = useState<ConfigResponse>({});
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [example, setExample] = useState<ExampleResponse | null>(null);
+  const [existingVars, setExistingVars] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Load initial data
+  useEffect(() => {
+    loadInitialData();
+    // Poll status every 2 seconds
+    const statusInterval = setInterval(() => {
+      refreshStatus();
+    }, 2000);
+    return () => clearInterval(statusInterval);
+  }, []);
+
+  async function loadInitialData() {
+    try {
+      setLoading(true);
+      setError(null);
+      const [configData, statusData, exampleData, existingData] = await Promise.all([
+        loadConfig(),
+        getStatus(),
+        loadExample(),
+        getExisting(),
+      ]);
+      setConfig(configData);
+      setStatus(statusData);
+      setExample(exampleData);
+      setExistingVars(existingData.variables);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function refreshStatus() {
+    try {
+      const statusData = await getStatus();
+      setStatus(statusData);
+    } catch (err) {
+      // Silently fail status updates
+    }
+  }
+
+  async function handleSave() {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+
+      // Prepare config object with proper formatting
+      const updates: ConfigResponse = {};
+
+      // Get current values from state
+      const serverSecretKey = config.SERVER_SECRET_KEY || "";
+      const serverRelays = stringToArray(config.SERVER_RELAYS);
+      const defaultSourcePubkey = config.DEFAULT_SOURCE_PUBKEY || "";
+      const nostrRelays = stringToArray(config.NOSTR_RELAYS);
+
+      // Validate required field only if it doesn't exist in process environment
+      const serverSecretKeyExists = existingVars.includes("SERVER_SECRET_KEY");
+      if (!serverSecretKeyExists && !serverSecretKey.trim()) {
+        throw new Error("SERVER_SECRET_KEY is required");
+      }
+
+      // Build updates object
+      // Only include SERVER_SECRET_KEY if it has a value
+      // (If it exists in process env and is empty, we don't update it)
+      if (serverSecretKey.trim()) {
+        updates.SERVER_SECRET_KEY = serverSecretKey;
+      }
+      if (serverRelays.length > 0) {
+        updates.SERVER_RELAYS = arrayToString(serverRelays);
+      }
+      if (defaultSourcePubkey.trim()) {
+        updates.DEFAULT_SOURCE_PUBKEY = defaultSourcePubkey;
+      }
+      if (nostrRelays.length > 0) {
+        updates.NOSTR_RELAYS = arrayToString(nostrRelays);
+      }
+
+      const result = await updateConfig(updates, true);
+
+      if (result.success) {
+        setSuccess("Configuration saved and process restarted successfully!");
+        // Refresh config and status after a short delay
+        setTimeout(() => {
+          loadInitialData();
+        }, 1000);
+      } else {
+        throw new Error(result.error || "Failed to save configuration");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save configuration");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleServerSecretKeyChange(value: string) {
+    setConfig({ ...config, SERVER_SECRET_KEY: value });
+  }
+
+  function handleServerRelaysChange(relays: string[]) {
+    setConfig({ ...config, SERVER_RELAYS: arrayToString(relays) });
+  }
+
+  function handleDefaultSourcePubkeyChange(value: string) {
+    setConfig({ ...config, DEFAULT_SOURCE_PUBKEY: value });
+  }
+
+  function handleNostrRelaysChange(relays: string[]) {
+    setConfig({ ...config, NOSTR_RELAYS: arrayToString(relays) });
+  }
+
+  if (loading) {
+    return (
+      <div className="app">
+        <div className="container">
+          <div className="loading-state">Loading configuration...</div>
+        </div>
+      </div>
+    );
+  }
+
+  const serverSecretKey = config.SERVER_SECRET_KEY || "";
+  const serverRelays = stringToArray(config.SERVER_RELAYS);
+  const defaultSourcePubkey = config.DEFAULT_SOURCE_PUBKEY || "";
+  const nostrRelays = stringToArray(config.NOSTR_RELAYS);
+
+  return (
+    <div className="app">
+      <div className="container">
+        <header className="app-header">
+          <h1>Relatr Configuration</h1>
+          <StatusIndicator status={status} loading={loading} />
+        </header>
+
+        {error && (
+          <div className="alert alert-error">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="alert alert-success">
+            <strong>Success:</strong> {success}
+          </div>
+        )}
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSave();
+          }}
+          className="config-form"
+        >
+          <ServerSettings
+            serverSecretKey={serverSecretKey}
+            serverRelays={serverRelays}
+            onServerSecretKeyChange={handleServerSecretKeyChange}
+            onServerRelaysChange={handleServerRelaysChange}
+            isServerSecretKeyRequired={!existingVars.includes("SERVER_SECRET_KEY")}
+            serverSecretKeyDescription={
+              example?.SERVER_SECRET_KEY?.description ||
+              "Server's Nostr private key (hex format)"
+            }
+            serverRelaysDescription={
+              example?.SERVER_RELAYS?.description ||
+              "Comma-separated relay URLs for server operations"
+            }
+          />
+
+          <SocialGraphSettings
+            defaultSourcePubkey={defaultSourcePubkey}
+            nostrRelays={nostrRelays}
+            onDefaultSourcePubkeyChange={handleDefaultSourcePubkeyChange}
+            onNostrRelaysChange={handleNostrRelaysChange}
+            defaultSourcePubkeyDescription={
+              example?.DEFAULT_SOURCE_PUBKEY?.description ||
+              "Default perspective pubkey for trust calculations (hex or npub format)"
+            }
+            nostrRelaysDescription={
+              example?.NOSTR_RELAYS?.description ||
+              "Comma-separated relay URLs for social graph data"
+            }
+          />
+
+          <div className="form-actions">
+            <button
+              type="submit"
+              className="save-button"
+              disabled={
+              saving ||
+              (!existingVars.includes("SERVER_SECRET_KEY") && !serverSecretKey.trim())
+            }
+            >
+              {saving ? "Saving..." : "Save & Restart"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default App;
