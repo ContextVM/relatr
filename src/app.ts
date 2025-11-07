@@ -1,3 +1,4 @@
+#! /usr/bin/env bun
 import { RelatrService } from "./service/RelatrService";
 import { loadConfig } from "./config";
 
@@ -28,4 +29,3 @@ const gracefulShutdown = async (signal: string) => {
 
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-

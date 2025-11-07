@@ -16,18 +16,15 @@ export function StatusIndicator({ status, loading }: StatusIndicatorProps) {
   }
 
   const isRunning = status.running;
-  const hasError = status.lastError !== null;
 
   return (
     <div className={`status-indicator ${isRunning ? "running" : "stopped"}`}>
       <span className="status-dot"></span>
       <span className="status-text">
         {isRunning ? (
-          <>
-            Running {status.pid !== null && `(PID: ${status.pid})`}
-          </>
+          <>Running {status.pid !== null && `(PID: ${status.pid})`}</>
         ) : (
-          <>Stopped{hasError && `: ${status.lastError}`}</>
+          <>Stopped</>
         )}
       </span>
     </div>

@@ -66,9 +66,7 @@ export function SocialGraphSettings({
             placeholder="Enter default source pubkey (hex or npub format)"
             className={`text-input ${pubkeyError ? "error" : ""}`}
           />
-          {pubkeyError && (
-            <span className="error-message">{pubkeyError}</span>
-          )}
+          {pubkeyError && <span className="error-message">{pubkeyError}</span>}
         </div>
 
         <div className="form-field">

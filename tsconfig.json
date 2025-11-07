@@ -40,6 +40,6 @@
       "@mcp/*": ["./src/mcp/*"]
     }
   },
-  "include": ["src/**/*", "config-ui/**/*"],
+  "include": ["src/**/*", "config-ui/**/*", "manager.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -48,7 +48,9 @@ export const RelatrConfigSchema = z.object({
  */
 export function loadConfig(): RelatrConfig {
   const configData = {
-    defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY ? normalizeToPubkey(process.env.DEFAULT_SOURCE_PUBKEY) : undefined,
+    defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY
+      ? normalizeToPubkey(process.env.DEFAULT_SOURCE_PUBKEY)
+      : undefined,
     graphBinaryPath: process.env.GRAPH_BINARY_PATH,
     databasePath: process.env.DATABASE_PATH,
     nostrRelays: process.env.NOSTR_RELAYS?.split(",").map((relay) =>

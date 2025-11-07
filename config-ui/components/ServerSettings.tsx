@@ -146,11 +146,14 @@ export function ServerSettings({
               </div>
             </div>
           )}
-          {isDeriving && serverSecretKey && serverSecretKey.trim().length > 0 && !pubkey && (
-            <div className="pubkey-deriving">
-              <span className="label-description">Deriving pubkey...</span>
-            </div>
-          )}
+          {isDeriving &&
+            serverSecretKey &&
+            serverSecretKey.trim().length > 0 &&
+            !pubkey && (
+              <div className="pubkey-deriving">
+                <span className="label-description">Deriving pubkey...</span>
+              </div>
+            )}
         </div>
 
         <div className="form-field">

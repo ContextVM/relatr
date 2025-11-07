@@ -23,7 +23,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   // Load initial data
   useEffect(() => {
@@ -39,12 +38,13 @@ function App() {
     try {
       setLoading(true);
       setError(null);
-      const [configData, statusData, exampleData, existingData] = await Promise.all([
-        loadConfig(),
-        getStatus(),
-        loadExample(),
-        getExisting(),
-      ]);
+      const [configData, statusData, exampleData, existingData] =
+        await Promise.all([
+          loadConfig(),
+          getStatus(),
+          loadExample(),
+          getExisting(),
+        ]);
       setConfig(configData);
       setStatus(statusData);
       setExample(exampleData);
@@ -69,7 +69,6 @@ function App() {
     try {
       setSaving(true);
       setError(null);
-      setSuccess(null);
 
       // Prepare config object with proper formatting
       const updates: ConfigResponse = {};
@@ -105,7 +104,6 @@ function App() {
       const result = await updateConfig(updates, true);
 
       if (result.success) {
-        setSuccess("Configuration saved and process restarted successfully!");
         // Refresh config and status after a short delay
         setTimeout(() => {
           loadInitialData();
@@ -114,7 +112,9 @@ function App() {
         throw new Error(result.error || "Failed to save configuration");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save configuration");
+      setError(
+        err instanceof Error ? err.message : "Failed to save configuration",
+      );
     } finally {
       setSaving(false);
     }
@@ -159,18 +159,6 @@ function App() {
           <StatusIndicator status={status} loading={loading} />
         </header>
 
-        {error && (
-          <div className="alert alert-error">
-            <strong>Error:</strong> {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="alert alert-success">
-            <strong>Success:</strong> {success}
-          </div>
-        )}
-
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -183,7 +171,10 @@ function App() {
             serverRelays={serverRelays}
             onServerSecretKeyChange={handleServerSecretKeyChange}
             onServerRelaysChange={handleServerRelaysChange}
-            isServerSecretKeyRequired={!existingVars.includes("SERVER_SECRET_KEY")}
+            isServerSecretKeyRequired={
+              !existingVars.includes("SERVER_SECRET_KEY") &&
+              !serverSecretKey.trim()
+            }
             serverSecretKeyDescription={
               example?.SERVER_SECRET_KEY?.description ||
               "Server's Nostr private key (hex format)"
@@ -214,14 +205,21 @@ function App() {
               type="submit"
               className="save-button"
               disabled={
-              saving ||
-              (!existingVars.includes("SERVER_SECRET_KEY") && !serverSecretKey.trim())
-            }
+                saving ||
+                (!existingVars.includes("SERVER_SECRET_KEY") &&
+                  !serverSecretKey.trim())
+              }
             >
               {saving ? "Saving..." : "Save & Restart"}
             </button>
           </div>
         </form>
+
+        {(error || status?.lastError) && (
+          <div className="error-console">
+            <pre>{error || status?.lastError}</pre>
+          </div>
+        )}
       </div>
     </div>
   );

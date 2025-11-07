@@ -40,7 +40,9 @@ export function RelayListInput({
     <div className="relay-list-input">
       <label>
         <span className="label-text">{label}</span>
-        {description && <span className="label-description">{description}</span>}
+        {description && (
+          <span className="label-description">{description}</span>
+        )}
       </label>
       <div className="relay-list-container">
         {value.length > 0 && (

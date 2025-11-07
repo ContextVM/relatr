@@ -41,6 +41,7 @@ bun start
 ```
 
 The config UI allows you to:
+
 - View and edit all environment variables
 - See descriptions and default values for each setting
 - Save changes and automatically restart the service

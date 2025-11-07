@@ -21,13 +21,15 @@ FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
-# Compile the MCP server into a standalone binary
-RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr
+# Compile the server into a standalone binary
+RUN bun build --compile --minify --sourcemap ./src/app.ts --outfile relatr
+RUN bun build --compile --minify --sourcemap ./manager.ts --outfile manager
 
 # copy production dependencies and compiled binary into final image
 FROM base AS release
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/relatr .
+COPY --from=prerelease /usr/src/app/manager .
 
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
@@ -49,4 +51,4 @@ ENV GRAPH_BINARY_PATH=/usr/src/app/data/socialGraph.bin
 # Use --user flag when running docker to match host user UID
 # Example: docker run --user $(id -u):$(id -g) ...
 EXPOSE 3000/tcp
-CMD [ "./relatr" ]
+CMD [ "./manager", "-c", "./relatr", "-e", "/usr/src/app/data/.env" ]

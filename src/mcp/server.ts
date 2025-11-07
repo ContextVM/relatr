@@ -1,16 +1,15 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { RelatrService } from "../service/RelatrService.js";
-import { loadConfig } from "../config.js";
+import { validateAndDecodePubkey } from "@/utils/utils.nostr.js";
 import {
   ApplesauceRelayPool,
   NostrServerTransport,
   PrivateKeySigner,
 } from "@contextvm/sdk";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getPublicKey } from "nostr-tools";
 import { hexToBytes } from "nostr-tools/utils";
-import { validateAndDecodePubkey } from "@/utils/utils.nostr.js";
+import { z } from "zod";
+import { loadConfig } from "../config.js";
+import { RelatrService } from "../service/RelatrService.js";
 
 /**
  * Start the MCP server for Relatr
