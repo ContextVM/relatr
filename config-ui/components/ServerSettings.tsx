@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { RelayListInput } from "./RelayListInput";
-import { getPublicKey } from "nostr-tools";
-import { hexToBytes } from "nostr-tools/utils";
+import { getPublicKey, generateSecretKey } from "nostr-tools";
+import { hexToBytes, bytesToHex } from "nostr-tools/utils";
 
 interface ServerSettingsProps {
   serverSecretKey: string;
@@ -61,6 +61,12 @@ export function ServerSettings({
   const [pubkey, setPubkey] = useState<string | null>(null);
   const [isDeriving, setIsDeriving] = useState(false);
 
+  const handleGenerateNewKey = () => {
+    const secretKeyBytes = generateSecretKey();
+    const secretKeyHex = bytesToHex(secretKeyBytes);
+    onServerSecretKeyChange(secretKeyHex);
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -108,17 +114,27 @@ export function ServerSettings({
               <span className="required-badge">Required</span>
             )}
           </label>
-          <input
-            id="server-secret-key"
-            type="password"
-            value={serverSecretKey}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              onServerSecretKeyChange(e.target.value);
-            }}
-            placeholder="Enter server secret key (hex format)"
-            className="text-input"
-            required={isServerSecretKeyRequired}
-          />
+          <div className="input-with-button">
+            <input
+              id="server-secret-key"
+              type="password"
+              value={serverSecretKey}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                onServerSecretKeyChange(e.target.value);
+              }}
+              placeholder="Enter server secret key (hex format)"
+              className="text-input"
+              required={isServerSecretKeyRequired}
+            />
+            <button
+              type="button"
+              onClick={handleGenerateNewKey}
+              className="generate-button"
+              title="Generate new secret key"
+            >
+              Generate New
+            </button>
+          </div>
           {pubkey && (
             <div className="pubkey-display">
               <label className="pubkey-label">

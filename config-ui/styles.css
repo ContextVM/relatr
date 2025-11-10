@@ -216,6 +216,39 @@ label {
   letter-spacing: 0.1em;
 }
 
+/* Input with Button */
+.input-with-button {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.input-with-button .text-input {
+  flex: 1;
+}
+
+.generate-button {
+  padding: 0.75rem 1.5rem;
+  background-color: var(--success-color);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.generate-button:hover {
+  background-color: #218838;
+}
+
+.generate-button:active {
+  background-color: #1e7e34;
+}
+
 .error-message {
   color: var(--error-color);
   font-size: 0.85rem;
@@ -519,6 +552,14 @@ label {
   }
 
   .copy-button {
+    width: 100%;
+  }
+
+  .input-with-button {
+    flex-direction: column;
+  }
+
+  .generate-button {
     width: 100%;
   }
 }
