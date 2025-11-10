@@ -1,5 +1,13 @@
 # relatr
 
+## 0.0.4
+
+### Patch Changes
+
+- refactor(server): refactor server public key retrieval, remove precomputed social graph
+- 0b98a40: Fix stats tool returning extra fields
+- Add a http config UI ([#4](https://github.com/ContextVM/relatr/issues/4))
+
 ## 0.0.3
 
 ### Patch Changes

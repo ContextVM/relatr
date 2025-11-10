@@ -50,10 +50,7 @@ export async function startMCPServer(): Promise<void> {
     await server.connect(transport);
 
     console.error("[Relatr MCP] Server started successfully");
-    console.error(
-      "[Relatr MCP] With key:",
-      getPublicKey(hexToBytes(config.serverSecretKey)),
-    );
+    console.error("[Relatr MCP] With key:", await transport["getPublicKey"]());
   } catch (error) {
     console.error("[Relatr MCP] Failed to start server:", error);
 
