@@ -1,32 +1,6 @@
-import { parseArgs } from "util";
-import { RelatrService } from "./src/service/RelatrService";
-import { loadConfig } from "./src/config";
-
-const printHelp = () => {
-  console.log(`
-Usage: bun run index.ts [options]
-
-Options:
-  -h, --help             Show this help message.
-    `);
-};
-
-const { values } = parseArgs({
-  args: Bun.argv,
-  options: {
-    help: {
-      type: "boolean",
-      short: "h",
-    },
-  },
-  strict: false,
-  allowPositionals: true,
-});
-
-if (values.help) {
-  printHelp();
-  process.exit(0);
-}
+#! /usr/bin/env bun
+import { RelatrService } from "./service/RelatrService";
+import { loadConfig } from "./config";
 
 const config = loadConfig();
 const relatrService = new RelatrService(config);

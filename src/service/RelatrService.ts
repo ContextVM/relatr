@@ -1,12 +1,25 @@
+import { DataStore } from '@/database/data-store';
+import { sanitizeProfile } from '@/utils/utils';
+import { validateAndDecodePubkey } from '@/utils/utils.nostr';
+import { RelayPool } from 'applesauce-relay';
+import { Database } from 'bun:sqlite';
+import type { NostrEvent } from 'nostr-social-graph';
+import { dirname } from 'path';
+import { createWeightProfileManager, RelatrConfigSchema } from '../config';
+import { cleanupExpiredCache, closeDatabase, initDatabase } from '../database/connection';
+import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
+import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
+import { SocialGraphBuilder } from '../graph/SocialGraphBuilder';
+import { TrustCalculator } from '../trust/TrustCalculator';
 import type {
-    RelatrConfig,
     CalculateTrustScoreParams,
-    TrustScore,
-    StatsResult,
+    NostrProfile,
     ProfileMetrics,
+    RelatrConfig,
     SearchProfilesParams,
     SearchProfilesResult,
-    NostrProfile,
+    StatsResult,
+    TrustScore,
     WeightingScheme,
 } from '../types';
 import {
@@ -14,20 +27,7 @@ import {
     SocialGraphError,
     ValidationError,
 } from '../types';
-import { RelayPool } from 'applesauce-relay';
-import { Database } from 'bun:sqlite';
-import { initDatabase, closeDatabase, cleanupExpiredCache, isDatabaseHealthy } from '../database/connection';
-import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
-import { SocialGraphBuilder } from '../graph/SocialGraphBuilder';
-import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
-import { TrustCalculator } from '../trust/TrustCalculator';
 import { MetricsValidator } from '../validators/MetricsValidator';
-import { createWeightProfileManager, RelatrConfigSchema } from '../config';
-import { sanitizeProfile } from '@/utils/utils';
-import { DataStore } from '@/database/data-store';
-import type { NostrEvent } from 'nostr-social-graph';
-import { dirname } from 'path';
-import { validateAndDecodePubkey } from '@/utils/utils.nostr';
 
 export class RelatrService {
     private static readonly SEARCH_RELAYS = [

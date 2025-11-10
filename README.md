@@ -8,6 +8,7 @@ Relatr measures relative trust between Nostr public keys by analyzing social gra
 
 ## Features
 
+- **Web-Based Configuration UI**: Manage environment variables through a browser interface (default on port 3000)
 - **Social Graph Analysis**: Calculates trust distances using nostr-social-graph
 - **Profile Validation**: Validates NIP-05, Lightning addresses, and event publications
 - **Reciprocity Checking**: Verifies mutual follow relationships
@@ -17,9 +18,38 @@ Relatr measures relative trust between Nostr public keys by analyzing social gra
 
 ## Getting Started
 
+Relatr includes a web-based configuration UI powered by [process-pastry](https://github.com/hzrd149/process-pastry). The config UI is the default way to run Relatr and provides an easy interface for managing environment variables.
+
+### Quick Start with Config UI
+
+```bash
+# Clone the repository
+git clone https://github.com/contextvm/relatr.git
+cd relatr
+
+# Install dependencies
+bun install
+
+# Generate a server secret key
+openssl rand -hex 32
+
+# Start the service with config UI
+bun start
+
+# Access the config UI at http://localhost:3000
+# Configure your SERVER_SECRET_KEY and other settings through the web interface
+```
+
+The config UI allows you to:
+
+- View and edit all environment variables
+- See descriptions and default values for each setting
+- Save changes and automatically restart the service
+- Monitor process status and errors
+
 ### Docker Compose
 
-The easiest way to run Relatr is using Docker Compose. A complete `docker-compose.yml` is included in the repository.
+The easiest way to run Relatr in production is using Docker Compose. A complete `docker-compose.yml` is included in the repository.
 
 #### Quick Start
 
@@ -40,6 +70,7 @@ nano .env
 # Start the service
 docker compose up -d
 
+# Access the config UI at http://localhost:3000
 # View logs
 docker compose logs -f
 ```

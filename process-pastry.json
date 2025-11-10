@@ -1,0 +1,8 @@
+{
+  "cmd": "bun run index.ts",
+  "env": ".env",
+  "exampleEnv": ".env.example",
+  "port": "3000",
+  "html": "./config-ui/index.html",
+  "htmlRoute": "/"
+}
