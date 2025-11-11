@@ -29,16 +29,23 @@ export const RelatrConfigSchema = z.object({
   serverSecretKey: z.string().min(1, "SERVER_SECRET_KEY is required"),
   serverRelays: z.array(z.string()).default(["wss://relay.contextvm.org"]),
   decayFactor: z.number().min(0).default(0.1),
-  cacheTtlSeconds: z.number().positive().default(604800),
+  cacheTtlSeconds: z
+    .number()
+    .positive()
+    .default(60 * 60 * 1000 * 48),
   numberOfHops: z.number().int().positive().default(1),
   syncInterval: z
     .number()
     .positive()
-    .default(24 * 60 * 60 * 1000), // 24 hours in ms
+    .default(60 * 60 * 1000 * 21),
   cleanupInterval: z
     .number()
     .positive()
-    .default(60 * 60 * 1000 * 7), // 7 hours in ms
+    .default(60 * 60 * 1000 * 7),
+  validationSyncInterval: z
+    .number()
+    .positive()
+    .default(60 * 60 * 1000 * 3),
 });
 
 /**
@@ -74,6 +81,9 @@ export function loadConfig(): RelatrConfig {
       : undefined,
     cleanupInterval: process.env.CLEANUP_INTERVAL
       ? parseInt(process.env.CLEANUP_INTERVAL, 10)
+      : undefined,
+    validationSyncInterval: process.env.VALIDATION_SYNC_INTERVAL
+      ? parseInt(process.env.VALIDATION_SYNC_INTERVAL, 10)
       : undefined,
   };
 

@@ -87,7 +87,11 @@ export async function negSyncFromRelays(
 export async function fetchEventsForPubkeys(
   pubkeys: string[],
   kind: number,
-  relays: string[] = ["wss://relay.damus.io"],
+  relays: string[] = [
+    "wss://relay.damus.io",
+    "wss://profiles.nostr1.com/",
+    "wss://wot.grapevine.network/",
+  ],
   pool: RelayPool,
   eventStore?: EventStore,
 ): Promise<NostrEvent[]> {

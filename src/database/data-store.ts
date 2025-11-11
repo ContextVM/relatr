@@ -558,4 +558,51 @@ export class DataStore<T> {
       );
     }
   }
+
+  /**
+   * Get pubkeys that don't have validation scores in the database
+   * @param pubkeys - Array of pubkeys to check
+   * @returns Array of pubkeys without validation scores
+   */
+  async getPubkeysWithoutValidationScores(
+    pubkeys: string[],
+  ): Promise<string[]> {
+    if (this.tableName !== "profile_metrics") {
+      throw new DataStoreError(
+        "getPubkeysWithoutValidationScores is only supported for profile_metrics table",
+        "INVALID_OPERATION",
+      );
+    }
+
+    if (!pubkeys || pubkeys.length === 0) {
+      return [];
+    }
+
+    try {
+      const now = Math.floor(Date.now() / 1000);
+
+      // Create placeholders for the IN clause
+      const placeholders = pubkeys.map(() => "?").join(",");
+
+      // Query to find pubkeys that have validation scores
+      const query = this.db.query(`
+        SELECT DISTINCT pubkey
+        FROM profile_metrics
+        WHERE pubkey IN (${placeholders}) AND expires_at > ?
+      `);
+
+      const results = query.all(...pubkeys, now) as Array<{ pubkey: string }>;
+
+      // Create a Set of pubkeys that have validation scores
+      const pubkeysWithScores = new Set(results.map((row) => row.pubkey));
+
+      // Return pubkeys that are NOT in the set of pubkeys with scores
+      return pubkeys.filter((pubkey) => !pubkeysWithScores.has(pubkey));
+    } catch (error) {
+      throw new DataStoreError(
+        `Failed to get pubkeys without validation scores: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_PUBKEYS_WITHOUT_SCORES",
+      );
+    }
+  }
 }

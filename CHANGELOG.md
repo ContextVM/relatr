@@ -1,5 +1,20 @@
 # relatr
 
+## 0.0.5
+
+### Patch Changes
+
+- feat(backend): add validation sync and social graph improvements
+  - Add periodic validation sync for pubkeys missing validation scores
+  - Implement discovery queue system for processing contact events
+  - Add binary graph persistence functionality
+  - Update configuration with validation sync interval (3 hours default)
+  - Add sizeByDistance stats to social graph tracking
+  - Enhance relay configuration with additional relay URLs
+  - Update build targets and entry points in package.json
+
+  This enables background validation processing and improves social graph management through new async processes and persistence capabilities.
+
 ## 0.0.4
 
 ### Patch Changes

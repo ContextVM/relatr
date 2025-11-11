@@ -17,6 +17,7 @@ export interface RelatrConfig {
   numberOfHops: number;
   syncInterval: number;
   cleanupInterval: number;
+  validationSyncInterval: number;
 }
 export interface MetricWeights {
   distanceWeight: number;

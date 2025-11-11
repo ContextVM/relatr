@@ -1,14 +1,14 @@
 {
   "name": "relatr",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "type": "module",
   "private": true,
   "scripts": {
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
     "format": "prettier --write .",
-    "build": "bun build ./index.ts --outdir ./dist --target bun",
-    "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile relatr"
+    "build": "bun build ./src/app.ts --outdir ./dist --target bun",
+    "compile": "bun build --compile --minify --sourcemap ./src/app.ts --outfile relatr"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",

@@ -1,5 +1,6 @@
 import { SocialGraph as NostrSocialGraph } from "nostr-social-graph";
 import { SocialGraphError } from "../types";
+import type { NostrEvent } from "nostr-tools";
 
 /**
  * Social graph operations wrapper for Relatr v2
@@ -174,6 +175,9 @@ export class SocialGraph {
     users: number;
     follows: number;
     mutes: number;
+    sizeByDistance: {
+      [distance: number]: number;
+    };
   } {
     this.ensureInitialized();
 
@@ -342,6 +346,37 @@ export class SocialGraph {
       throw new SocialGraphError(
         `Failed to get users by distance: ${error instanceof Error ? error.message : String(error)}`,
         "GET_USERS_BY_DISTANCE",
+      );
+    }
+  }
+
+  /**
+   * Process contact events to integrate pubkeys into graph
+   * @param contactEvents - Contact list events for discovered pubkeys
+   */
+  async processContactEvents(contactEvents: NostrEvent[]): Promise<void> {
+    this.ensureInitialized();
+    for (const event of contactEvents) {
+      this.graph!.handleEvent(event);
+    }
+    await this.graph!.recalculateFollowDistances();
+  }
+
+  /**
+   * Save the graph to binary file
+   */
+  async saveToBinary(): Promise<void> {
+    this.ensureInitialized();
+    try {
+      const binaryData = await this.graph!.toBinary();
+      await Bun.write(this.binaryPath, binaryData);
+      console.log(
+        `[SocialGraph] 💾 Graph saved to ${this.binaryPath} (${binaryData.length} bytes)`,
+      );
+    } catch (error) {
+      throw new SocialGraphError(
+        `Failed to save graph to binary: ${error instanceof Error ? error.message : String(error)}`,
+        "SAVE_BINARY",
       );
     }
   }

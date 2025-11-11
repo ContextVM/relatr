@@ -176,14 +176,16 @@ function App() {
   }
 
   // Use the value from config if set, otherwise use the existing value from process.env
-  const serverSecretKey = config.SERVER_SECRET_KEY || existingVars.SERVER_SECRET_KEY || "";
+  const serverSecretKey =
+    config.SERVER_SECRET_KEY || existingVars.SERVER_SECRET_KEY || "";
   const serverRelays = stringToArray(config.SERVER_RELAYS);
   const defaultSourcePubkey = config.DEFAULT_SOURCE_PUBKEY || "";
   const nostrRelays = stringToArray(config.NOSTR_RELAYS);
 
   // Check if the value is actually set in the config file (not just from env)
   // Empty strings should be ignored
-  const hasServerSecretKeyInConfig = !!config.SERVER_SECRET_KEY && config.SERVER_SECRET_KEY.trim().length > 0;
+  const hasServerSecretKeyInConfig =
+    !!config.SERVER_SECRET_KEY && config.SERVER_SECRET_KEY.trim().length > 0;
 
   // Check if there's a non-empty existing value in the environment
   const hasNonEmptyExistingServerSecretKey =
@@ -224,8 +226,7 @@ function App() {
               "Comma-separated relay URLs for server operations"
             }
             hasExistingServerSecretKey={
-              hasNonEmptyExistingServerSecretKey &&
-              hasServerSecretKeyInConfig
+              hasNonEmptyExistingServerSecretKey && hasServerSecretKeyInConfig
             }
           />
 
@@ -250,8 +251,7 @@ function App() {
               className="save-button"
               disabled={
                 saving ||
-                (!hasNonEmptyExistingServerSecretKey &&
-                  !serverSecretKey.trim())
+                (!hasNonEmptyExistingServerSecretKey && !serverSecretKey.trim())
               }
             >
               {saving ? "Saving..." : "Save & Restart"}
