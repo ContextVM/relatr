@@ -20,7 +20,9 @@ function App() {
   const [config, setConfig] = useState<ConfigResponse>({});
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [example, setExample] = useState<ExampleResponse | null>(null);
-  const [existingVars, setExistingVars] = useState<string[]>([]);
+  const [existingVars, setExistingVars] = useState<
+    Record<string, string | undefined>
+  >({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,7 @@ function App() {
       setConfig(configData);
       setStatus(statusData);
       setExample(exampleData);
-      setExistingVars(existingData.variables);
+      setExistingVars(existingData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -80,9 +82,8 @@ function App() {
       const defaultSourcePubkey = config.DEFAULT_SOURCE_PUBKEY || "";
       const nostrRelays = stringToArray(config.NOSTR_RELAYS);
 
-      // Validate required field only if it doesn't exist in process environment
-      const serverSecretKeyExists = existingVars.includes("SERVER_SECRET_KEY");
-      if (!serverSecretKeyExists && !serverSecretKey.trim()) {
+      // Validate required field only if it doesn't exist in process environment (with a non-empty value)
+      if (!hasNonEmptyExistingServerSecretKey && !serverSecretKey.trim()) {
         throw new Error("SERVER_SECRET_KEY is required");
       }
 
@@ -151,9 +152,7 @@ function App() {
           loadInitialData();
         }, 1000);
       } else {
-        throw new Error(
-          result.error || "Failed to reset SERVER_SECRET_KEY",
-        );
+        throw new Error(result.error || "Failed to reset SERVER_SECRET_KEY");
       }
     } catch (err) {
       setError(
@@ -176,10 +175,21 @@ function App() {
     );
   }
 
-  const serverSecretKey = config.SERVER_SECRET_KEY || "";
+  // Use the value from config if set, otherwise use the existing value from process.env
+  const serverSecretKey = config.SERVER_SECRET_KEY || existingVars.SERVER_SECRET_KEY || "";
   const serverRelays = stringToArray(config.SERVER_RELAYS);
   const defaultSourcePubkey = config.DEFAULT_SOURCE_PUBKEY || "";
   const nostrRelays = stringToArray(config.NOSTR_RELAYS);
+
+  // Check if the value is actually set in the config file (not just from env)
+  // Empty strings should be ignored
+  const hasServerSecretKeyInConfig = !!config.SERVER_SECRET_KEY && config.SERVER_SECRET_KEY.trim().length > 0;
+
+  // Check if there's a non-empty existing value in the environment
+  const hasNonEmptyExistingServerSecretKey =
+    "SERVER_SECRET_KEY" in existingVars &&
+    !!existingVars.SERVER_SECRET_KEY &&
+    existingVars.SERVER_SECRET_KEY.trim().length > 0;
 
   return (
     <div className="app">
@@ -203,8 +213,7 @@ function App() {
             onServerRelaysChange={handleServerRelaysChange}
             onServerSecretKeyReset={handleServerSecretKeyReset}
             isServerSecretKeyRequired={
-              !existingVars.includes("SERVER_SECRET_KEY") &&
-              !serverSecretKey.trim()
+              !hasNonEmptyExistingServerSecretKey && !serverSecretKey.trim()
             }
             serverSecretKeyDescription={
               example?.SERVER_SECRET_KEY?.description ||
@@ -214,9 +223,10 @@ function App() {
               example?.SERVER_RELAYS?.description ||
               "Comma-separated relay URLs for server operations"
             }
-            hasExistingServerSecretKey={existingVars.includes(
-              "SERVER_SECRET_KEY",
-            )}
+            hasExistingServerSecretKey={
+              hasNonEmptyExistingServerSecretKey &&
+              hasServerSecretKeyInConfig
+            }
           />
 
           <SocialGraphSettings
@@ -240,7 +250,7 @@ function App() {
               className="save-button"
               disabled={
                 saving ||
-                (!existingVars.includes("SERVER_SECRET_KEY") &&
+                (!hasNonEmptyExistingServerSecretKey &&
                   !serverSecretKey.trim())
               }
             >

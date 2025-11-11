@@ -30,7 +30,7 @@ export interface SaveResponse {
 }
 
 export interface ExistingResponse {
-  variables: string[];
+  [key: string]: string | undefined;
 }
 
 /**
@@ -95,17 +95,19 @@ export async function loadExample(): Promise<ExampleResponse | null> {
 }
 
 /**
- * Get existing environment variables
+ * Get existing environment variables (exposed values from process.env)
+ * Returns an object with variable names as keys and their values
+ * Returns empty object if endpoint is not configured or fails
  */
 export async function getExisting(): Promise<ExistingResponse> {
   try {
     const response = await fetch(`${API_BASE}/existing`);
     if (!response.ok) {
-      return { variables: [] };
+      return {};
     }
     return await response.json();
   } catch {
-    return { variables: [] };
+    return {};
   }
 }
 

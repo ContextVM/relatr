@@ -125,7 +125,7 @@ export function ServerSettings({
               <span className="required-badge">Required</span>
             )}
           </label>
-          {hasExistingServerSecretKey && serverSecretKey && (
+          {hasExistingServerSecretKey && (
             <div className="alert alert-warning">
               <strong>⚠️ Warning:</strong> A SERVER_SECRET_KEY already exists in
               your environment. Setting a new value will override the existing
