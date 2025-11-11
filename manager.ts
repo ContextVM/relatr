@@ -29,5 +29,12 @@ startServer({
   command: values.command
     ? values.command.split(" ")
     : ["bun", "run", "src/app.ts"],
+  // Expose existing environment variables to the config UI
+  expose: [
+    "SERVER_SECRET_KEY",
+    "DEFAULT_SOURCE_PUBKEY",
+    "SERVER_RELAYS",
+    "NOSTR_RELAYS",
+  ],
   html: configApp,
 });
