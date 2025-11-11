@@ -8,6 +8,7 @@ import {
   getStatus,
   loadExample,
   getExisting,
+  deleteConfigVariable,
   type ConfigResponse,
   type StatusResponse,
   type ExampleResponse,
@@ -136,6 +137,35 @@ function App() {
     setConfig({ ...config, NOSTR_RELAYS: arrayToString(relays) });
   }
 
+  async function handleServerSecretKeyReset() {
+    try {
+      setSaving(true);
+      setError(null);
+
+      // Delete the SERVER_SECRET_KEY from the .env file
+      const result = await deleteConfigVariable("SERVER_SECRET_KEY", true);
+
+      if (result.success) {
+        // Refresh config and status after a short delay
+        setTimeout(() => {
+          loadInitialData();
+        }, 1000);
+      } else {
+        throw new Error(
+          result.error || "Failed to reset SERVER_SECRET_KEY",
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to reset SERVER_SECRET_KEY",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="app">
@@ -171,6 +201,7 @@ function App() {
             serverRelays={serverRelays}
             onServerSecretKeyChange={handleServerSecretKeyChange}
             onServerRelaysChange={handleServerRelaysChange}
+            onServerSecretKeyReset={handleServerSecretKeyReset}
             isServerSecretKeyRequired={
               !existingVars.includes("SERVER_SECRET_KEY") &&
               !serverSecretKey.trim()
@@ -183,6 +214,9 @@ function App() {
               example?.SERVER_RELAYS?.description ||
               "Comma-separated relay URLs for server operations"
             }
+            hasExistingServerSecretKey={existingVars.includes(
+              "SERVER_SECRET_KEY",
+            )}
           />
 
           <SocialGraphSettings

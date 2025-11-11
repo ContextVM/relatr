@@ -8,9 +8,11 @@ interface ServerSettingsProps {
   serverRelays: string[];
   onServerSecretKeyChange: (value: string) => void;
   onServerRelaysChange: (relays: string[]) => void;
+  onServerSecretKeyReset?: () => void;
   isServerSecretKeyRequired?: boolean;
   serverSecretKeyDescription?: string;
   serverRelaysDescription?: string;
+  hasExistingServerSecretKey?: boolean;
 }
 
 // Helper function to derive pubkey from secret key
@@ -54,9 +56,11 @@ export function ServerSettings({
   serverRelays,
   onServerSecretKeyChange,
   onServerRelaysChange,
+  onServerSecretKeyReset,
   isServerSecretKeyRequired = true,
   serverSecretKeyDescription,
   serverRelaysDescription,
+  hasExistingServerSecretKey = false,
 }: ServerSettingsProps) {
   const [pubkey, setPubkey] = useState<string | null>(null);
   const [isDeriving, setIsDeriving] = useState(false);
@@ -98,6 +102,13 @@ export function ServerSettings({
     }
   };
 
+  const handleOpenWebApp = () => {
+    if (pubkey) {
+      const webAppUrl = `https://relatr.xyz/?s=${pubkey}`;
+      window.open(webAppUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
   return (
     <section className="settings-section">
       <h2>Server Settings</h2>
@@ -114,6 +125,13 @@ export function ServerSettings({
               <span className="required-badge">Required</span>
             )}
           </label>
+          {hasExistingServerSecretKey && serverSecretKey && (
+            <div className="alert alert-warning">
+              <strong>⚠️ Warning:</strong> A SERVER_SECRET_KEY already exists in
+              your environment. Setting a new value will override the existing
+              one.
+            </div>
+          )}
           <div className="input-with-button">
             <input
               id="server-secret-key"
@@ -134,6 +152,16 @@ export function ServerSettings({
             >
               Generate New
             </button>
+            {hasExistingServerSecretKey && onServerSecretKeyReset && (
+              <button
+                type="button"
+                onClick={onServerSecretKeyReset}
+                className="reset-button"
+                title="Reset to use existing SERVER_SECRET_KEY from environment"
+              >
+                Reset
+              </button>
+            )}
           </div>
           {pubkey && (
             <div className="pubkey-display">
@@ -159,6 +187,19 @@ export function ServerSettings({
                 >
                   Copy
                 </button>
+              </div>
+              <div className="webapp-link-container">
+                <button
+                  type="button"
+                  onClick={handleOpenWebApp}
+                  className="webapp-button"
+                  title="Open Relatr web app connected to your server"
+                >
+                  🚀 Open Relatr Web App
+                </button>
+                <span className="label-description">
+                  Opens relatr.xyz with your server connected
+                </span>
               </div>
             </div>
           )}

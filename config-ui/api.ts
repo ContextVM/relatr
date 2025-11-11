@@ -126,3 +126,34 @@ export function stringToArray(value: string | undefined): string[] {
 export function arrayToString(arr: string[]): string {
   return arr.join(", ");
 }
+
+/**
+ * Delete a configuration variable by loading config, removing the key, and saving
+ */
+export async function deleteConfigVariable(
+  key: string,
+  restart: boolean = true,
+): Promise<SaveResponse> {
+  // Load current config
+  const currentConfig = await loadConfig();
+
+  // Remove the specified key
+  delete currentConfig[key];
+
+  // Save the updated config using POST (which replaces the entire config)
+  const response = await fetch(`${API_BASE}/config`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Restart-Process": restart ? "true" : "false",
+    },
+    body: JSON.stringify(currentConfig),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to delete config variable: ${error}`);
+  }
+
+  return await response.json();
+}
