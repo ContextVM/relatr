@@ -121,6 +121,8 @@ export class RelatrService {
                 });
             }
             
+            this.syncValidations();
+            
             // Step 7: Start background processes
             this.startBackgroundCleanup();
             this.startPeriodicSync();

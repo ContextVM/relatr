@@ -1,5 +1,11 @@
 # relatr
 
+## 0.0.6
+
+### Patch Changes
+
+- feat(service): add validation sync straight on initialization
+
 ## 0.0.5
 
 ### Patch Changes
