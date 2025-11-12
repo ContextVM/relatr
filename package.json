@@ -7,8 +7,8 @@
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
     "format": "prettier --write .",
-    "build": "bun build ./src/app.ts --outdir ./dist --target bun",
-    "compile": "bun build --compile --minify --sourcemap ./src/app.ts --outfile relatr"
+    "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun",
+    "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",

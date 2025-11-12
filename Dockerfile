@@ -21,8 +21,8 @@ FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
-# Compile the server into a standalone binary
-RUN bun build --compile --minify --sourcemap ./src/app.ts --outfile relatr
+# Compile the MCP server as the main entry point
+RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr
 RUN bun build --compile --minify --sourcemap ./manager.ts --outfile manager
 
 # copy production dependencies and compiled binary into final image
@@ -47,7 +47,7 @@ VOLUME /usr/src/app/data
 ENV DATABASE_PATH=/usr/src/app/data/relatr.db
 ENV GRAPH_BINARY_PATH=/usr/src/app/data/socialGraph.bin
 
-# run process-pastry with the main app
+# run process-pastry with the MCP server as main app
 # Use --user flag when running docker to match host user UID
 # Example: docker run --user $(id -u):$(id -g) ...
 EXPOSE 3000/tcp

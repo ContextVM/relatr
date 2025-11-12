@@ -5,8 +5,6 @@ import {
   PrivateKeySigner,
 } from "@contextvm/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getPublicKey } from "nostr-tools";
-import { hexToBytes } from "nostr-tools/utils";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { RelatrService } from "../service/RelatrService.js";
