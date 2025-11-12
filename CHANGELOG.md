@@ -1,5 +1,11 @@
 # relatr
 
+## 0.0.7
+
+### Patch Changes
+
+- feat(service): optimize Nostr search and caching logic
+
 ## 0.0.6
 
 ### Patch Changes

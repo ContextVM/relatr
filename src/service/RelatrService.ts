@@ -289,7 +289,7 @@ export class RelatrService {
         )
 
         // Use FTS5 prefix matching (query*) to support partial matches
-        const dbPubkeys = prepared.all(`${query}*`, limit * 7) as { pubkey: string }[];
+        const dbPubkeys = prepared.all(`${query}*`, limit * 4) as { pubkey: string }[];
 
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
 
@@ -321,13 +321,16 @@ export class RelatrService {
 
         // Step 2: If needed, query Nostr relays to extend the search.
         const nostrPubkeys: string[] = [];
-        const remaining = limit - localPubkeys.length;
 
-        if (extendToNostr || localPubkeys.length == 0) {
-            const nostrLimit = extendToNostr ? Math.max(limit, remaining) : remaining;
-            console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${nostrLimit} results`);
+        // Step 2: Extend to Nostr if needed (either explicitly requested or no local results)
+        const shouldExtendToNostr = extendToNostr || localPubkeys.length === 0;
+        
+        if (shouldExtendToNostr) {
+            const remaining = Math.max(0, limit - localPubkeys.length);
+            
+            console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${remaining} results`);
 
-            const searchFilter = { kinds: [0], search: query, limit: nostrLimit };
+            const searchFilter = { kinds: [0], search: query, limit: remaining };
 
             try {
                 if (this.pool) {
@@ -336,19 +339,11 @@ export class RelatrService {
                         const subscription = this.pool!.request(
                             RelatrService.SEARCH_RELAYS,
                             searchFilter,
-                            {
-                                retries: 1
-                            }
+                            { retries: 1 }
                         ).subscribe({
-                            next: (event) => {
-                                events.push(event);
-                            },
-                            error: (error) => {
-                                reject(error);
-                            },
-                            complete: () => {
-                                resolve(events);
-                            }
+                            next: (event) => events.push(event),
+                            error: (error) => reject(error),
+                            complete: () => resolve(events)
                         });
 
                         // Auto-unsubscribe after timeout
@@ -358,16 +353,19 @@ export class RelatrService {
                         }, 5000);
                     });
 
+                    // Filter out duplicates and cache new profiles
                     for (const event of nostrEvents) {
-                        if (!localPubkeys.includes(event.pubkey)) {
+                        if (!localPubkeys.includes(event.pubkey) && !nostrPubkeys.includes(event.pubkey)) {
                             nostrPubkeys.push(event.pubkey);
-                            // Asynchronously cache profile metadata without awaiting.
+                            // Asynchronously cache profile metadata without awaiting
                             const profile = JSON.parse(event.content);
                             this.metadataStore!.set(event.pubkey, { pubkey: event.pubkey, ...profile }).catch(err => {
                                 console.warn(`[RelatrService] ⚠️ Failed to cache profile for ${event.pubkey}:`, err);
                             });
                         }
                     }
+                } else {
+                    console.warn('[RelatrService] ⚠️ Relay pool not available for Nostr search');
                 }
             } catch (error) {
                 console.error(`[RelatrService] ❌ Remote search failed or timed out:`, error);
@@ -395,7 +393,7 @@ export class RelatrService {
         // Sort by combined score (trust score + relevance boost)
         profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
 
-        const results = profilesWithScores.map((item, index) => ({
+        const results = profilesWithScores.slice(0, limit).map((item, index) => ({
             pubkey: item.pubkey,
             profile: item.profile,
             trustScore: item.trustScore,
