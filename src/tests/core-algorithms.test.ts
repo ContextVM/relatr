@@ -23,6 +23,7 @@ const testConfig: RelatrConfig = {
   numberOfHops: 1,
   syncInterval: 1000,
   cleanupInterval: 1000,
+  validationSyncInterval: 1000,
 };
 
 // Test weights

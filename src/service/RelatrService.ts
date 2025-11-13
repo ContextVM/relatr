@@ -204,73 +204,95 @@ export class RelatrService {
     }
 
 
-    /**
-     * Helper method to calculate trust scores for profiles with optimized object creation
-     * @private
-     */
     private async calculateProfileScores(
-        pubkeys: string[],
+        profiles: { pubkey: string; profile: NostrProfile; relevanceMultiplier: number; isExactMatch: boolean }[],
         effectiveSourcePubkey: string,
-        weightingScheme?: WeightingScheme,
-        searchQuery?: string
+        weightingScheme?: WeightingScheme
     ): Promise<{ pubkey: string; profile: NostrProfile; trustScore: number; exactMatch: boolean }[]> {
-        return Promise.all(
-            pubkeys.map(async (pubkey) => {
+        const results = await Promise.all(
+            profiles.map(async ({ pubkey, profile, relevanceMultiplier, isExactMatch }) => {
                 try {
-                    // Try to get profile from metadata cache
-                    let profile = await this.metadataStore!.get(pubkey);
-
-                    // If not in cache, create minimal profile
-                    if (!profile) {
-                        profile = { pubkey };
-                    }
-
-                    // Sanitize profile to remove null values
-                    const sanitizedProfile = sanitizeProfile(profile);
-
                     const trustScore = await this.calculateTrustScore({
                         sourcePubkey: effectiveSourcePubkey,
                         targetPubkey: pubkey,
                         weightingScheme
                     });
 
-                    // Calculate relevance boost and exact match status
-                    let relevanceBoost = 0;
-                    let exactMatch = false;
-
-                    if (searchQuery) {
-                        const query = searchQuery.toLowerCase();
-                        const name = profile.name?.toLowerCase() || '';
-                        const displayName = profile.display_name?.toLowerCase() || '';
-
-                        // Calculate relevance boost and exact match status
-                        if ((name === query || displayName === query) && trustScore.score > 0.5) {
-                            relevanceBoost = 0.15;
-                            exactMatch = true;
-                        }
-                    }
-
-                    // Combine trust score and relevance boost, normalize to 0-1 range
-                    const combinedScore = Math.min(1, trustScore.score + relevanceBoost);
+                    const rawCombinedScore = trustScore.score * relevanceMultiplier;
 
                     return {
                         pubkey,
-                        profile: sanitizedProfile,
-                        trustScore: combinedScore,
-                        exactMatch
+                        profile,
+                        rawScore: rawCombinedScore,
+                        exactMatch: isExactMatch
                     };
-                } catch (error) {
-                    // Assign score 0 on error but include in results
+                } catch {
                     return {
                         pubkey,
-                        profile: { pubkey },
-                        trustScore: 0,
-                        exactMatch: false
+                        profile,
+                        rawScore: 0,
+                        exactMatch: isExactMatch
                     };
                 }
             })
         );
+
+        const maxRawScore = Math.max(...results.map(r => r.rawScore), 1.0);
+
+        return results.map(result => ({
+            pubkey: result.pubkey,
+            profile: result.profile,
+            trustScore: result.rawScore / maxRawScore,
+            exactMatch: result.exactMatch
+        }));
     }
+
+    private calculateRelevanceMultiplier(profile: NostrProfile, query: string): { multiplier: number; isExactMatch: boolean } {
+        const queryLower = query.toLowerCase();
+        let relevanceScore = 0;
+        let isExactMatch = false;
+
+        const fieldWeights = {
+            name: 0.5,
+            display_name: 0.35,
+            nip05: 0.1,
+            about: 0.05
+        };
+
+        for (const [field, weight] of Object.entries(fieldWeights)) {
+            const fieldValue = profile[field as keyof NostrProfile];
+            if (typeof fieldValue === 'string' && fieldValue.trim()) {
+                const valueLower = fieldValue.toLowerCase();
+                
+                if (valueLower === queryLower) {
+                    relevanceScore += weight;
+                    if (field === 'name' || field === 'display_name') {
+                        isExactMatch = true;
+                    }
+                } else if (valueLower.startsWith(queryLower)) {
+                    relevanceScore += weight * 0.85;
+                } else if (valueLower.includes(queryLower)) {
+                    relevanceScore += weight * 0.55;
+                } else if (new RegExp(`\\b${queryLower}\\b`, 'i').test(fieldValue)) {
+                    relevanceScore += weight * 0.35;
+                }
+            }
+        }
+
+        const normalizedRelevanceScore = Math.min(1, relevanceScore);
+        const maxMultiplier = 1.4;
+        let relevanceMultiplier = 1.0 + (normalizedRelevanceScore * (maxMultiplier - 1.0));
+
+        if (isExactMatch) {
+            relevanceMultiplier *= 1.15;
+        }
+
+        return {
+            multiplier: relevanceMultiplier,
+            isExactMatch
+        };
+    }
+
 
     async searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
@@ -285,50 +307,30 @@ export class RelatrService {
         const startTime = Date.now();
 
         const prepared = this.db.prepare(
-            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
+            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ?`
         )
 
-        // Use FTS5 prefix matching (query*) to support partial matches
-        const dbPubkeys = prepared.all(`${query}*`, limit * 4) as { pubkey: string }[];
-
+        const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`) as { pubkey: string }[];
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
 
-        // Fast path: If we have enough local results and are not extending the search, process them directly.
-        if (localPubkeys.length >= limit && !extendToNostr) {
-            const profilesWithScores = await this.calculateProfileScores(
-                localPubkeys,
-                effectiveSourcePubkey,
-                weightingScheme,
-                query
-            );
-
-            // Sort by combined score (trust score + relevance boost)
-            profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
-
-            const results = profilesWithScores.slice(0, limit).map((item, index) => ({
-                pubkey: item.pubkey,
-                profile: item.profile,
-                trustScore: item.trustScore,
-                rank: index + 1,
-                exactMatch: item.exactMatch
-            }));
-                return {
-                    results,
-                    totalFound: localPubkeys.length,
-                    searchTimeMs: Date.now() - startTime
-            }
+        const profilesWithRelevance = [];
+        for (const pubkey of localPubkeys) {
+            const profile = await this.metadataStore!.get(pubkey) || { pubkey };
+            const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
+            profilesWithRelevance.push({ pubkey, profile, relevanceMultiplier: multiplier, isExactMatch });
         }
 
-        // Step 2: If needed, query Nostr relays to extend the search.
-        const nostrPubkeys: string[] = [];
+        profilesWithRelevance.sort((a, b) => b.relevanceMultiplier - a.relevanceMultiplier);
 
-        // Step 2: Extend to Nostr if needed (either explicitly requested or no local results)
+        const topRelevantProfiles = profilesWithRelevance.slice(0, limit * 2);
+
+        const nostrProfiles: { pubkey: string; profile: NostrProfile; relevanceMultiplier: number; isExactMatch: boolean }[] = [];
         const shouldExtendToNostr = extendToNostr || localPubkeys.length === 0;
         
         if (shouldExtendToNostr) {
-            const remaining = Math.max(0, limit - localPubkeys.length);
+            const remaining = Math.max(0, limit - topRelevantProfiles.length);
             
-            console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${remaining} results`);
+            console.debug(`[RelatrService]  🔍 Extending search to Nostr relays for up to ${remaining} results`);
 
             const searchFilter = { kinds: [0], search: query, limit: remaining };
 
@@ -346,51 +348,51 @@ export class RelatrService {
                             complete: () => resolve(events)
                         });
 
-                        // Auto-unsubscribe after timeout
                         setTimeout(() => {
                             subscription.unsubscribe();
                             resolve(events);
                         }, 5000);
                     });
 
-                    // Filter out duplicates and cache new profiles
                     for (const event of nostrEvents) {
-                        if (!localPubkeys.includes(event.pubkey) && !nostrPubkeys.includes(event.pubkey)) {
-                            nostrPubkeys.push(event.pubkey);
-                            // Asynchronously cache profile metadata without awaiting
+                        const existingPubkey = topRelevantProfiles.find(p => p.pubkey === event.pubkey);
+                        if (!existingPubkey && !nostrProfiles.find(p => p.pubkey === event.pubkey)) {
                             const profile = JSON.parse(event.content);
+                            const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
+                            nostrProfiles.push({
+                                pubkey: event.pubkey,
+                                profile: { pubkey: event.pubkey, ...profile },
+                                relevanceMultiplier: multiplier,
+                                isExactMatch
+                            });
                             this.metadataStore!.set(event.pubkey, { pubkey: event.pubkey, ...profile }).catch(err => {
-                                console.warn(`[RelatrService] ⚠️ Failed to cache profile for ${event.pubkey}:`, err);
+                                console.warn(`[RelatrService] ️ Failed to cache profile for ${event.pubkey}:`, err);
                             });
                         }
                     }
                 } else {
-                    console.warn('[RelatrService] ⚠️ Relay pool not available for Nostr search');
+                    console.warn('[RelatrService]  ⚠️ Relay pool not available for Nostr search');
                 }
-            } catch (error) {
-                console.error(`[RelatrService] ❌ Remote search failed or timed out:`, error);
+            } catch {
+                // Remote search failed or timed out, continue with local results only
             }
         }
 
-        // Step 3: Merge local and Nostr results, then calculate scores.
-        const allPubkeys = Array.from(new Set([...localPubkeys, ...nostrPubkeys]));
+        const finalProfiles = [...topRelevantProfiles, ...nostrProfiles];
 
         const profilesWithScores = await this.calculateProfileScores(
-            allPubkeys,
+            finalProfiles,
             effectiveSourcePubkey,
-            weightingScheme,
-            query
+            weightingScheme
         );
 
-        profilesWithScores.map(profile => {
-            if (profile.trustScore > 0.5 && nostrPubkeys.includes(profile.pubkey)) {
+        profilesWithScores.forEach(profile => {
+            if (profile.trustScore > 0.5 && nostrProfiles.find(p => p.pubkey === profile.pubkey)) {
                 this.discoveryQueue.add(profile.pubkey);
                 console.debug(`[RelatrService] 📥 Queued ${profile.pubkey} for contact discovery`);
             }
         });
 
-        // Step 4: Sort, rank, and return the final results.
-        // Sort by combined score (trust score + relevance boost)
         profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
 
         const results = profilesWithScores.slice(0, limit).map((item, index) => ({
@@ -403,7 +405,7 @@ export class RelatrService {
 
         return {
             results,
-            totalFound: allPubkeys.length,
+            totalFound: localPubkeys.length + nostrProfiles.length,
             searchTimeMs: Date.now() - startTime
         };
     }
@@ -814,5 +816,14 @@ export class RelatrService {
      */
     private extractDataDirectory(filePath: string): string {
         return dirname(filePath);
+    }
+
+    private escapeFts5Query(query: string): string {
+        if (query.includes('"') || query.includes("'") || query.includes('*') ||
+            query.includes(':') || query.includes('.') ||
+            query.includes(' AND ') || query.includes(' OR ') || query.includes(' NOT ')) {
+            return `"${query.replace(/"/g, '""')}"`;
+        }
+        return query;
     }
 }

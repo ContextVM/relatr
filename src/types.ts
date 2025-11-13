@@ -131,7 +131,7 @@ export interface SearchProfilesParams {
   query: string;
   limit?: number;
   sourcePubkey?: string;
-  extendToNostr: boolean;
+  extendToNostr?: boolean;
   weightingScheme?: WeightingScheme;
 }
 

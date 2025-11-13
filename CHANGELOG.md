@@ -1,5 +1,13 @@
 # relatr
 
+## 0.0.9
+
+### Patch Changes
+
+- feat(service): add relevance scoring to profile search
+
+  Introduces relevance scoring based on profile fields, refactors scoring logic to include relevance multipliers, and adjusts queries to remove TTL checks. Also makes extendToNostr optional in parameters and adds validation sync interval to test config
+
 ## 0.0.8
 
 ### Patch Changes
