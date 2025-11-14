@@ -1,5 +1,11 @@
 # relatr
 
+## 0.0.12
+
+### Patch Changes
+
+- fix(service): adjust db result limit and remove top relevant profiles slicing
+
 ## 0.0.11
 
 ### Patch Changes

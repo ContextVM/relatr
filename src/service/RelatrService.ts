@@ -310,7 +310,7 @@ export class RelatrService {
             `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
         )
 
-        const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`, 700) as { pubkey: string }[];
+        const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`, 500) as { pubkey: string }[];
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
 
         const profilesWithRelevance = [];
@@ -322,13 +322,11 @@ export class RelatrService {
 
         profilesWithRelevance.sort((a, b) => b.relevanceMultiplier - a.relevanceMultiplier);
 
-        const topRelevantProfiles = profilesWithRelevance.slice(0, limit * 2);
-
         const nostrProfiles: { pubkey: string; profile: NostrProfile; relevanceMultiplier: number; isExactMatch: boolean }[] = [];
         const shouldExtendToNostr = extendToNostr || localPubkeys.length === 0;
         
         if (shouldExtendToNostr) {
-            const remaining = Math.max(0, limit - topRelevantProfiles.length);
+            const remaining = Math.max(0, limit - profilesWithRelevance.length);
             
             console.debug(`[RelatrService]  🔍 Extending search to Nostr relays for up to ${remaining} results`);
 
@@ -355,7 +353,7 @@ export class RelatrService {
                     });
 
                     for (const event of nostrEvents) {
-                        const existingPubkey = topRelevantProfiles.find(p => p.pubkey === event.pubkey);
+                        const existingPubkey = profilesWithRelevance.find(p => p.pubkey === event.pubkey);
                         if (!existingPubkey && !nostrProfiles.find(p => p.pubkey === event.pubkey)) {
                             const profile = JSON.parse(event.content);
                             const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
@@ -378,7 +376,7 @@ export class RelatrService {
             }
         }
 
-        const finalProfiles = [...topRelevantProfiles, ...nostrProfiles];
+        const finalProfiles = [...profilesWithRelevance, ...nostrProfiles];
 
         const profilesWithScores = await this.calculateProfileScores(
             finalProfiles,
