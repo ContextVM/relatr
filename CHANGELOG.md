@@ -1,5 +1,11 @@
 # relatr
 
+## 0.0.11
+
+### Patch Changes
+
+- fix: limit to 700 results from db
+
 ## 0.0.10
 
 ### Patch Changes

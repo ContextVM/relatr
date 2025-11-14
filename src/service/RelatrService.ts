@@ -307,10 +307,10 @@ export class RelatrService {
         const startTime = Date.now();
 
         const prepared = this.db.prepare(
-            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ?`
+            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
         )
 
-        const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`) as { pubkey: string }[];
+        const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`, 700) as { pubkey: string }[];
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
 
         const profilesWithRelevance = [];
@@ -405,7 +405,7 @@ export class RelatrService {
 
         return {
             results,
-            totalFound: localPubkeys.length + nostrProfiles.length,
+            totalFound: results.length,
             searchTimeMs: Date.now() - startTime
         };
     }
