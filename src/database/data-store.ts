@@ -89,7 +89,7 @@ export class DataStore<T> {
                                'expiresAt', expires_at
                            ) as value
                     FROM profile_metrics
-                    WHERE pubkey = ?
+                    WHERE pubkey = ? AND expires_at > ?
                     GROUP BY pubkey, computed_at, expires_at
                 `);
 
@@ -135,7 +135,7 @@ export class DataStore<T> {
         // Generic cache table (for future use)
         this.getQuery = this.db.query(`
                     SELECT value FROM ${this.tableName}
-                    WHERE key = ?
+                    WHERE key = ? AND expires_at > ?
                 `);
 
         this.setQuery = this.db.query(`
@@ -186,14 +186,15 @@ export class DataStore<T> {
   async get(key: DataStoreKey): Promise<T | null> {
     try {
       const keyStr = this.keyToString(key);
+      const now = Math.floor(Date.now() / 1000);
 
       let result;
       if (this.tableName === "pubkey_metadata") {
         result = this.getQuery.get(keyStr) as { value: string } | undefined;
       } else {
-        // Remove TTL check to return expired entries
-        // The periodic sync will refresh them in the background
-        result = this.getQuery.get(keyStr) as { value: string } | undefined;
+        result = this.getQuery.get(keyStr, now) as
+          | { value: string }
+          | undefined;
       }
 
       return result ? (JSON.parse(result.value) as T) : null;
@@ -453,14 +454,14 @@ export class DataStore<T> {
     try {
       const now = Math.floor(Date.now() / 1000);
       const query = this.db.query(`
-        SELECT metric_value
-        FROM profile_metrics
-        WHERE pubkey = ? AND metric_key = ?
-        ORDER BY computed_at DESC
+        SELECT metric_value 
+        FROM profile_metrics 
+        WHERE pubkey = ? AND metric_key = ? AND expires_at > ?
+        ORDER BY computed_at DESC 
         LIMIT 1
       `);
 
-      const result = query.get(pubkey, metricKey) as
+      const result = query.get(pubkey, metricKey, now) as
         | { metric_value: number }
         | undefined;
       return result?.metric_value ?? null;
@@ -488,13 +489,13 @@ export class DataStore<T> {
     try {
       const now = Math.floor(Date.now() / 1000);
       const query = this.db.query(`
-        SELECT metric_key, metric_value
-        FROM profile_metrics
-        WHERE pubkey = ?
+        SELECT metric_key, metric_value 
+        FROM profile_metrics 
+        WHERE pubkey = ? AND expires_at > ?
         ORDER BY computed_at DESC
       `);
 
-      const results = query.all(pubkey) as Array<{
+      const results = query.all(pubkey, now) as Array<{
         metric_key: string;
         metric_value: number;
       }>;
@@ -539,13 +540,13 @@ export class DataStore<T> {
       const limitClause = limit ? `LIMIT ${limit}` : "";
       const query = this.db.query(`
         SELECT DISTINCT pubkey, metric_value as value
-        FROM profile_metrics
-        WHERE metric_key = ?
+        FROM profile_metrics 
+        WHERE metric_key = ? AND expires_at > ?
         ORDER BY computed_at DESC
         ${limitClause}
       `);
 
-      const results = query.all(metricKey) as Array<{
+      const results = query.all(metricKey, now) as Array<{
         pubkey: string;
         value: number;
       }>;
@@ -583,7 +584,7 @@ export class DataStore<T> {
       // Create placeholders for the IN clause
       const placeholders = pubkeys.map(() => "?").join(",");
 
-      // Query to find pubkeys that have VALID (non-expired) validation scores
+      // Query to find pubkeys that have validation scores
       const query = this.db.query(`
         SELECT DISTINCT pubkey
         FROM profile_metrics
@@ -592,12 +593,11 @@ export class DataStore<T> {
 
       const results = query.all(...pubkeys, now) as Array<{ pubkey: string }>;
 
-      // Create a Set of pubkeys that have valid validation scores
-      const pubkeysWithValidScores = new Set(results.map((row) => row.pubkey));
+      // Create a Set of pubkeys that have validation scores
+      const pubkeysWithScores = new Set(results.map((row) => row.pubkey));
 
-      // Return pubkeys that are NOT in the set of pubkeys with valid scores
-      // This includes pubkeys with no scores AND pubkeys with expired scores
-      return pubkeys.filter((pubkey) => !pubkeysWithValidScores.has(pubkey));
+      // Return pubkeys that are NOT in the set of pubkeys with scores
+      return pubkeys.filter((pubkey) => !pubkeysWithScores.has(pubkey));
     } catch (error) {
       throw new DataStoreError(
         `Failed to get pubkeys without validation scores: ${error instanceof Error ? error.message : String(error)}`,

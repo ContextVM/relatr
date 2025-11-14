@@ -13,7 +13,7 @@
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
     "@types/bun": "latest",
-    "@types/react": "^19.2.3",
+    "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
     "prettier": "^3.6.2"
   },
@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@contextvm/sdk": "^0.1.38",
-    "@modelcontextprotocol/sdk": "^1.21.1",
+    "@modelcontextprotocol/sdk": "^1.22.0",
     "applesauce-core": "^4.2.0",
     "applesauce-relay": "^4.2.0",
     "nostr-social-graph": "^1.0.33",
