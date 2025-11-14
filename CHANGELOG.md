@@ -1,5 +1,11 @@
 # relatr
 
+## 0.0.10
+
+### Patch Changes
+
+- fix: revert validation ttl
+
 ## 0.0.9
 
 ### Patch Changes
