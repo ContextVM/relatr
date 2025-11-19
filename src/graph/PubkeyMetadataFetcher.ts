@@ -1,6 +1,6 @@
 import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
-import type { NostrEvent } from "nostr-social-graph";
+import type { NostrEvent } from "nostr-tools";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrProfile } from "@/types";
 import type { DataStore } from "@/database/data-store";
@@ -81,6 +81,7 @@ export class PubkeyMetadataFetcher {
         };
       }
 
+      // TODO: Review performance of this method
       // Cache the metadata
       await this.storeProfileMetadata(profileEvents);
 

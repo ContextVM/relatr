@@ -1,5 +1,5 @@
 import { EventStore } from "applesauce-core";
-import type { NostrEvent } from "nostr-social-graph";
+import type { NostrEvent } from "nostr-tools";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "../types";
 import type { RelayPool } from "applesauce-relay";

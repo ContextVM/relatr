@@ -3,7 +3,7 @@ import { sanitizeProfile } from '@/utils/utils';
 import { fetchEventsForPubkeys, validateAndDecodePubkey } from '@/utils/utils.nostr';
 import { RelayPool } from 'applesauce-relay';
 import { Database } from 'bun:sqlite';
-import type { NostrEvent } from 'nostr-social-graph';
+import type { NostrEvent } from 'nostr-tools';
 import { dirname } from 'path';
 import { createWeightProfileManager, RelatrConfigSchema } from '../config';
 import { cleanupExpiredCache, closeDatabase, initDatabase } from '../database/connection';
@@ -82,10 +82,10 @@ export class RelatrService {
             this.pubkeyMetadataFetcher = new PubkeyMetadataFetcher(this.pool,this.metadataStore );
 
             // Step 3: Check if social graph exists and handle first-time setup
-            const graphExists = await Bun.file(this.config.graphBinaryPath).exists();
+            const graphExists = await Bun.file(this.config.duckDbPath).exists();
 
             if (!graphExists) {
-                console.log(`[RelatrService] 🆕 Social graph not found at ${this.config.graphBinaryPath}. Creating new graph...`);
+                console.log(`[RelatrService] 🆕 Social graph not found at ${this.config.duckDbPath}. Creating new graph...`);
 
                 await this.socialGraphBuilder.createGraph({
                 sourcePubkey: this.config.defaultSourcePubkey,
@@ -96,9 +96,9 @@ export class RelatrService {
             }
 
             // Step 4: Initialize the social graph
-            this.socialGraph = new RelatrSocialGraph(this.config.graphBinaryPath);
+            this.socialGraph = new RelatrSocialGraph(this.config.duckDbPath);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
-            const graphStats = this.socialGraph.getStats()
+            const graphStats = await this.socialGraph.getStats()
             console.log('[RelatrService] Social graph stats', graphStats);
             
             // Step 5: Initialize trust calculation components
@@ -113,7 +113,7 @@ export class RelatrService {
                 console.log('[RelatrService] 👤 Fetching initial profile metadata...');
                 const keys = Object.keys(graphStats.sizeByDistance);
                 const maxDistance = keys.length ? Math.max(...keys.map(Number)) : null;
-                const pubkeys = this.socialGraph.getUsersUpToDistance(maxDistance || this.config.numberOfHops);
+                const pubkeys = await this.socialGraph.getAllUsersInGraph();
                 console.log(`[RelatrService] 📊 Found ${pubkeys.length.toLocaleString()} pubkeys within ${maxDistance || this.config.numberOfHops} hops for metadata fetching`);
                 await this.pubkeyMetadataFetcher.fetchMetadata({
                     pubkeys,
@@ -164,7 +164,7 @@ export class RelatrService {
         try {
             const distance = decodedSourcePubkey !== this.socialGraph!.getCurrentRoot()
                 ? await this.socialGraph!.getDistanceBetween(decodedSourcePubkey, decodedTargetPubkey)
-                : this.socialGraph!.getDistance(decodedTargetPubkey);
+                : await this.socialGraph!.getDistance(decodedTargetPubkey);
 
             // Return a trust score of 0 if the target pubkey is far in distance
             // This avoids expensive validateAll calls for distant profiles, making search faster
@@ -293,7 +293,7 @@ export class RelatrService {
         };
     }
 
-
+    // TODO: Search profiles is now a bit slow. Investigate why.
     async searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
         if (!this.db) throw new RelatrError('Database not initialized', 'DATABASE_NOT_INITIALIZED');
@@ -310,6 +310,7 @@ export class RelatrService {
             `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
         )
 
+        // NOTE: The slow performance is due the current approach to get relevant queries where we set a limit of 500 results, which calculates distances for all the pubkeys.
         const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`, 500) as { pubkey: string }[];
         const localPubkeys = dbPubkeys.map(row => row.pubkey);
 
@@ -431,7 +432,7 @@ export class RelatrService {
             let rootPubkey = "";
 
             if (this.socialGraph) {
-                const fullStats = this.socialGraph.getStats();
+                const fullStats = await this.socialGraph.getStats();
                 socialGraphStats = {
                     users: fullStats.users,
                     follows: fullStats.follows,
@@ -560,11 +561,8 @@ export class RelatrService {
             }
 
             console.log('[RelatrService] Starting profile sync and metrics pre-caching...');
-            const graphStats = this.socialGraph.getStats();
-            const keys = Object.keys(graphStats.sizeByDistance);
-                const maxDistance = keys.length ? Math.max(...keys.map(Number)) : null;
             // Step 1: Get all pubkeys from the social graph
-            const discoveredPubkeys = this.socialGraph.getUsersUpToDistance(maxDistance || this.config.numberOfHops);
+            const discoveredPubkeys = await this.socialGraph.getAllUsersInGraph();
             
             // Step 2: Fetch metadata for ALL pubkeys to ensure we have the latest metadata            console.log(`[RelatrService] 📊 Fetching metadata for ${discoveredPubkeys.length.toLocaleString()} pubkeys`);
             
@@ -641,11 +639,11 @@ export class RelatrService {
 
         try {
             // Step 1: Get all pubkeys from the social graph
-            const allPubkeys = this.socialGraph.getUsersUpToDistance(this.config.numberOfHops);
+            const allPubkeys = await this.socialGraph.getAllUsersInGraph();
             console.log(`[RelatrService] 📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`);
 
             // Step 2: Identify pubkeys without validation scores
-            const pubkeysWithoutScores = await this.metricsStore.getPubkeysWithoutValidationScores(allPubkeys);
+            const pubkeysWithoutScores = (await this.metricsStore.getPubkeysWithoutValidationScores(allPubkeys)).slice(0, 100);
             console.log(`[RelatrService] 🔍 Found ${pubkeysWithoutScores.length.toLocaleString()} pubkeys missing validation scores`);
 
             if (pubkeysWithoutScores.length === 0) {
@@ -739,7 +737,6 @@ export class RelatrService {
                     console.log('[RelatrService] Periodic validation sync completed');
                     if (this.discoveryQueue.size > 0 && this.socialGraph) {
                         await this.processDiscoveryQueue();
-                        await this.socialGraph.saveToBinary();
                     }
                 }
             } catch (error) {

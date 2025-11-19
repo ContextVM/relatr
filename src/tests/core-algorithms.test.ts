@@ -12,13 +12,14 @@ import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
 
 // Test configuration
 const testConfig: RelatrConfig = {
-  defaultSourcePubkey: "test_source_pubkey",
-  graphBinaryPath: "./data/socialGraph.bin",
+  defaultSourcePubkey:
+    "0000000000000000000000000000000000000000000000000000000000000001",
   databasePath: ":memory:",
   nostrRelays: ["wss://relay.example.com"],
   serverSecretKey: "test_server_secret_key",
   serverRelays: ["wss://relay.example.com"],
   decayFactor: 0.5,
+  duckDbPath: ":memory:",
   cacheTtlSeconds: 3600,
   numberOfHops: 1,
   syncInterval: 1000,
@@ -39,7 +40,7 @@ const testWeights = {
 
 // Test data
 const testMetrics: ProfileMetrics = {
-  pubkey: "test_target_pubkey",
+  pubkey: "0000000000000000000000000000000000000000000000000000000000000002",
   metrics: {
     nip05Valid: 1.0,
     lightningAddress: 1.0,
@@ -72,8 +73,10 @@ beforeAll(async () => {
   calculator = new TrustCalculator(testConfig, weightProfileManager);
 
   // Initialize social graph once for all tests
-  socialGraph = new SocialGraph("./data/socialGraph.bin");
-  await socialGraph.initialize("test_root_pubkey");
+  socialGraph = new SocialGraph(":memory:");
+  await socialGraph.initialize(
+    "0000000000000000000000000000000000000000000000000000000000000000",
+  );
 });
 
 afterAll(() => {
@@ -114,8 +117,10 @@ describe("TrustCalculator - Distance Normalization", () => {
 
 describe("TrustCalculator - Score Calculation", () => {
   test("should compute correct weighted score", () => {
-    const sourcePubkey = "source_test_123";
-    const targetPubkey = "target_test_456";
+    const sourcePubkey =
+      "0000000000000000000000000000000000000000000000000000000000000003";
+    const targetPubkey =
+      "0000000000000000000000000000000000000000000000000000000000000004";
     const distance = 2;
 
     const result = calculator.calculate(
@@ -151,7 +156,12 @@ describe("TrustCalculator - Score Calculation", () => {
   });
 
   test("should include all components in result", () => {
-    const result = calculator.calculate("source", "target", testMetrics, 1);
+    const result = calculator.calculate(
+      "0000000000000000000000000000000000000000000000000000000000000005",
+      "0000000000000000000000000000000000000000000000000000000000000006",
+      testMetrics,
+      1,
+    );
 
     expect(result).toHaveProperty("sourcePubkey");
     expect(result).toHaveProperty("targetPubkey");
@@ -171,19 +181,44 @@ describe("TrustCalculator - Score Calculation", () => {
   });
 
   test("should validate input parameters", () => {
-    expect(() => calculator.calculate("", "target", testMetrics, 1)).toThrow();
-    expect(() => calculator.calculate("source", "", testMetrics, 1)).toThrow();
     expect(() =>
-      calculator.calculate("source", "target", null as any, 1),
+      calculator.calculate(
+        "",
+        "0000000000000000000000000000000000000000000000000000000000000007",
+        testMetrics,
+        1,
+      ),
     ).toThrow();
     expect(() =>
-      calculator.calculate("source", "target", testMetrics, -1),
+      calculator.calculate(
+        "0000000000000000000000000000000000000000000000000000000000000008",
+        "",
+        testMetrics,
+        1,
+      ),
+    ).toThrow();
+    expect(() =>
+      calculator.calculate(
+        "0000000000000000000000000000000000000000000000000000000000000009",
+        "000000000000000000000000000000000000000000000000000000000000000a",
+        null as any,
+        1,
+      ),
+    ).toThrow();
+    expect(() =>
+      calculator.calculate(
+        "000000000000000000000000000000000000000000000000000000000000000b",
+        "000000000000000000000000000000000000000000000000000000000000000c",
+        testMetrics,
+        -1,
+      ),
     ).toThrow();
   });
 
   test("should handle edge case with zero metrics", () => {
     const zeroMetrics: ProfileMetrics = {
-      pubkey: "zero_metrics",
+      pubkey:
+        "000000000000000000000000000000000000000000000000000000000000000d",
       metrics: {
         nip05Valid: 0,
         lightningAddress: 0,
@@ -193,8 +228,10 @@ describe("TrustCalculator - Score Calculation", () => {
       computedAt: Math.floor(Date.now() / 1000),
     };
 
-    const sourcePubkey = "edge_case_source";
-    const targetPubkey = "edge_case_target";
+    const sourcePubkey =
+      "000000000000000000000000000000000000000000000000000000000000000e";
+    const targetPubkey =
+      "000000000000000000000000000000000000000000000000000000000000000f";
 
     // With distance 1000, normalized distance is 0, so all weighted components are 0
     const result = calculator.calculate(
@@ -272,8 +309,8 @@ describe("TrustCalculator - Weight Validation", () => {
 
     expect(() =>
       calculator.calculate(
-        "source",
-        "target",
+        "0000000000000000000000000000000000000000000000000000000000000010",
+        "0000000000000000000000000000000000000000000000000000000000000011",
         testMetrics,
         1,
         invalidCustomWeights,
@@ -284,7 +321,12 @@ describe("TrustCalculator - Weight Validation", () => {
 
 describe("TrustCalculator - Score Rounding", () => {
   test("should round score to 3 decimal places", () => {
-    const result = calculator.calculate("source", "target", testMetrics, 1);
+    const result = calculator.calculate(
+      "0000000000000000000000000000000000000000000000000000000000000012",
+      "0000000000000000000000000000000000000000000000000000000000000013",
+      testMetrics,
+      1,
+    );
 
     // Check that score has at most 3 decimal places
     const scoreStr = result.score.toString();
@@ -293,7 +335,12 @@ describe("TrustCalculator - Score Rounding", () => {
   });
 
   test("should round component values to 3 decimal places", () => {
-    const result = calculator.calculate("source", "target", testMetrics, 2);
+    const result = calculator.calculate(
+      "0000000000000000000000000000000000000000000000000000000000000014",
+      "0000000000000000000000000000000000000000000000000000000000000015",
+      testMetrics,
+      2,
+    );
 
     // Check all component values
     const checkDecimalPlaces = (value: number) => {
@@ -315,8 +362,8 @@ describe("TrustCalculator - Score Rounding", () => {
     // Use a distance that creates a long decimal
     const distance = 3.7;
     const result = calculator.calculate(
-      "source",
-      "target",
+      "0000000000000000000000000000000000000000000000000000000000000016",
+      "0000000000000000000000000000000000000000000000000000000000000017",
       testMetrics,
       distance,
     );
@@ -335,64 +382,97 @@ describe("SocialGraph - Basic Operations", () => {
   test("should create instance and initialize correctly", () => {
     expect(socialGraph).toBeDefined();
     expect(socialGraph.isInitialized()).toBe(true);
-    expect(socialGraph.getCurrentRoot()).toBe("test_root_pubkey");
+    expect(socialGraph.getCurrentRoot()).toBe(
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    );
   });
 
   test("should throw error when created with invalid path", () => {
     expect(() => new SocialGraph("")).toThrow();
   });
 
-  test("should get distance between pubkeys", () => {
-    const distance = socialGraph.getDistance("target_pubkey_123");
+  test("should get distance between pubkeys", async () => {
+    const distance = await socialGraph.getDistance(
+      "0000000000000000000000000000000000000000000000000000000000000018",
+    );
     expect(typeof distance).toBe("number");
     expect(distance).toBeGreaterThanOrEqual(0);
     expect(distance).toBeLessThanOrEqual(1000);
   });
 
-  test("should check follow relationships", () => {
-    const follows = socialGraph.doesFollow("source_pubkey", "target_pubkey");
+  test("should check follow relationships", async () => {
+    const follows = await socialGraph.doesFollow(
+      "0000000000000000000000000000000000000000000000000000000000000019",
+      "000000000000000000000000000000000000000000000000000000000000001a",
+    );
     expect(typeof follows).toBe("boolean");
   });
 
-  test("should get graph statistics", () => {
-    const stats = socialGraph.getStats();
+  test("should get graph statistics", async () => {
+    const stats = await socialGraph.getStats();
     expect(stats).toHaveProperty("users");
     expect(stats).toHaveProperty("follows");
+    expect(stats).toHaveProperty("mutes");
+    expect(stats).toHaveProperty("sizeByDistance");
     expect(stats.users).toBeGreaterThanOrEqual(0);
     expect(stats.follows).toBeGreaterThanOrEqual(0);
+    expect(stats.mutes).toBeGreaterThanOrEqual(0);
   });
 
   test("should switch root pubkey", async () => {
-    const newRoot = "new_root_pubkey";
+    const newRoot =
+      "000000000000000000000000000000000000000000000000000000000000001b";
     await socialGraph.switchRoot(newRoot);
     expect(socialGraph.getCurrentRoot()).toBe(newRoot);
 
     // Switch back for other tests
-    await socialGraph.switchRoot("test_root_pubkey");
+    await socialGraph.switchRoot(
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    );
   });
 
   test("should validate parameters", () => {
     expect(() => socialGraph.getDistance("")).toThrow();
-    expect(() => socialGraph.doesFollow("", "target")).toThrow();
-    expect(() => socialGraph.doesFollow("source", "")).toThrow();
+    expect(() =>
+      socialGraph.doesFollow(
+        "",
+        "000000000000000000000000000000000000000000000000000000000000001c",
+      ),
+    ).toThrow();
+    expect(() =>
+      socialGraph.doesFollow(
+        "000000000000000000000000000000000000000000000000000000000000001d",
+        "",
+      ),
+    ).toThrow();
   });
 
   test("should throw errors when not initialized", () => {
-    const uninitializedGraph = new SocialGraph("./data/socialGraph.bin");
+    const uninitializedGraph = new SocialGraph(":memory:");
 
     expect(() => uninitializedGraph.getCurrentRoot()).toThrow();
-    expect(() => uninitializedGraph.getDistance("target")).toThrow();
-    expect(() => uninitializedGraph.doesFollow("source", "target")).toThrow();
+    expect(() =>
+      uninitializedGraph.getDistance(
+        "000000000000000000000000000000000000000000000000000000000000001e",
+      ),
+    ).toThrow();
+    expect(() =>
+      uninitializedGraph.doesFollow(
+        "000000000000000000000000000000000000000000000000000000000000001f",
+        "0000000000000000000000000000000000000000000000000000000000000020",
+      ),
+    ).toThrow();
   });
 });
 
 describe("Integration - TrustCalculator + SocialGraph", () => {
-  test("should calculate trust score using actual social graph distance", () => {
-    const targetPubkey = "integration_target";
-    const distance = socialGraph.getDistance(targetPubkey);
+  test("should calculate trust score using actual social graph distance", async () => {
+    const targetPubkey =
+      "0000000000000000000000000000000000000000000000000000000000000021";
+    const distance = await socialGraph.getDistance(targetPubkey);
 
     const score = calculator.calculate(
-      "test_root_pubkey",
+      "0000000000000000000000000000000000000000000000000000000000000000",
       targetPubkey,
       testMetrics,
       distance,

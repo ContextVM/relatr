@@ -7,7 +7,7 @@ import {
   type CoverageValidationResult,
 } from "./weight-profiles";
 import type { RelayPool } from "applesauce-relay";
-import type { NostrEvent } from "nostr-social-graph";
+import type { NostrEvent } from "nostr-tools";
 
 /**
  * Validation context passed to all validation plugins
@@ -279,19 +279,19 @@ export class ReciprocityPlugin implements ValidationPlugin {
       }
 
       // Check if both pubkeys exist in the graph
-      const sourceInGraph = ctx.graphManager.isInGraph(ctx.sourcePubkey);
-      const targetInGraph = ctx.graphManager.isInGraph(ctx.pubkey);
+      const sourceInGraph = await ctx.graphManager.isInGraph(ctx.sourcePubkey);
+      const targetInGraph = await ctx.graphManager.isInGraph(ctx.pubkey);
 
       if (!sourceInGraph || !targetInGraph) {
         return 0.0;
       }
 
       // Check follow relationships
-      const sourceFollowsTarget = ctx.graphManager.doesFollow(
+      const sourceFollowsTarget = await ctx.graphManager.doesFollow(
         ctx.sourcePubkey,
         ctx.pubkey,
       );
-      const targetFollowsSource = ctx.graphManager.doesFollow(
+      const targetFollowsSource = await ctx.graphManager.doesFollow(
         ctx.pubkey,
         ctx.sourcePubkey,
       );

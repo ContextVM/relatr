@@ -1,6 +1,6 @@
 import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
-import { SocialGraph as NostrSocialGraph } from "nostr-social-graph";
+import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
 import type { RelatrConfig } from "../types";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrEvent } from "nostr-tools";
@@ -78,36 +78,35 @@ export class SocialGraphBuilder {
       console.log(
         `[SocialGraphBuilder] 📊 Found ${contactEvents.length} contact list events. Building graph...`,
       );
+      // await Bun.write('./data/socialGraph.jsonl', contactEvents.map(event => JSON.stringify(event)).join('\n'));
 
-      // Create and populate the social graph
-      const socialGraph = new NostrSocialGraph(sourcePubkey);
-      for (const event of contactEvents) {
-        socialGraph.handleEvent(event);
-      }
+      // Create and populate the DuckDB social graph with file persistence
+      const socialGraph = await DuckDBSocialGraphAnalyzer.create({
+        dbPath: this.config.duckDbPath,
+      });
 
-      console.log("[SocialGraphBuilder] 🔄 Recalculating follow distances...");
-      await socialGraph.recalculateFollowDistances();
+      // Ingest all contact events
+      await socialGraph.ingestEvents(contactEvents);
 
-      const graphSize = socialGraph.size();
+      const graphStats = await socialGraph.getStats();
       console.log(
-        `[SocialGraphBuilder] ✅ Graph stats: ${graphSize.users.toLocaleString()} users, ${graphSize.follows.toLocaleString()} follows.`,
+        `[SocialGraphBuilder] ✅ Graph stats: ${graphStats.uniqueFollowers.toLocaleString()} unique followers, ${graphStats.totalFollows.toLocaleString()} total follows.`,
       );
 
-      // Serialize and save the graph
-      console.log(
-        "[SocialGraphBuilder] 💾 Serializing graph to binary file...",
-      );
-      const binaryData = await socialGraph.toBinary();
-      await Bun.write(this.config.graphBinaryPath, binaryData);
-
-      const message = `Binary social graph saved to ${this.config.graphBinaryPath} (${binaryData.length} bytes).`;
+      const message = `DuckDB social graph saved to ${this.config.duckDbPath}.`;
       console.log(`[SocialGraphBuilder] ✨ ${message}`);
+
+      // Close the analyzer to ensure data is persisted
+      await socialGraph.close();
 
       return {
         success: true,
         message,
         eventsFetched: contactEvents.length,
-        graphSize,
+        graphSize: {
+          users: graphStats.uniqueFollowers,
+          follows: graphStats.totalFollows,
+        },
       };
     } catch (error) {
       throw new Error(

@@ -19,7 +19,7 @@ import {
 } from "./plugins";
 import type { DataStore } from "@/database/data-store";
 import type { RelayPool } from "applesauce-relay";
-import type { NostrEvent } from "nostr-social-graph";
+import type { NostrEvent } from "nostr-tools";
 
 /**
  * Consolidated validator class for all profile metrics

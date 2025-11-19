@@ -13,10 +13,10 @@ export const RelatrConfigSchema = z.object({
     .string()
     .min(1, "DEFAULT_SOURCE_PUBKEY is required")
     .default(GIGI_PUBKEY),
-  graphBinaryPath: z
+  duckDbPath: z
     .string()
-    .min(1, "GRAPH_BINARY_PATH is required")
-    .default("./data/socialGraph.bin"),
+    .min(1, "DUCKDB_PATH is required")
+    .default("./data/social-graph.db"),
   databasePath: z.string().default("./data/relatr.db"),
   nostrRelays: z
     .array(z.string())
@@ -58,7 +58,7 @@ export function loadConfig(): RelatrConfig {
     defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY
       ? normalizeToPubkey(process.env.DEFAULT_SOURCE_PUBKEY)
       : undefined,
-    graphBinaryPath: process.env.GRAPH_BINARY_PATH,
+    duckDbPath: process.env.DUCKDB_PATH,
     databasePath: process.env.DATABASE_PATH,
     nostrRelays: process.env.NOSTR_RELAYS?.split(",").map((relay) =>
       relay.trim(),
