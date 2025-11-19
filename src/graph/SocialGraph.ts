@@ -18,6 +18,9 @@ export class SocialGraph {
    * @param connection - DuckDBConnection instance to use
    */
   constructor(connection: DuckDBConnection) {
+    if (!connection) {
+      throw new SocialGraphError("DuckDBConnection is required", "CONSTRUCTOR");
+    }
     this.connection = connection;
     this.rootPubkey = ""; // Will be set during initialization
   }
@@ -39,7 +42,11 @@ export class SocialGraph {
       this.rootPubkey = rootPubkey;
 
       // Use the shared connection passed in constructor
-      this.graph = await DuckDBSocialGraphAnalyzer.connect(this.connection);
+      this.graph = await DuckDBSocialGraphAnalyzer.connect(
+        this.connection,
+        undefined,
+        this.rootPubkey,
+      );
 
       this.initialized = true;
     } catch (error) {
@@ -185,16 +192,18 @@ export class SocialGraph {
         sizeByDistance: {} as { [distance: number]: number },
       };
 
-      // For now, return mock stats since the actual implementation is commented
-      // This allows tests to pass while we work on the actual implementation
-      stats.users = 1; // At least the root user
-      stats.follows = 0;
+      this.ensureInitialized();
+      const statsResult = await this.graph?.getStats();
+      const pubkeyDistribution = await this.graph?.getDistanceDistribution();
+      stats.users = statsResult?.totalFollows || 0;
+      stats.follows = statsResult?.totalFollows || 0;
       stats.mutes = 0;
-
-      // Initialize sizeByDistance with zeros for common distances
-      for (let distance = 1; distance <= 6; distance++) {
-        stats.sizeByDistance[distance] = 0;
-      }
+      stats.sizeByDistance = Object.fromEntries(
+        Object.entries(pubkeyDistribution!).map(([key, value]) => [
+          parseInt(key),
+          value,
+        ]),
+      );
 
       return stats;
     } catch (error) {

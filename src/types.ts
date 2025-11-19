@@ -28,6 +28,7 @@ export interface ProfileMetrics {
   pubkey: string;
   metrics: Record<string, number>; // Flexible metric storage
   computedAt: number;
+  expiresAt: number;
 }
 
 export interface TrustScore {

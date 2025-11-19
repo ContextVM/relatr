@@ -3,7 +3,7 @@ import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
 import { WeightProfileManager } from "../validators/weight-profiles";
 import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
-import { initDuckDB } from "@/database/duckdb-connection";
+import { DatabaseManager } from "../database/DatabaseManager";
 
 /**
  * Phase 2 Component Tests
@@ -68,7 +68,9 @@ beforeAll(async () => {
   calculator = new TrustCalculator(testConfig, weightProfileManager);
 
   // Initialize DuckDB connection and social graph once for all tests
-  const duckDb = await initDuckDB(":memory:");
+  const dbManager = DatabaseManager.getInstance(":memory:");
+  await dbManager.initialize();
+  const duckDb = dbManager.getConnection();
 
   socialGraph = new SocialGraph(duckDb);
   await socialGraph.initialize(
@@ -443,9 +445,10 @@ describe("SocialGraph - Basic Operations", () => {
     ).toThrow();
   });
 
-  test("should throw errors when not initialized", () => {
-    const { initDuckDB } = require("../database/duckdb-connection");
-    const duckDb = initDuckDB(":memory:");
+  test("should throw errors when not initialized", async () => {
+    const dbManager = DatabaseManager.getInstance(":memory:test");
+    await dbManager.initialize();
+    const duckDb = dbManager.getConnection();
     const uninitializedGraph = new SocialGraph(duckDb);
 
     expect(() => uninitializedGraph.getCurrentRoot()).toThrow();

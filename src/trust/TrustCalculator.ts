@@ -112,6 +112,14 @@ export class TrustCalculator {
 
     // Add rounded validator components
     for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
+      // Skip undefined or empty metric names
+      if (
+        !metricName ||
+        metricName === "undefined" ||
+        metricValue === undefined
+      ) {
+        continue;
+      }
       components.validators[metricName] =
         this.roundToDecimalPlaces(metricValue);
     }

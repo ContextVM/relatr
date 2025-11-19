@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS pubkey_metadata (
 -- Note: FTS index will be created separately using PRAGMA create_fts_index
 -- after the tables are populated with data
 
+-- Create FTS index for profile search. Maybe if not exists?
+PRAGMA create_fts_index('pubkey_metadata', 'pubkey', 'name', 'display_name', 'nip05', 'about');
+
 -- Table 3: Settings
 CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR PRIMARY KEY,

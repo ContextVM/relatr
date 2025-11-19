@@ -17,7 +17,7 @@ import {
   ALL_PLUGINS,
   type ValidationPlugin,
 } from "./plugins";
-import type { DataStore } from "@/database/data-store";
+import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { RelayPool } from "applesauce-relay";
 import type { NostrEvent } from "nostr-tools";
 
@@ -29,8 +29,9 @@ export class MetricsValidator {
   private pool: RelayPool;
   private nostrRelays: string[];
   private graphManager: SocialGraph;
-  private dataStore: DataStore<ProfileMetrics>;
+  private metricsRepository: MetricsRepository;
   private timeoutMs: number = 10000;
+  private cacheTtlSeconds: number = 3600;
   private registry: ValidationRegistry;
   private weightProfileManager: WeightProfileManager;
 
@@ -39,7 +40,7 @@ export class MetricsValidator {
    * @param pool - Shared RelayPool instance for Nostr operations
    * @param nostrRelays - Array of Nostr relay URLs
    * @param graphManager - SocialGraph instance for reciprocity checks
-   * @param dataStore - Cache instance for storing profile metrics
+   * @param metricsRepository - Repository for storing profile metrics
    * @param plugins - Array of validation plugins to register (defaults to all available plugins)
    * @param weightProfileManager - Optional weight profile manager
    */
@@ -47,7 +48,8 @@ export class MetricsValidator {
     pool: RelayPool,
     nostrRelays: string[],
     graphManager: SocialGraph,
-    dataStore: DataStore<ProfileMetrics>,
+    metricsRepository: MetricsRepository,
+    cacheTtlSeconds?: number,
     plugins: ValidationPlugin[] = ALL_PLUGINS,
     weightProfileManager?: WeightProfileManager,
   ) {
@@ -63,14 +65,15 @@ export class MetricsValidator {
       throw new ValidationError("SocialGraph instance is required");
     }
 
-    if (!dataStore) {
-      throw new ValidationError("Cache instance is required");
+    if (!metricsRepository) {
+      throw new ValidationError("MetricsRepository instance is required");
     }
 
     this.pool = pool;
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
-    this.dataStore = dataStore;
+    this.metricsRepository = metricsRepository;
+    this.cacheTtlSeconds = cacheTtlSeconds || 60 * 60 * 1000 * 48;
 
     // Initialize weight profile manager
     this.weightProfileManager =
@@ -101,14 +104,9 @@ export class MetricsValidator {
     if (!pubkey || typeof pubkey !== "string") {
       throw new ValidationError("Pubkey must be a non-empty string");
     }
-
-    const dataStoreKey: DataStoreKey = sourcePubkey
-      ? [pubkey, sourcePubkey]
-      : pubkey;
-
     try {
       // Check cache first
-      const cached = await this.dataStore.get(dataStoreKey);
+      const cached = await this.metricsRepository.get(pubkey);
       if (cached) {
         return cached;
       }
@@ -141,11 +139,12 @@ export class MetricsValidator {
         pubkey,
         metrics,
         computedAt: now,
+        expiresAt: now + this.cacheTtlSeconds,
       };
 
       // Cache the results
       try {
-        await this.dataStore.set(dataStoreKey, result);
+        await this.metricsRepository.save(pubkey, result);
       } catch (error) {
         // Cache error shouldn't prevent returning results
         console.warn("Cache write failed:", error);
@@ -158,6 +157,7 @@ export class MetricsValidator {
         pubkey,
         metrics: {},
         computedAt: now,
+        expiresAt: now + this.cacheTtlSeconds,
       };
 
       return errorMetrics;

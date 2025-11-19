@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { SocialGraph } from "../graph/SocialGraph";
 import { loadConfig } from "../config";
-import { initDuckDB } from "@/database/duckdb-connection";
+import { DatabaseManager } from "../database/DatabaseManager";
 
 /**
  * Social Graph Benchmark Tests
@@ -16,7 +16,9 @@ describe("SocialGraph - Benchmark Tests", () => {
     config = loadConfig();
 
     // Initialize DuckDB connection and social graph with temporary database
-    const db = await initDuckDB(":memory:");
+    const dbManager = DatabaseManager.getInstance(":memory:");
+    await dbManager.initialize();
+    const db = dbManager.getConnection();
 
     // Initialize social graph with shared connection
     socialGraph = new SocialGraph(db);
