@@ -1,6 +1,7 @@
 import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
+import { DuckDBConnection } from "@duckdb/node-api";
 import type { RelatrConfig } from "../types";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrEvent } from "nostr-tools";
@@ -11,6 +12,7 @@ import type { NostrEvent } from "nostr-tools";
 export interface SocialGraphCreationParams {
   sourcePubkey: string;
   hops: number;
+  connection: DuckDBConnection;
 }
 
 /**
@@ -54,7 +56,7 @@ export class SocialGraphBuilder {
   public async createGraph(
     params: SocialGraphCreationParams,
   ): Promise<SocialGraphCreationResult> {
-    const { sourcePubkey, hops } = params;
+    const { sourcePubkey, hops, connection } = params;
 
     console.log("[SocialGraphBuilder] 🚀 Starting social graph creation...");
     console.log(`[SocialGraphBuilder] Pubkey ${sourcePubkey}, Hops ${hops}`);
@@ -78,12 +80,9 @@ export class SocialGraphBuilder {
       console.log(
         `[SocialGraphBuilder] 📊 Found ${contactEvents.length} contact list events. Building graph...`,
       );
-      // await Bun.write('./data/socialGraph.jsonl', contactEvents.map(event => JSON.stringify(event)).join('\n'));
 
-      // Create and populate the DuckDB social graph with file persistence
-      const socialGraph = await DuckDBSocialGraphAnalyzer.create({
-        dbPath: this.config.duckDbPath,
-      });
+      let socialGraph: DuckDBSocialGraphAnalyzer =
+        await DuckDBSocialGraphAnalyzer.connect(connection);
 
       // Ingest all contact events
       await socialGraph.ingestEvents(contactEvents);
@@ -93,11 +92,13 @@ export class SocialGraphBuilder {
         `[SocialGraphBuilder] ✅ Graph stats: ${graphStats.uniqueFollowers.toLocaleString()} unique followers, ${graphStats.totalFollows.toLocaleString()} total follows.`,
       );
 
-      const message = `DuckDB social graph saved to ${this.config.duckDbPath}.`;
+      const message = `DuckDB social graph updated in shared database.`;
       console.log(`[SocialGraphBuilder] ✨ ${message}`);
 
-      // Close the analyzer to ensure data is persisted
-      await socialGraph.close();
+      // Only close if we created the connection
+      if (!connection) {
+        await socialGraph.close();
+      }
 
       return {
         success: true,

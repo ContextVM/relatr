@@ -9,11 +9,11 @@ Relatr measures relative trust between Nostr public keys by analyzing social gra
 ## Features
 
 - **Web-Based Configuration UI**: Manage environment variables through a browser interface (default on port 3000)
-- **Social Graph Analysis**: Calculates trust distances using nostr-social-graph
+- **Social Graph Analysis**: Calculates trust distances using `nostr-social-duck`
 - **Profile Validation**: Validates NIP-05, Lightning addresses, and event publications
 - **Reciprocity Checking**: Verifies mutual follow relationships
 - **Configurable Scoring**: Flexible weighting schemes for different trust factors
-- **Persistent Caching**: SQLite-based caching for performance optimization
+- **Unified Data Store**: High-performance DuckDB database for both social graph and metadata
 - **MCP Server Interface**: Model Context Protocol API for integration
 
 ## Getting Started
@@ -92,8 +92,7 @@ SERVER_SECRET_KEY=your_generated_hex_key_here
 - `DEFAULT_SOURCE_PUBKEY` - Default perspective pubkey for trust calculations (hex format) (defaults to Gigi's pubkey)
 - `NOSTR_RELAYS` - Comma-separated relay URLs for social graph data
 - `SERVER_RELAYS` - Comma-separated relay URLs for server operations
-- `GRAPH_BINARY_PATH` - Path to social graph binary file (default: ./data/socialGraph.bin)
-- `DATABASE_PATH` - SQLite database path (default: ./data/relatr.db)
+- `DATABASE_PATH` - DuckDB database path (default: ./data/relatr.db)
 - `DECAY_FACTOR` - Alpha parameter in distance formula (default: 0.1)
 - `NUMBER_OF_HOPS` - Social graph traversal depth (default: 1)
 - `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
@@ -122,15 +121,15 @@ docker compose up -d
 
 ## Architecture Overview
 
-Relatr uses a modular architecture with clear separation of concerns:
+Relatr uses a modular architecture with clear separation of concerns, powered by a unified DuckDB database:
 
 ### Core Components
 
 - **RelatrService**: Main service orchestrating all components
-- **SocialGraph**: Manages Nostr social graph data and distance calculations
+- **SocialGraph**: Manages Nostr social graph data and distance calculations using `nostr-social-duck`
 - **TrustCalculator**: Computes final trust scores from metrics
 - **MetricsValidator**: Validates profile characteristics using plugin system
-- **DataStore**: Persistent caching layer using SQLite
+- **DataStore**: Unified persistence layer using DuckDB for caching metrics, metadata, and social graph data
 
 ## System Requirements
 
@@ -145,10 +144,10 @@ Relatr is designed to be resource-efficient with minimal hardware requirements:
 ### Recommended for Production
 
 - **CPU**: 2 cores
-- **RAM**: 1MB
+- **RAM**: 1GB
 - **Storage**: 1GB SSD
 
-**Memory is the primary bottleneck** - the social graph binary must be fully loaded in memory for fast distance calculations. CPU requirements are modest for most operations.
+**Memory is the primary bottleneck** - the social graph analysis benefits from having data in memory for fast distance calculations.
 
 ## Development
 

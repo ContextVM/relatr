@@ -1,9 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { Database } from "bun:sqlite";
 import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
 import { WeightProfileManager } from "../validators/weight-profiles";
 import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
+import { initDuckDB } from "@/database/duckdb-connection";
 
 /**
  * Phase 2 Component Tests
@@ -19,7 +19,6 @@ const testConfig: RelatrConfig = {
   serverSecretKey: "test_server_secret_key",
   serverRelays: ["wss://relay.example.com"],
   decayFactor: 0.5,
-  duckDbPath: ":memory:",
   cacheTtlSeconds: 3600,
   numberOfHops: 1,
   syncInterval: 1000,
@@ -51,15 +50,11 @@ const testMetrics: ProfileMetrics = {
 };
 
 // Shared instances
-let db: Database;
 let calculator: TrustCalculator;
 let socialGraph: SocialGraph;
 let weightProfileManager: WeightProfileManager;
 
 beforeAll(async () => {
-  // Initialize database
-  db = new Database(":memory:");
-
   // Initialize weight profile manager with test weights
   weightProfileManager = new WeightProfileManager();
   weightProfileManager.registerProfile({
@@ -72,8 +67,10 @@ beforeAll(async () => {
 
   calculator = new TrustCalculator(testConfig, weightProfileManager);
 
-  // Initialize social graph once for all tests
-  socialGraph = new SocialGraph(":memory:");
+  // Initialize DuckDB connection and social graph once for all tests
+  const duckDb = await initDuckDB(":memory:");
+
+  socialGraph = new SocialGraph(duckDb);
   await socialGraph.initialize(
     "0000000000000000000000000000000000000000000000000000000000000000",
   );
@@ -82,7 +79,6 @@ beforeAll(async () => {
 afterAll(() => {
   // Cleanup
   socialGraph?.cleanup();
-  db.close();
 });
 
 describe("TrustCalculator - Distance Normalization", () => {
@@ -387,8 +383,8 @@ describe("SocialGraph - Basic Operations", () => {
     );
   });
 
-  test("should throw error when created with invalid path", () => {
-    expect(() => new SocialGraph("")).toThrow();
+  test("should throw error when created with invalid connection", () => {
+    expect(() => new SocialGraph(null as any)).toThrow();
   });
 
   test("should get distance between pubkeys", async () => {
@@ -448,7 +444,9 @@ describe("SocialGraph - Basic Operations", () => {
   });
 
   test("should throw errors when not initialized", () => {
-    const uninitializedGraph = new SocialGraph(":memory:");
+    const { initDuckDB } = require("../database/duckdb-connection");
+    const duckDb = initDuckDB(":memory:");
+    const uninitializedGraph = new SocialGraph(duckDb);
 
     expect(() => uninitializedGraph.getCurrentRoot()).toThrow();
     expect(() =>

@@ -3,7 +3,6 @@ import type { NostrEvent } from "nostr-tools";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "../types";
 import type { RelayPool } from "applesauce-relay";
-import { SQLiteError } from "bun:sqlite";
 import { decode, npubEncode, nprofileEncode } from "nostr-tools/nip19";
 
 export async function negSyncFromRelays(
@@ -33,13 +32,11 @@ export async function negSyncFromRelays(
           try {
             eventStore.add(evt);
           } catch (error) {
-            if (error instanceof SQLiteError) {
-              console.warn(
-                `[Utils] ⚠️ Failed to add event to event store:`,
-                error.message,
-                "Skipping...",
-              );
-            }
+            console.warn(
+              `[Utils] ⚠️ Failed to add event to event store:`,
+              error instanceof Error ? error.message : String(error),
+              "Skipping...",
+            );
           }
           collected.push(evt);
         },

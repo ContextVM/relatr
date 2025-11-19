@@ -1,4 +1,5 @@
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
+import { DuckDBConnection } from "@duckdb/node-api";
 import { SocialGraphError } from "../types";
 import type { NostrEvent } from "nostr-tools";
 
@@ -8,19 +9,16 @@ import type { NostrEvent } from "nostr-tools";
  */
 export class SocialGraph {
   private graph: DuckDBSocialGraphAnalyzer | null = null;
-  private duckDbPath: string;
+  private connection: DuckDBConnection | null = null;
   private rootPubkey: string;
   private initialized: boolean = false;
 
   /**
    * Create a new SocialGraph instance
-   * @param duckDbPath - Path to DuckDB database file
+   * @param connection - DuckDBConnection instance to use
    */
-  constructor(duckDbPath: string) {
-    if (!duckDbPath) {
-      throw new SocialGraphError("DuckDB path is required", "CONSTRUCTOR");
-    }
-    this.duckDbPath = duckDbPath;
+  constructor(connection: DuckDBConnection) {
+    this.connection = connection;
     this.rootPubkey = ""; // Will be set during initialization
   }
 
@@ -29,22 +27,19 @@ export class SocialGraph {
    * @param rootPubkey - Root public key to use for distance calculations
    * @throws SocialGraphError if initialization fails
    */
-  async initialize(rootPubkey?: string): Promise<void> {
-    if (this.initialized) {
+  async initialize(rootPubkey: string): Promise<void> {
+    if (this.initialized || !this.connection) {
+      console.warn(
+        "[SocialGraph] ⚠️ Social graph already initialized or connection not provided",
+      );
       return;
     }
 
     try {
-      const root =
-        rootPubkey ||
-        "0000000000000000000000000000000000000000000000000000000000000000";
-      this.rootPubkey = root;
+      this.rootPubkey = rootPubkey;
 
-      // Create DuckDB analyzer with file persistence
-      this.graph = await DuckDBSocialGraphAnalyzer.create({
-        dbPath: this.duckDbPath,
-        rootPubkey: this.rootPubkey,
-      });
+      // Use the shared connection passed in constructor
+      this.graph = await DuckDBSocialGraphAnalyzer.connect(this.connection);
 
       this.initialized = true;
     } catch (error) {

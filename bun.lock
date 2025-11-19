@@ -9,7 +9,7 @@
         "@modelcontextprotocol/sdk": "^1.22.0",
         "applesauce-core": "^4.4.2",
         "applesauce-relay": "^4.4.2",
-        "nostr-social-duck": "^0.1.10",
+        "nostr-social-duck": "^0.1.11",
         "nostr-tools": "^2.17.3",
         "process-pastry": "https://github.com/hzrd149/process-pastry",
         "react": "^19.2.0",
@@ -323,7 +323,7 @@
 
     "negotiator": ["negotiator@1.0.0", "", {}, "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg=="],
 
-    "nostr-social-duck": ["nostr-social-duck@0.1.11", "", { "dependencies": { "@duckdb/node-api": "^1.4.2-r.1" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-1QLlSSK5MHw1j/InVlDCM/leeNROHEQXzTr5rB3ed2fGXg3KkrG1sWimVD0ASUXH3SR0i17S5H4n2WUzIWDAsg=="],
+    "nostr-social-duck": ["nostr-social-duck@0.1.12", "", { "dependencies": { "@duckdb/node-api": "^1.4.2-r.1" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-Zyy15fPLK4GVNgeBrNcl6T7YAU0PEVwlFzxNvTKS9Wgn1AiafOp9WbWHZsLYTu+2GmgamtaIwYvoOBPEo1FnOA=="],
 
     "nostr-tools": ["nostr-tools@2.17.3", "", { "dependencies": { "@noble/ciphers": "^0.5.1", "@noble/curves": "1.2.0", "@noble/hashes": "1.3.1", "@scure/base": "1.1.1", "@scure/bip32": "1.3.1", "@scure/bip39": "1.2.1", "nostr-wasm": "0.1.0" }, "peerDependencies": { "typescript": ">=5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-86v635D/0cvUEd0sHkh4h4Mp706UUMa5UHSXZ6YaIsURvyGgah4CwWDieJRzbVHdKBfGsQm4B20e9JFhEpAhxg=="],
 

@@ -7,7 +7,6 @@ import type { NostrEvent } from "nostr-tools";
 // Configuration types
 export interface RelatrConfig {
   defaultSourcePubkey: string;
-  duckDbPath: string;
   databasePath: string;
   nostrRelays: string[];
   serverSecretKey: string;

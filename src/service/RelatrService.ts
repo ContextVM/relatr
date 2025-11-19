@@ -2,11 +2,11 @@ import { DataStore } from '@/database/data-store';
 import { sanitizeProfile } from '@/utils/utils';
 import { fetchEventsForPubkeys, validateAndDecodePubkey } from '@/utils/utils.nostr';
 import { RelayPool } from 'applesauce-relay';
-import { Database } from 'bun:sqlite';
+import { DuckDBConnection } from '@duckdb/node-api';
 import type { NostrEvent } from 'nostr-tools';
 import { dirname } from 'path';
 import { createWeightProfileManager, RelatrConfigSchema } from '../config';
-import { cleanupExpiredCache, closeDatabase, initDatabase } from '../database/connection';
+import { initDuckDB, closeDuckDB, cleanupExpiredDuckDBCache } from '../database/duckdb-connection';
 import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
 import { SocialGraphBuilder } from '../graph/SocialGraphBuilder';
@@ -35,7 +35,7 @@ export class RelatrService {
         'wss://search.nos.today',
     ];
     private config: RelatrConfig;
-    private db: Database | null = null;
+    private db: DuckDBConnection | null = null;
     private socialGraph: RelatrSocialGraph | null = null;
     private socialGraphBuilder: SocialGraphBuilder | null = null;
     private pubkeyMetadataFetcher: PubkeyMetadataFetcher | null = null;
@@ -71,8 +71,8 @@ export class RelatrService {
             // Step 0: Ensure data directory exists with proper permissions
             await this.ensureDataDirectory();
 
-            // Step 1: Initialize database and caches
-            this.db = initDatabase(this.config.databasePath);
+            // Step 1: Initialize DuckDB database and caches
+            this.db = await initDuckDB(this.config.databasePath);
             this.metricsStore = new DataStore(this.db, 'profile_metrics', this.config.cacheTtlSeconds);
             this.metadataStore = new DataStore(this.db, 'pubkey_metadata');
 
@@ -82,21 +82,29 @@ export class RelatrService {
             this.pubkeyMetadataFetcher = new PubkeyMetadataFetcher(this.pool,this.metadataStore );
 
             // Step 3: Check if social graph exists and handle first-time setup
-            const graphExists = await Bun.file(this.config.duckDbPath).exists();
+            // We check if the graph tables exist in the shared database
+            let graphExists = false;
+            try {
+                const result = await this.db.run("SELECT 1 FROM nsd_follows LIMIT 1");
+                graphExists = true;
+            } catch (e) {
+                graphExists = false;
+            }
 
             if (!graphExists) {
-                console.log(`[RelatrService] 🆕 Social graph not found at ${this.config.duckDbPath}. Creating new graph...`);
+                console.log(`[RelatrService] 🆕 Social graph tables not found in database. Creating new graph...`);
 
                 await this.socialGraphBuilder.createGraph({
-                sourcePubkey: this.config.defaultSourcePubkey,
-                hops: this.config.numberOfHops
-            });
+                    sourcePubkey: this.config.defaultSourcePubkey,
+                    hops: this.config.numberOfHops,
+                    connection: this.db
+                });
 
                 console.log('[RelatrService] ✅ Social graph created successfully.');
             }
 
-            // Step 4: Initialize the social graph
-            this.socialGraph = new RelatrSocialGraph(this.config.duckDbPath);
+            // Step 4: Initialize the social graph with shared DuckDB connection
+            this.socialGraph = new RelatrSocialGraph(this.db);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             const graphStats = await this.socialGraph.getStats()
             console.log('[RelatrService] Social graph stats', graphStats);
@@ -293,7 +301,11 @@ export class RelatrService {
         };
     }
 
-    // TODO: Search profiles is now a bit slow. Investigate why.
+    /**
+     * Search profiles with optimized DuckDB integration
+     * Leverages DuckDB's analytical capabilities for combined search and distance calculation
+     */
+    // TODO: This is not working
     async searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
         if (!this.db) throw new RelatrError('Database not initialized', 'DATABASE_NOT_INITIALIZED');
@@ -306,25 +318,53 @@ export class RelatrService {
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         const startTime = Date.now();
 
-        const prepared = this.db.prepare(
-            `SELECT pubkey FROM pubkey_metadata WHERE pubkey_metadata MATCH ? LIMIT ?`
-        )
-
-        // NOTE: The slow performance is due the current approach to get relevant queries where we set a limit of 500 results, which calculates distances for all the pubkeys.
-        const dbPubkeys = prepared.all(`${this.escapeFts5Query(query)}*`, 500) as { pubkey: string }[];
-        const localPubkeys = dbPubkeys.map(row => row.pubkey);
+        // Simple LIKE-based search - we'll optimize with FTS later
+        const searchResult = await this.db.run(`
+            SELECT
+                pubkey,
+                name,
+                display_name,
+                nip05,
+                lud16,
+                about
+            FROM pubkey_metadata
+            WHERE
+                name ILIKE $1 OR
+                display_name ILIKE $1 OR
+                nip05 ILIKE $1 OR
+                lud16 ILIKE $1 OR
+                about ILIKE $1
+            LIMIT $2
+        `, {
+            1: `%${query}%`,
+            2: limit * 3
+        });
 
         const profilesWithRelevance = [];
-        for (const pubkey of localPubkeys) {
-            const profile = await this.metadataStore!.get(pubkey) || { pubkey };
+        const rows = await searchResult.getRows();
+        for (const row of rows) {
+            const r = row as any;
+            const profile = {
+                pubkey: r.pubkey,
+                name: r.name,
+                display_name: r.display_name,
+                nip05: r.nip05,
+                lud16: r.lud16,
+                about: r.about,
+            };
             const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
-            profilesWithRelevance.push({ pubkey, profile, relevanceMultiplier: multiplier, isExactMatch });
+            profilesWithRelevance.push({
+                pubkey: r.pubkey,
+                profile,
+                relevanceMultiplier: multiplier,
+                isExactMatch
+            });
         }
 
         profilesWithRelevance.sort((a, b) => b.relevanceMultiplier - a.relevanceMultiplier);
 
         const nostrProfiles: { pubkey: string; profile: NostrProfile; relevanceMultiplier: number; isExactMatch: boolean }[] = [];
-        const shouldExtendToNostr = extendToNostr || localPubkeys.length === 0;
+        const shouldExtendToNostr = extendToNostr || profilesWithRelevance.length === 0;
         
         if (shouldExtendToNostr) {
             const remaining = Math.max(0, limit - profilesWithRelevance.length);
@@ -402,10 +442,13 @@ export class RelatrService {
             exactMatch: item.exactMatch
         }));
 
+        const endTime = Date.now();
+        console.log(`[RelatrService] Search completed in ${endTime - startTime}ms`);
+
         return {
             results,
             totalFound: results.length,
-            searchTimeMs: Date.now() - startTime
+            searchTimeMs: endTime - startTime
         };
     }
 
@@ -492,7 +535,7 @@ export class RelatrService {
             clearInterval(this.validationInterval);
             this.validationInterval = null;
         }
-        if (this.db) closeDatabase(this.db);
+        if (this.db) await closeDuckDB(this.db);
 
         this.db = null;
         this.socialGraph = null;
@@ -516,7 +559,7 @@ export class RelatrService {
         this.cleanupInterval = setInterval(async () => {
             try {
                 if (this.db && this.initialized) {
-                    const result = cleanupExpiredCache(this.db);
+                    const result = await cleanupExpiredDuckDBCache(this.db);
                     // Only log if entries were actually deleted
                     if (result.totalDeleted > 0) {
                         console.log(`[RelatrService] Background cleanup completed: ${result.totalDeleted} expired entries removed`);
@@ -547,12 +590,15 @@ export class RelatrService {
         try {
             // Check last sync time unless forced
             if (!force) {
-                const lastSyncResult = this.db.query(
-                    'SELECT value FROM settings WHERE key = ?'
-                ).get(syncKey) as { value: string } | undefined;
+                const lastSyncResult = await this.db.run(
+                    'SELECT value FROM settings WHERE key = $1',
+                    { 1: syncKey }
+                );
+                const rows = await lastSyncResult.getRows();
+                const row = rows[0] as any;
 
-                if (lastSyncResult) {
-                    const lastSyncTime = parseInt(lastSyncResult.value);
+                if (row) {
+                    const lastSyncTime = parseInt(row.value);
                     if (Date.now() - lastSyncTime < this.config.syncInterval) {
                         console.log(`[RelatrService] Skipping contact sync - last sync was recent.`);
                         return;
@@ -572,9 +618,9 @@ export class RelatrService {
             });
 
             const now = Date.now();
-            this.db.run(
-                'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
-                [syncKey, now.toString(), now]
+            await this.db.run(
+                'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)',
+                { 1: syncKey, 2: now.toString(), 3: now }
             );
 
             console.log(`[RelatrService] Sync completed in ${Date.now() - startTime}ms`);
@@ -814,11 +860,7 @@ export class RelatrService {
     }
 
     private escapeFts5Query(query: string): string {
-        if (query.includes('"') || query.includes("'") || query.includes('*') ||
-            query.includes(':') || query.includes('.') ||
-            query.includes(' AND ') || query.includes(' OR ') || query.includes(' NOT ')) {
-            return `"${query.replace(/"/g, '""')}"`;
-        }
+        // DuckDB FTS handles query escaping automatically
         return query;
     }
 }

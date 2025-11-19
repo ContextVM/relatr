@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { SocialGraph } from "../graph/SocialGraph";
 import { loadConfig } from "../config";
+import { initDuckDB } from "@/database/duckdb-connection";
 
 /**
  * Social Graph Benchmark Tests
@@ -14,8 +15,11 @@ describe("SocialGraph - Benchmark Tests", () => {
     // Load configuration to get real root pubkey
     config = loadConfig();
 
-    // Initialize social graph with real database path from config
-    socialGraph = new SocialGraph(config.duckDbPath);
+    // Initialize DuckDB connection and social graph with temporary database
+    const db = await initDuckDB(":memory:");
+
+    // Initialize social graph with shared connection
+    socialGraph = new SocialGraph(db);
     await socialGraph.initialize(config.defaultSourcePubkey);
   });
 

@@ -81,8 +81,7 @@ export class PubkeyMetadataFetcher {
         };
       }
 
-      // TODO: Review performance of this method
-      // Cache the metadata
+      // Cache the metadata using batch operations
       await this.storeProfileMetadata(profileEvents);
 
       const message = `Fetched and cached metadata for ${profileEvents.length} profiles.`;
@@ -104,21 +103,30 @@ export class PubkeyMetadataFetcher {
    * Cache profile metadata from kind 0 events
    * @param events Profile events to cache
    */
+  // TODO: We dont need all this unneceary object creation
   private async storeProfileMetadata(events: NostrEvent[]): Promise<void> {
+    const entries = [];
     for (const event of events) {
       try {
         const profile = JSON.parse(event.content);
-        await this.metadataCache.set(event.pubkey, {
-          pubkey: event.pubkey,
-          name: profile.name,
-          display_name: profile.display_name,
-          nip05: profile.nip05,
-          lud16: profile.lud16,
-          about: profile.about,
+        entries.push({
+          key: event.pubkey,
+          value: {
+            pubkey: event.pubkey,
+            name: profile.name,
+            display_name: profile.display_name,
+            nip05: profile.nip05,
+            lud16: profile.lud16,
+            about: profile.about,
+          },
         });
       } catch (e) {
         // ignore invalid profile
       }
+    }
+
+    if (entries.length > 0) {
+      await this.metadataCache.batchSet(entries);
     }
   }
 }

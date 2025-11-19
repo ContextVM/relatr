@@ -26,7 +26,7 @@
     "@modelcontextprotocol/sdk": "^1.22.0",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
-    "nostr-social-duck": "^0.1.11",
+    "nostr-social-duck": "^0.1.12",
     "nostr-tools": "^2.17.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.0",
