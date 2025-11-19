@@ -75,12 +75,18 @@ export class RelatrService {
             // Step 1: Initialize Database Manager
             this.dbManager = DatabaseManager.getInstance(this.config.databasePath);
             await this.dbManager.initialize();
-            const connection = this.dbManager.getConnection();
+            
+            // Get separate connections for each component to ensure transaction isolation
+            const metricsConnection = await this.dbManager.createConnection();
+            const metadataConnection = await this.dbManager.createConnection();
+            const settingsConnection = await this.dbManager.createConnection();
+            const graphConnection = await this.dbManager.createConnection();
+            const builderConnection = await this.dbManager.createConnection();
 
             // Step 2: Initialize Repositories
-            this.metricsRepository = new MetricsRepository(connection, this.config.cacheTtlSeconds);
-            this.metadataRepository = new MetadataRepository(connection);
-            this.settingsRepository = new SettingsRepository(connection);
+            this.metricsRepository = new MetricsRepository(metricsConnection, this.config.cacheTtlSeconds);
+            this.metadataRepository = new MetadataRepository(metadataConnection);
+            this.settingsRepository = new SettingsRepository(settingsConnection);
 
             // Step 3: Initialize network components and builders first
             this.pool = new RelayPool();
@@ -90,7 +96,8 @@ export class RelatrService {
             // Step 4: Check if social graph exists and handle first-time setup
             let graphExists = false;
             try {
-                const result = await connection.run("SELECT 1 FROM nsd_follows LIMIT 1");
+                // Use a temporary connection for this check or one of the existing ones
+                const result = await settingsConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
                 graphExists = true;
             } catch (e) {
                 graphExists = false;
@@ -102,14 +109,14 @@ export class RelatrService {
                 await this.socialGraphBuilder.createGraph({
                     sourcePubkey: this.config.defaultSourcePubkey,
                     hops: this.config.numberOfHops,
-                    connection: connection
+                    connection: builderConnection
                 });
 
                 console.log('[RelatrService] ✅ Social graph created successfully.');
             }
 
-            // Step 5: Initialize the social graph with shared DuckDB connection
-            this.socialGraph = new RelatrSocialGraph(connection);
+            // Step 5: Initialize the social graph with its own DuckDB connection
+            this.socialGraph = new RelatrSocialGraph(graphConnection);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             const graphStats = await this.socialGraph.getStats()
             console.log('[RelatrService] Social graph stats', graphStats);

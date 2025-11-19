@@ -11,6 +11,7 @@ export class DatabaseManager {
   private static instance: DatabaseManager;
   private duckDB: DuckDBInstance | null = null;
   private connection: DuckDBConnection | null = null;
+  private connections: Set<DuckDBConnection> = new Set();
   private dbPath: string;
 
   private constructor(dbPath: string) {
@@ -35,7 +36,7 @@ export class DatabaseManager {
    * Initialize the database connection and schema
    */
   public async initialize(): Promise<void> {
-    if (this.connection) return;
+    if (this.duckDB) return;
 
     try {
       const resolvedPath =
@@ -44,8 +45,9 @@ export class DatabaseManager {
       // Create instance
       this.duckDB = await DuckDBInstance.create(resolvedPath);
 
-      // Create connection
+      // Create primary connection
       this.connection = await this.duckDB.connect();
+      this.connections.add(this.connection);
 
       // Load schema
       await this.loadSchema();
@@ -101,7 +103,7 @@ export class DatabaseManager {
   }
 
   /**
-   * Get the active DuckDB connection
+   * Get the active DuckDB connection (primary connection)
    */
   public getConnection(): DuckDBConnection {
     if (!this.connection) {
@@ -111,21 +113,37 @@ export class DatabaseManager {
   }
 
   /**
-   * Close the database connection
+   * Create a new DuckDB connection
+   * Returns a fresh connection that is tracked for cleanup
+   */
+  public async createConnection(): Promise<DuckDBConnection> {
+    if (!this.duckDB) {
+      throw new DatabaseError("Database not initialized", "CREATE_CONNECTION");
+    }
+    const conn = await this.duckDB.connect();
+    this.connections.add(conn);
+    return conn;
+  }
+
+  /**
+   * Close the database connection and all tracked connections
    */
   public async close(): Promise<void> {
-    if (this.connection) {
-      try {
-        // In node-duckdb-api, close is synchronous on the connection object usually,
-        // but let's follow the pattern if it's async or sync based on the library version.
-        // The previous code used closeSync()
-        this.connection.closeSync();
-        this.connection = null;
-        this.duckDB = null;
-        console.log("[DatabaseManager] Database connection closed");
-      } catch (error) {
-        console.error("Error closing database:", error);
+    try {
+      // Close all tracked connections
+      for (const conn of this.connections) {
+        try {
+          conn.closeSync();
+        } catch (e) {
+          console.warn("Error closing connection:", e);
+        }
       }
+      this.connections.clear();
+      this.connection = null;
+      this.duckDB = null;
+      console.log("[DatabaseManager] Database connections closed");
+    } catch (error) {
+      console.error("Error closing database:", error);
     }
   }
 }

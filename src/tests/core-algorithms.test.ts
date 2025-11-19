@@ -47,6 +47,7 @@ const testMetrics: ProfileMetrics = {
     reciprocity: 0.8,
   },
   computedAt: Math.floor(Date.now() / 1000),
+  expiresAt: Math.floor(Date.now() / 1000) + 1000,
 };
 
 // Shared instances
@@ -224,6 +225,7 @@ describe("TrustCalculator - Score Calculation", () => {
         reciprocity: 0,
       },
       computedAt: Math.floor(Date.now() / 1000),
+      expiresAt: Math.floor(Date.now() / 1000) + 1000,
     };
 
     const sourcePubkey =
