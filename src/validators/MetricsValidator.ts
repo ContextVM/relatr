@@ -20,6 +20,8 @@ import {
 import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { RelayPool } from "applesauce-relay";
 import type { NostrEvent } from "nostr-tools";
+import { executeWithRetry } from "nostr-social-duck";
+import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -34,6 +36,7 @@ export class MetricsValidator {
   private cacheTtlSeconds: number = 3600;
   private registry: ValidationRegistry;
   private weightProfileManager: WeightProfileManager;
+  private metadataRepository: MetadataRepository;
 
   /**
    * Create a new MetricsValidator instance
@@ -49,6 +52,7 @@ export class MetricsValidator {
     nostrRelays: string[],
     graphManager: SocialGraph,
     metricsRepository: MetricsRepository,
+    metadataRepository: MetadataRepository,
     cacheTtlSeconds?: number,
     plugins: ValidationPlugin[] = ALL_PLUGINS,
     weightProfileManager?: WeightProfileManager,
@@ -69,12 +73,16 @@ export class MetricsValidator {
       throw new ValidationError("MetricsRepository instance is required");
     }
 
+    if (!metadataRepository) {
+      throw new ValidationError("MetadataRepository instance is required");
+    }
+
     this.pool = pool;
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
     this.metricsRepository = metricsRepository;
     this.cacheTtlSeconds = cacheTtlSeconds || 60 * 60 * 1000 * 48;
-
+    this.metadataRepository = metadataRepository;
     // Initialize weight profile manager
     this.weightProfileManager =
       weightProfileManager || new WeightProfileManager();
@@ -106,7 +114,9 @@ export class MetricsValidator {
     }
     try {
       // Check cache first
-      const cached = await this.metricsRepository.get(pubkey);
+      const cached = await executeWithRetry(async () => {
+        return await this.metricsRepository.get(pubkey);
+      });
       if (cached) {
         return cached;
       }
@@ -119,7 +129,9 @@ export class MetricsValidator {
 
     try {
       // Get profile for validations
-      const profile = await this.fetchProfile(pubkey);
+      const profile =
+        (await this.metadataRepository.get(pubkey)) ||
+        (await this.fetchProfile(pubkey));
 
       // Create validation context
       const context: ValidationContext = {

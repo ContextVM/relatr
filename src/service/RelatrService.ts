@@ -76,17 +76,14 @@ export class RelatrService {
             this.dbManager = DatabaseManager.getInstance(this.config.databasePath);
             await this.dbManager.initialize();
             
-            // Get separate connections for each component to ensure transaction isolation
-            const metricsConnection = await this.dbManager.createConnection();
-            const metadataConnection = await this.dbManager.createConnection();
-            const settingsConnection = await this.dbManager.createConnection();
-            const graphConnection = await this.dbManager.createConnection();
-            const builderConnection = await this.dbManager.createConnection();
+            // Use a single shared connection for all components to reduce transaction conflicts
+            // The retry logic in repositories will handle any conflicts that occur
+            const sharedConnection = this.dbManager.getConnection();
 
             // Step 2: Initialize Repositories
-            this.metricsRepository = new MetricsRepository(metricsConnection, this.config.cacheTtlSeconds);
-            this.metadataRepository = new MetadataRepository(metadataConnection);
-            this.settingsRepository = new SettingsRepository(settingsConnection);
+            this.metricsRepository = new MetricsRepository(sharedConnection, this.config.cacheTtlSeconds);
+            this.metadataRepository = new MetadataRepository(sharedConnection);
+            this.settingsRepository = new SettingsRepository(sharedConnection);
 
             // Step 3: Initialize network components and builders first
             this.pool = new RelayPool();
@@ -96,27 +93,26 @@ export class RelatrService {
             // Step 4: Check if social graph exists and handle first-time setup
             let graphExists = false;
             try {
-                // Use a temporary connection for this check or one of the existing ones
-                const result = await settingsConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
+                const result = await sharedConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
                 graphExists = true;
             } catch (e) {
                 graphExists = false;
             }
 
             if (!graphExists) {
-                console.log(`[RelatrService] 🆕 Social graph tables not found in database. Creating new graph...`);
+                console.log(`[RelatrService]  🆕 Social graph tables not found in database. Creating new graph...`);
 
                 await this.socialGraphBuilder.createGraph({
                     sourcePubkey: this.config.defaultSourcePubkey,
                     hops: this.config.numberOfHops,
-                    connection: builderConnection
+                    connection: sharedConnection
                 });
 
                 console.log('[RelatrService] ✅ Social graph created successfully.');
             }
 
-            // Step 5: Initialize the social graph with its own DuckDB connection
-            this.socialGraph = new RelatrSocialGraph(graphConnection);
+            // Step 5: Initialize the social graph with the shared connection
+            this.socialGraph = new RelatrSocialGraph(sharedConnection);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             const graphStats = await this.socialGraph.getStats()
             console.log('[RelatrService] Social graph stats', graphStats);
@@ -124,7 +120,7 @@ export class RelatrService {
             // Step 6: Initialize trust calculation components
             const weightProfileManager = createWeightProfileManager();
             this.trustCalculator = new TrustCalculator(this.config, weightProfileManager);
-            this.metricsValidator = new MetricsValidator(this.pool, this.config.nostrRelays, this.socialGraph, this.metricsRepository, this.config.cacheTtlSeconds, ALL_PLUGINS, weightProfileManager);
+            this.metricsValidator = new MetricsValidator(this.pool, this.config.nostrRelays, this.socialGraph, this.metricsRepository, this.metadataRepository, this.config.cacheTtlSeconds, ALL_PLUGINS, weightProfileManager);
 
             this.initialized = true;
 
@@ -182,26 +178,7 @@ export class RelatrService {
         }
 
         try {
-            const distance = decodedSourcePubkey !== this.socialGraph!.getCurrentRoot()
-                ? await this.socialGraph!.getDistanceBetween(decodedSourcePubkey, decodedTargetPubkey)
-                : await this.socialGraph!.getDistance(decodedTargetPubkey);
-
-            // Return a trust score of 0 if the target pubkey is far in distance
-            // This avoids expensive validateAll calls for distant profiles, making search faster
-            if (distance > 3) {
-                return {
-                    score: 0,
-                    sourcePubkey: decodedSourcePubkey,
-                    targetPubkey: decodedTargetPubkey,
-                    components: {
-                        distanceWeight: 0,
-                        validators: {},
-                        socialDistance: distance,
-                        normalizedDistance: 0
-                    },
-                    computedAt: Date.now()
-                };
-            }
+            const distance = await this.socialGraph!.getDistance(decodedTargetPubkey);
 
             const metrics = await this.metricsValidator!.validateAll(decodedTargetPubkey, decodedSourcePubkey);
             if (weightingScheme) {
@@ -225,12 +202,12 @@ export class RelatrService {
 
 
     private async calculateProfileScores(
-        profiles: { pubkey: string; profile: NostrProfile; relevanceMultiplier: number; isExactMatch: boolean }[],
+        profiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[],
         effectiveSourcePubkey: string,
         weightingScheme?: WeightingScheme
-    ): Promise<{ pubkey: string; profile: NostrProfile; trustScore: number; exactMatch: boolean }[]> {
+    ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]> {
         const results = await Promise.all(
-            profiles.map(async ({ pubkey, profile, relevanceMultiplier, isExactMatch }) => {
+            profiles.map(async ({ pubkey, relevanceMultiplier, isExactMatch }) => {
                 try {
                     const trustScore = await this.calculateTrustScore({
                         sourcePubkey: effectiveSourcePubkey,
@@ -238,18 +215,22 @@ export class RelatrService {
                         weightingScheme
                     });
 
-                    const rawCombinedScore = trustScore.score * relevanceMultiplier;
+                    // Apply exact match bonus to relevance multiplier if needed
+                    let finalRelevanceMultiplier = relevanceMultiplier;
+                    if (isExactMatch) {
+                        finalRelevanceMultiplier *= 1.15;
+                    }
+
+                    const rawCombinedScore = trustScore.score * finalRelevanceMultiplier;
 
                     return {
                         pubkey,
-                        profile,
                         rawScore: rawCombinedScore,
                         exactMatch: isExactMatch
                     };
                 } catch {
                     return {
                         pubkey,
-                        profile,
                         rawScore: 0,
                         exactMatch: isExactMatch
                     };
@@ -257,11 +238,11 @@ export class RelatrService {
             })
         );
 
+        // Single normalization point - normalize all scores to 0-1 range
         const maxRawScore = Math.max(...results.map(r => r.rawScore), 1.0);
 
         return results.map(result => ({
             pubkey: result.pubkey,
-            profile: result.profile,
             trustScore: result.rawScore / maxRawScore,
             exactMatch: result.exactMatch
         }));
@@ -276,7 +257,6 @@ export class RelatrService {
             name: 0.5,
             display_name: 0.35,
             nip05: 0.1,
-            about: 0.05
         };
 
         for (const [field, weight] of Object.entries(fieldWeights)) {
@@ -284,6 +264,7 @@ export class RelatrService {
             if (typeof fieldValue === 'string' && fieldValue.trim()) {
                 const valueLower = fieldValue.toLowerCase();
                 
+                // Only count as exact match if the ENTIRE field equals the query
                 if (valueLower === queryLower) {
                     relevanceScore += weight;
                     if (field === 'name' || field === 'display_name') {
@@ -303,9 +284,8 @@ export class RelatrService {
         const maxMultiplier = 1.4;
         let relevanceMultiplier = 1.0 + (normalizedRelevanceScore * (maxMultiplier - 1.0));
 
-        if (isExactMatch) {
-            relevanceMultiplier *= 1.15;
-        }
+        // Note: Exact match bonus is now applied in calculateProfileScores for consistency
+        // This ensures both database and Nostr results get the same bonus treatment
 
         return {
             multiplier: relevanceMultiplier,
@@ -314,98 +294,102 @@ export class RelatrService {
     }
 
     /**
-     * Search profiles with optimized DuckDB integration
-     * Leverages DuckDB's analytical capabilities for combined search and distance calculation
+     * Search profiles with distance-aware relevance scoring
+     * Database returns pre-ranked results based on text match + social distance
+     * Trust scores calculated only for top candidates for performance
      */
     async searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
         if (!this.metadataRepository) throw new RelatrError('Metadata repository not initialized', 'DATABASE_NOT_INITIALIZED');
-        const { query, limit = 7, sourcePubkey, weightingScheme, extendToNostr } = params;
+        
+        const { query, limit = 5, sourcePubkey, weightingScheme, extendToNostr } = params;
 
         if (!query || typeof query !== 'string') {
             throw new ValidationError('Invalid search query', 'query');
         }
 
-        const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
+        const effectiveSourcePubkey = sourcePubkey || this.socialGraph?.getCurrentRoot() || this.config.defaultSourcePubkey;
         const startTime = Date.now();
 
-        // Use repository search
-        const localResults = await this.metadataRepository.search(query, limit * 3);
+        // Search local database - returns top N results ranked by text relevance + root distance
+        // This ensures predictable trust calculation costs by limiting results at the database level
+        const localResults = await this.metadataRepository.search(query, limit);
+        
+        console.debug(`[RelatrService] 🔍 Found ${localResults.length} distance-ranked profiles from database`);
 
-        const profilesWithRelevance = localResults.map(r => {
-            const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(r.profile, query);
+        // Prepare profiles for trust scoring
+        const profilesForScoring = localResults.map((r) => {
             return {
                 pubkey: r.pubkey,
-                profile: r.profile,
-                relevanceMultiplier: multiplier,
-                isExactMatch
+                relevanceMultiplier: r.score,
+                isExactMatch: r.isExactMatch
             };
         });
 
-        profilesWithRelevance.sort((a, b) => b.relevanceMultiplier - a.relevanceMultiplier);
-
-        const nostrProfiles: { pubkey: string; profile: NostrProfile; relevanceMultiplier: number; isExactMatch: boolean }[] = [];
-        const shouldExtendToNostr = extendToNostr || profilesWithRelevance.length === 0;
+        // Extend to Nostr if needed
+        const nostrProfiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[] = [];
+        const shouldExtendToNostr = extendToNostr || profilesForScoring.length === 0;
         
         if (shouldExtendToNostr) {
-            const remaining = Math.max(0, limit - profilesWithRelevance.length);
+            const remaining = Math.max(0, limit - profilesForScoring.length);
             
-            console.debug(`[RelatrService]  🔍 Extending search to Nostr relays for up to ${remaining} results`);
+            if (remaining > 0) {
+                console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${remaining} results`);
 
-            const searchFilter = { kinds: [0], search: query, limit: remaining };
+                const searchFilter = { kinds: [0], search: query, limit: remaining };
 
-            try {
-                if (this.pool) {
-                    const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
-                        const events: NostrEvent[] = [];
-                        const subscription = this.pool!.request(
-                            RelatrService.SEARCH_RELAYS,
-                            searchFilter,
-                            { retries: 1 }
-                        ).subscribe({
-                            next: (event) => events.push(event),
-                            error: (error) => reject(error),
-                            complete: () => resolve(events)
+                try {
+                    if (this.pool) {
+                        const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
+                            const events: NostrEvent[] = [];
+                            const subscription = this.pool!.request(
+                                RelatrService.SEARCH_RELAYS,
+                                searchFilter,
+                                { retries: 1 }
+                            ).subscribe({
+                                next: (event) => events.push(event),
+                                error: (error) => reject(error),
+                                complete: () => resolve(events)
+                            });
+
+                            setTimeout(() => {
+                                subscription.unsubscribe();
+                                resolve(events);
+                            }, 5000);
                         });
 
-                        setTimeout(() => {
-                            subscription.unsubscribe();
-                            resolve(events);
-                        }, 5000);
-                    });
-
-                    for (const event of nostrEvents) {
-                        const existingPubkey = profilesWithRelevance.find(p => p.pubkey === event.pubkey);
-                        if (!existingPubkey && !nostrProfiles.find(p => p.pubkey === event.pubkey)) {
-                            const profile = JSON.parse(event.content);
-                            const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
-                            nostrProfiles.push({
-                                pubkey: event.pubkey,
-                                profile: { pubkey: event.pubkey, ...profile },
-                                relevanceMultiplier: multiplier,
-                                isExactMatch
-                            });
-                            this.metadataRepository!.save({ pubkey: event.pubkey, ...profile }).catch(err => {
-                                console.warn(`[RelatrService] ️ Failed to cache profile for ${event.pubkey}:`, err);
-                            });
+                        for (const event of nostrEvents) {
+                            const existingPubkey = profilesForScoring.find(p => p.pubkey === event.pubkey);
+                            if (!existingPubkey && !nostrProfiles.find(p => p.pubkey === event.pubkey)) {
+                                const profile = JSON.parse(event.content);
+                                // Calculate relevance for Nostr profiles
+                                const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
+                                nostrProfiles.push({
+                                    pubkey: event.pubkey,
+                                    relevanceMultiplier: multiplier,
+                                    isExactMatch
+                                });
+                                this.metadataRepository!.save({ pubkey: event.pubkey, ...profile }).catch(err => {
+                                    console.warn(`[RelatrService] Failed to cache profile for ${event.pubkey}:`, err);
+                                });
+                            }
                         }
                     }
-                } else {
-                    console.warn('[RelatrService]  ⚠️ Relay pool not available for Nostr search');
+                } catch {
+                    // Remote search failed, continue with local results only
                 }
-            } catch {
-                // Remote search failed or timed out, continue with local results only
             }
         }
 
-        const finalProfiles = [...profilesWithRelevance, ...nostrProfiles];
-        // FIXME: For some reason seems than profiles coming from nostr doesnt get validated
+        // Calculate trust scores for all candidates
+        const finalProfiles = [...profilesForScoring, ...nostrProfiles];
         const profilesWithScores = await this.calculateProfileScores(
             finalProfiles,
             effectiveSourcePubkey,
             weightingScheme
         );
 
+        // Queue high-scoring Nostr profiles for discovery
         profilesWithScores.forEach(profile => {
             if (profile.trustScore > 0.5 && nostrProfiles.find(p => p.pubkey === profile.pubkey)) {
                 this.discoveryQueue.add(profile.pubkey);
@@ -413,11 +397,11 @@ export class RelatrService {
             }
         });
 
+        // Sort by trust score and return top results
         profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
 
         const results = profilesWithScores.slice(0, limit).map((item, index) => ({
             pubkey: item.pubkey,
-            profile: item.profile,
             trustScore: item.trustScore,
             rank: index + 1,
             exactMatch: item.exactMatch
@@ -665,7 +649,7 @@ export class RelatrService {
             console.log(`[RelatrService] 📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`);
 
             // Step 2: Identify pubkeys without validation scores
-            const pubkeysWithoutScores = (await this.metricsRepository.getPubkeysWithoutScores(allPubkeys)).slice(0, 100);
+            const pubkeysWithoutScores = (await this.metricsRepository.getPubkeysWithoutScores(allPubkeys))
             console.log(`[RelatrService] 🔍 Found ${pubkeysWithoutScores.length.toLocaleString()} pubkeys missing validation scores`);
 
             if (pubkeysWithoutScores.length === 0) {
@@ -833,10 +817,5 @@ export class RelatrService {
      */
     private extractDataDirectory(filePath: string): string {
         return dirname(filePath);
-    }
-
-    private escapeFts5Query(query: string): string {
-        // DuckDB FTS handles query escaping automatically
-        return query;
     }
 }

@@ -1,4 +1,4 @@
-import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
+import { DuckDBSocialGraphAnalyzer, executeWithRetry } from "nostr-social-duck";
 import { DuckDBConnection } from "@duckdb/node-api";
 import { SocialGraphError } from "../types";
 import type { NostrEvent } from "nostr-tools";
@@ -138,16 +138,9 @@ export class SocialGraph {
       );
     }
 
-    try {
+    return executeWithRetry(async () => {
       return await this.graph!.isDirectFollow(source, target);
-    } catch (error) {
-      // Handle the case where the prepared statement fails
-      console.warn(
-        `Failed to check follow relationship between ${source} and ${target}:`,
-        error instanceof Error ? error.message : String(error),
-      );
-      return false;
-    }
+    });
   }
 
   /**

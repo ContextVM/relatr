@@ -278,14 +278,6 @@ export class ReciprocityPlugin implements ValidationPlugin {
         return 0.0;
       }
 
-      // Check if both pubkeys exist in the graph
-      const sourceInGraph = await ctx.graphManager.isInGraph(ctx.sourcePubkey);
-      const targetInGraph = await ctx.graphManager.isInGraph(ctx.pubkey);
-
-      if (!sourceInGraph || !targetInGraph) {
-        return 0.0;
-      }
-
       // Check follow relationships
       const sourceFollowsTarget = await ctx.graphManager.doesFollow(
         ctx.sourcePubkey,

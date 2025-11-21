@@ -130,11 +130,6 @@ function registerCalculateTrustScoreTool(
           await relatrService.calculateTrustScore(validatedParams);
         const computationTimeMs = Date.now() - startTime;
 
-        const result = {
-          trustScore,
-          computationTimeMs,
-        };
-
         return {
           content: [],
           structuredContent: {

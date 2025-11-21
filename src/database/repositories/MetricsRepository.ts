@@ -1,5 +1,6 @@
 import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type ProfileMetrics } from "../../types";
+import { executeWithRetry } from "nostr-social-duck";
 
 export class MetricsRepository {
   private connection: DuckDBConnection;
@@ -11,7 +12,7 @@ export class MetricsRepository {
   }
 
   async save(pubkey: string, metrics: ProfileMetrics): Promise<void> {
-    try {
+    return executeWithRetry(async () => {
       const now = Math.floor(Date.now() / 1000);
       const expiresAt = now + this.ttlSeconds;
 
@@ -32,12 +33,7 @@ export class MetricsRepository {
           );
         }
       }
-    } catch (error) {
-      throw new DatabaseError(
-        `Failed to save metrics for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "METRICS_SAVE",
-      );
-    }
+    });
   }
 
   async get(pubkey: string): Promise<ProfileMetrics | null> {
@@ -126,7 +122,7 @@ export class MetricsRepository {
   }
 
   async cleanup(): Promise<number> {
-    try {
+    return executeWithRetry(async () => {
       const now = Math.floor(Date.now() / 1000);
       const result = await this.connection.run(
         "DELETE FROM profile_metrics WHERE expires_at <= $1",
@@ -134,12 +130,7 @@ export class MetricsRepository {
       );
 
       return result.rowCount;
-    } catch (error) {
-      throw new DatabaseError(
-        `Failed to cleanup metrics: ${error instanceof Error ? error.message : String(error)}`,
-        "METRICS_CLEANUP",
-      );
-    }
+    });
   }
 
   async getStats(): Promise<{ totalEntries: number }> {

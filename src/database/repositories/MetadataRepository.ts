@@ -1,11 +1,12 @@
 import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type NostrProfile } from "../../types";
+import { executeWithRetry } from "nostr-social-duck";
 
 export interface SearchResult {
   pubkey: string;
-  profile: NostrProfile;
   score: number;
   rank: number;
+  isExactMatch: boolean;
 }
 
 export class MetadataRepository {
@@ -16,7 +17,7 @@ export class MetadataRepository {
   }
 
   async save(profile: NostrProfile): Promise<void> {
-    try {
+    return executeWithRetry(async () => {
       const now = Math.floor(Date.now() / 1000);
 
       // Delete existing
@@ -39,12 +40,7 @@ export class MetadataRepository {
           7: now,
         },
       );
-    } catch (error) {
-      throw new DatabaseError(
-        `Failed to save metadata for ${profile.pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "METADATA_SAVE",
-      );
-    }
+    });
   }
 
   async get(pubkey: string): Promise<NostrProfile | null> {
@@ -76,63 +72,136 @@ export class MetadataRepository {
     }
   }
 
+  /**
+   * Optimized pattern-based search with distance-aware ranking
+   * Uses DuckDB window functions and LIMIT to efficiently return only top candidates
+   * This dramatically reduces the number of profiles requiring trust calculation
+   */
   async search(query: string, limit: number = 20): Promise<SearchResult[]> {
     try {
-      const searchPattern = `%${query}%`;
+      // Calculate candidate limit: return enough candidates for trust calculation
+      // but not so many that we process thousands of profiles
+      const candidateLimit = Math.max(limit * 20, 100);
+
       const result = await this.connection.run(
         `
+        WITH ranked_matches AS (
+          SELECT
+            m.pubkey,
+            m.name,
+            m.display_name,
+            m.nip05,
+            -- Text relevance scoring with priority for exact and prefix matches
+            CASE
+              -- Exact matches (highest priority) - entire field equals query
+              WHEN LOWER(m.name) = LOWER($1) THEN 1.4
+              WHEN LOWER(m.display_name) = LOWER($1) THEN 1.3
+              WHEN LOWER(m.nip05) = LOWER($1) THEN 1.2
+              -- Prefix matches (high priority)
+              WHEN m.name ILIKE $1 || '%' THEN 1.1
+              WHEN m.display_name ILIKE $1 || '%' THEN 1.05
+              WHEN m.nip05 ILIKE $1 || '%' THEN 1.0
+              -- Contains matches (lower priority)
+              WHEN m.name ILIKE '%' || $1 || '%' THEN 0.9
+              WHEN m.display_name ILIKE '%' || $1 || '%' THEN 0.8
+              WHEN m.nip05 ILIKE '%' || $1 || '%' THEN 0.7
+              ELSE 0.0
+            END AS text_score,
+            -- Exact match flag
+            CASE
+              WHEN LOWER(m.name) = LOWER($1) OR LOWER(m.display_name) = LOWER($1) THEN true
+              ELSE false
+            END AS is_exact_match,
+            -- Social distance score (exponential decay matching TrustCalculator)
+            CASE
+              WHEN d.distance <= 1 THEN 1.0
+              WHEN d.distance = 1000 THEN 0.0
+              ELSE exp(-0.5 * d.distance)
+            END AS distance_score,
+            d.distance,
+            -- Validation score (average of all metrics for this pubkey)
+            COALESCE(v.avg_validation, 0.5) AS validation_score,
+            v.validation_count,
+            -- Pre-rank score: combines distance, validation, and text relevance
+            -- Formula mirrors trust calculation: (0.5×distance + 0.5×validation) × text_relevance
+            (
+              (0.5 * CASE
+                WHEN d.distance <= 1 THEN 1.0
+                WHEN d.distance = 1000 THEN 0.0
+                ELSE exp(-0.5 * d.distance)
+              END +
+               0.5 * COALESCE(v.avg_validation, 0.5)) *
+              CASE
+                WHEN LOWER(m.name) = LOWER($1) THEN 1.4
+                WHEN LOWER(m.display_name) = LOWER($1) THEN 1.3
+                WHEN LOWER(m.nip05) = LOWER($1) THEN 1.2
+                WHEN m.name ILIKE $1 || '%' THEN 1.1
+                WHEN m.display_name ILIKE $1 || '%' THEN 1.05
+                WHEN m.nip05 ILIKE $1 || '%' THEN 1.0
+                WHEN m.name ILIKE '%' || $1 || '%' THEN 0.9
+                WHEN m.display_name ILIKE '%' || $1 || '%' THEN 0.8
+                WHEN m.nip05 ILIKE '%' || $1 || '%' THEN 0.7
+                ELSE 0.0
+              END
+            ) AS pre_rank_score
+          FROM pubkey_metadata m
+          LEFT JOIN nsd_root_distances d ON m.pubkey = d.pubkey
+          LEFT JOIN (
+            SELECT
+              pubkey,
+              AVG(metric_value) AS avg_validation,
+              COUNT(*) AS validation_count
+            FROM profile_metrics
+            WHERE expires_at > (EXTRACT(epoch FROM NOW())::INTEGER)
+            GROUP BY pubkey
+          ) v ON m.pubkey = v.pubkey
+          WHERE
+            m.name ILIKE '%' || $1 || '%' OR
+            m.display_name ILIKE '%' || $1 || '%' OR
+            m.nip05 ILIKE '%' || $1 || '%'
+        )
         SELECT
-          pubkey, name, display_name, nip05, lud16, about,
-          (CASE
-            WHEN name ILIKE $1 THEN 1.0
-            WHEN display_name ILIKE $1 THEN 0.8
-            WHEN nip05 ILIKE $1 THEN 0.6
-            WHEN about ILIKE $1 THEN 0.4
-            ELSE 0.1
-          END) as score
-        FROM pubkey_metadata
-        WHERE
-          name ILIKE $1 OR
-          display_name ILIKE $1 OR
-          nip05 ILIKE $1 OR
-          about ILIKE $1
-        ORDER BY score DESC
+          pubkey,
+          text_score,
+          is_exact_match,
+          pre_rank_score,
+          distance,
+          validation_count
+        FROM ranked_matches
+        WHERE text_score > 0  -- Only return actual matches
+        ORDER BY pre_rank_score DESC, text_score DESC, distance ASC
         LIMIT $2
-      `,
-        {
-          1: searchPattern,
-          2: limit,
-        },
+        `,
+        { 1: query, 2: candidateLimit },
       );
 
       const rows = await result.getRows();
-      console.log(
-        `DEBUG: MetadataRepository.search(${query}, ${limit}): Found ${rows.length} rows`,
-      );
+
       return rows.map((row: any[], index) => {
-        let score = 0;
-        if (row[6] && typeof row[6].toDouble === "function") {
-          score = row[6].toDouble();
+        let textScore = 0;
+        if (row[1] && typeof row[1].toDouble === "function") {
+          textScore = row[1].toDouble();
         } else {
-          score = Number(row[6]);
+          textScore = Number(row[1]);
+        }
+
+        let isExactMatch = false;
+        if (row[2] && typeof row[2] === "boolean") {
+          isExactMatch = row[2];
+        } else if (row[2] && typeof row[2].toBoolean === "function") {
+          isExactMatch = row[2].toBoolean();
+        } else {
+          isExactMatch = Boolean(row[2]);
         }
 
         return {
           pubkey: row[0],
-          profile: {
-            pubkey: row[0],
-            name: row[1],
-            display_name: row[2],
-            nip05: row[3],
-            lud16: row[4],
-            about: row[5],
-          },
-          score: score,
+          score: textScore,
           rank: index + 1,
+          isExactMatch: isExactMatch,
         };
       });
     } catch (error) {
-      console.warn("FTS search failed:", error);
       return [];
     }
   }

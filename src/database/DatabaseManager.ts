@@ -11,7 +11,6 @@ export class DatabaseManager {
   private static instance: DatabaseManager;
   private duckDB: DuckDBInstance | null = null;
   private connection: DuckDBConnection | null = null;
-  private connections: Set<DuckDBConnection> = new Set();
   private dbPath: string;
 
   private constructor(dbPath: string) {
@@ -47,7 +46,6 @@ export class DatabaseManager {
 
       // Create primary connection
       this.connection = await this.duckDB.connect();
-      this.connections.add(this.connection);
 
       // Load schema
       await this.loadSchema();
@@ -79,17 +77,6 @@ export class DatabaseManager {
           try {
             await this.connection.run(statement);
           } catch (error) {
-            // Handle FTS index already exists error specifically
-            if (
-              statement.includes("PRAGMA create_fts_index") &&
-              error instanceof Error &&
-              error.message.includes("a FTS index already exists")
-            ) {
-              console.warn(
-                "[DatabaseManager] FTS index already exists, skipping creation.",
-              );
-              continue;
-            }
             throw error;
           }
         }
@@ -103,7 +90,7 @@ export class DatabaseManager {
   }
 
   /**
-   * Get the active DuckDB connection (primary connection)
+   * Get the shared DuckDB connection
    */
   public getConnection(): DuckDBConnection {
     if (!this.connection) {
@@ -111,34 +98,12 @@ export class DatabaseManager {
     }
     return this.connection;
   }
-
-  /**
-   * Create a new DuckDB connection
-   * Returns a fresh connection that is tracked for cleanup
-   */
-  public async createConnection(): Promise<DuckDBConnection> {
-    if (!this.duckDB) {
-      throw new DatabaseError("Database not initialized", "CREATE_CONNECTION");
-    }
-    const conn = await this.duckDB.connect();
-    this.connections.add(conn);
-    return conn;
-  }
-
   /**
    * Close the database connection and all tracked connections
    */
   public async close(): Promise<void> {
     try {
-      // Close all tracked connections
-      for (const conn of this.connections) {
-        try {
-          conn.closeSync();
-        } catch (e) {
-          console.warn("Error closing connection:", e);
-        }
-      }
-      this.connections.clear();
+      this.connection?.closeSync();
       this.connection = null;
       this.duckDB = null;
       console.log("[DatabaseManager] Database connections closed");

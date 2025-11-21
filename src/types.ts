@@ -137,7 +137,6 @@ export interface SearchProfilesParams {
 
 export interface SearchProfileResult {
   pubkey: string;
-  profile: NostrProfile;
   trustScore: number;
   rank: number;
   exactMatch?: boolean;
