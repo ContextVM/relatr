@@ -77,7 +77,11 @@ export class MetadataRepository {
    * Uses DuckDB window functions and LIMIT to efficiently return only top candidates
    * This dramatically reduces the number of profiles requiring trust calculation
    */
-  async search(query: string, limit: number = 20): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    limit: number = 20,
+    decayFactor: number = 0.5,
+  ): Promise<SearchResult[]> {
     try {
       // Calculate candidate limit: return enough candidates for trust calculation
       // but not so many that we process thousands of profiles
@@ -116,7 +120,7 @@ export class MetadataRepository {
             CASE
               WHEN d.distance <= 1 THEN 1.0
               WHEN d.distance = 1000 THEN 0.0
-              ELSE exp(-0.5 * d.distance)
+              ELSE exp(-$3 * d.distance)
             END AS distance_score,
             d.distance,
             -- Validation score (average of all metrics for this pubkey)
@@ -128,7 +132,7 @@ export class MetadataRepository {
               (0.5 * CASE
                 WHEN d.distance <= 1 THEN 1.0
                 WHEN d.distance = 1000 THEN 0.0
-                ELSE exp(-0.5 * d.distance)
+                ELSE exp(-$3 * d.distance)
               END +
                0.5 * COALESCE(v.avg_validation, 0.5)) *
               CASE
@@ -172,7 +176,7 @@ export class MetadataRepository {
         ORDER BY pre_rank_score DESC, text_score DESC, distance ASC
         LIMIT $2
         `,
-        { 1: query, 2: candidateLimit },
+        { 1: query, 2: candidateLimit, 3: decayFactor },
       );
 
       const rows = await result.getRows();

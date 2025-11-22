@@ -88,6 +88,95 @@ export class MetricsRepository {
     }
   }
 
+  /**
+   * Get metrics for multiple pubkeys in a single batch operation
+   * @param pubkeys - Array of public keys to retrieve metrics for
+   * @returns Map of pubkey to ProfileMetrics (null if not found or expired)
+   */
+  async getBatch(
+    pubkeys: string[],
+  ): Promise<Map<string, ProfileMetrics | null>> {
+    if (!pubkeys || pubkeys.length === 0) {
+      return new Map();
+    }
+
+    try {
+      const now = Math.floor(Date.now() / 1000);
+
+      // Create placeholders for IN clause
+      const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+      const params: Record<string, string | number> = {};
+      pubkeys.forEach((pubkey, i) => {
+        params[(i + 1).toString()] = pubkey;
+      });
+      params[(pubkeys.length + 1).toString()] = now;
+
+      const result = await this.connection.run(
+        `SELECT pubkey, metric_key, metric_value, computed_at, expires_at
+         FROM profile_metrics
+         WHERE pubkey IN (${placeholders}) AND expires_at > $${pubkeys.length + 1}
+         ORDER BY pubkey, metric_key`,
+        params,
+      );
+
+      const rows = await result.getRows();
+      const metricsMap = new Map<string, ProfileMetrics | null>();
+
+      // Initialize all pubkeys with null (not found/expired)
+      pubkeys.forEach((pubkey) => metricsMap.set(pubkey, null));
+
+      // Group metrics by pubkey
+      const pubkeyMetrics = new Map<string, Array<any[]>>();
+
+      for (const row of rows) {
+        const values = Object.values(row as any);
+        const pubkey = values[0] as string;
+
+        if (!pubkeyMetrics.has(pubkey)) {
+          pubkeyMetrics.set(pubkey, []);
+        }
+        pubkeyMetrics.get(pubkey)!.push(values);
+      }
+
+      // Build ProfileMetrics for each pubkey
+      for (const [pubkey, metricRows] of pubkeyMetrics) {
+        const metrics: Record<string, number> = {};
+        let computedAt = 0;
+        let expiresAt = 0;
+
+        for (const row of metricRows) {
+          const metricKey = row[1] as string;
+          const metricValue = row[2] as number;
+          const rowComputedAt = row[3] as number;
+          const rowExpiresAt = row[4] as number;
+
+          if (metricKey !== undefined && metricValue !== undefined) {
+            metrics[metricKey] = metricValue;
+          }
+
+          if (rowComputedAt) computedAt = rowComputedAt;
+          if (rowExpiresAt) expiresAt = rowExpiresAt;
+        }
+
+        if (Object.keys(metrics).length > 0) {
+          metricsMap.set(pubkey, {
+            pubkey,
+            metrics,
+            computedAt,
+            expiresAt,
+          });
+        }
+      }
+
+      return metricsMap;
+    } catch (error) {
+      throw new DatabaseError(
+        `Failed to get metrics batch: ${error instanceof Error ? error.message : String(error)}`,
+        "METRICS_GET_BATCH",
+      );
+    }
+  }
+
   async getPubkeysWithoutScores(candidates: string[]): Promise<string[]> {
     if (!candidates || candidates.length === 0) return [];
 

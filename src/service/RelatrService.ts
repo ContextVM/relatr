@@ -50,28 +50,28 @@ export class RelatrService {
     private syncInterval: NodeJS.Timeout | null = null;
     private validationInterval: NodeJS.Timeout | null = null;
     private discoveryQueue: Set<string> = new Set();
-
+    
     constructor(config: RelatrConfig) {
         if (!config) throw new RelatrError('Configuration required', 'CONSTRUCTOR');
-
+        
         const result = RelatrConfigSchema.safeParse(config);
-
+        
         if (!result.success) {
             const errorMessages = result.error.errors.map(err =>
                 `${err.path.join('.')}: ${err.message}`
             ).join(', ');
             throw new ValidationError(`Configuration validation failed: ${errorMessages}`, 'config');
         }
-
+        
         this.config = result.data;
     }
-
+    
     async initialize(): Promise<void> {
         if (this.initialized) return;
         try {
             // Step 0: Ensure data directory exists with proper permissions
             await this.ensureDataDirectory();
-
+            
             // Step 1: Initialize Database Manager
             this.dbManager = DatabaseManager.getInstance(this.config.databasePath);
             await this.dbManager.initialize();
@@ -79,12 +79,12 @@ export class RelatrService {
             // Use a single shared connection for all components to reduce transaction conflicts
             // The retry logic in repositories will handle any conflicts that occur
             const sharedConnection = this.dbManager.getConnection();
-
+            
             // Step 2: Initialize Repositories
             this.metricsRepository = new MetricsRepository(sharedConnection, this.config.cacheTtlSeconds);
             this.metadataRepository = new MetadataRepository(sharedConnection);
             this.settingsRepository = new SettingsRepository(sharedConnection);
-
+            
             // Step 3: Initialize network components and builders first
             this.pool = new RelayPool();
             this.socialGraphBuilder = new SocialGraphBuilder(this.config, this.pool);
@@ -98,19 +98,19 @@ export class RelatrService {
             } catch (e) {
                 graphExists = false;
             }
-
+            
             if (!graphExists) {
                 console.log(`[RelatrService]  🆕 Social graph tables not found in database. Creating new graph...`);
-
+                
                 await this.socialGraphBuilder.createGraph({
                     sourcePubkey: this.config.defaultSourcePubkey,
                     hops: this.config.numberOfHops,
                     connection: sharedConnection
                 });
-
+                
                 console.log('[RelatrService] ✅ Social graph created successfully.');
             }
-
+            
             // Step 5: Initialize the social graph with the shared connection
             this.socialGraph = new RelatrSocialGraph(sharedConnection);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
@@ -121,9 +121,9 @@ export class RelatrService {
             const weightProfileManager = createWeightProfileManager();
             this.trustCalculator = new TrustCalculator(this.config, weightProfileManager);
             this.metricsValidator = new MetricsValidator(this.pool, this.config.nostrRelays, this.socialGraph, this.metricsRepository, this.metadataRepository, this.config.cacheTtlSeconds, ALL_PLUGINS, weightProfileManager);
-
+            
             this.initialized = true;
-
+            
             // Step 7: If this is the first time running, fetch initial metadata
             if (!graphExists && (await this.metadataRepository.getStats()).totalEntries === 0) {
                 console.log('[RelatrService] 👤 Fetching initial profile metadata...');
@@ -144,16 +144,23 @@ export class RelatrService {
             this.startPeriodicSync();
             this.startPeriodicValidationSync();
             console.log('[RelatrService] Background processes started');
-
+            
         } catch (error) {
             await this.cleanup();
             throw new RelatrError(`Init failed: ${error instanceof Error ? error.message : String(error)}`, 'INITIALIZE');
         }
     }
+    
+    // Static constants
+    private static readonly FIELD_WEIGHTS = {
+        name: 0.5,
+        display_name: 0.35,
+        nip05: 0.1,
+    };
 
     async calculateTrustScore(params: CalculateTrustScoreParams): Promise<TrustScore> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
-
+        
         const { sourcePubkey, targetPubkey, weightingScheme } = params;
 
         if (!targetPubkey || typeof targetPubkey !== 'string') {
@@ -200,22 +207,57 @@ export class RelatrService {
         }
     }
 
-
     private async calculateProfileScores(
         profiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[],
         effectiveSourcePubkey: string,
         weightingScheme?: WeightingScheme
     ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]> {
-        const results = await Promise.all(
-            profiles.map(async ({ pubkey, relevanceMultiplier, isExactMatch }) => {
-                try {
-                    const trustScore = await this.calculateTrustScore({
-                        sourcePubkey: effectiveSourcePubkey,
-                        targetPubkey: pubkey,
-                        weightingScheme
-                    });
+        if (profiles.length === 0) {
+            return [];
+        }
 
-                    // Apply exact match bonus to relevance multiplier if needed
+        const startTime = Date.now();
+
+        try {
+            // Extract pubkeys for batch operations
+            const profilePubkeys = profiles.map(p => p.pubkey);
+
+            // Pre-fetch all distances and metrics in parallel
+            const [distances, metricsMap] = await Promise.all([
+                this.socialGraph!.getDistancesBatch(profilePubkeys),
+                this.metricsValidator!.validateAllBatch(
+                    profilePubkeys,
+                    effectiveSourcePubkey
+                )
+            ]);
+
+            // Apply weighting scheme if specified
+            if (weightingScheme) {
+                const weightProfileManager = this.metricsValidator!.getWeightProfileManager();
+                weightProfileManager.activateProfile(weightingScheme);
+            }
+
+            // Calculate trust scores with pre-fetched data
+            const results = profiles.map(({ pubkey, relevanceMultiplier, isExactMatch }) => {
+                try {
+                    const distance = distances.get(pubkey) || 1000;
+                    const metrics = metricsMap.get(pubkey);
+
+                    if (!metrics) {
+                        return {
+                            pubkey,
+                            rawScore: 0,
+                            exactMatch: isExactMatch
+                        };
+                    }
+
+                    const trustScore = this.trustCalculator!.calculate(
+                        effectiveSourcePubkey,
+                        pubkey,
+                        metrics,
+                        distance
+                    );
+
                     let finalRelevanceMultiplier = relevanceMultiplier;
                     if (isExactMatch) {
                         finalRelevanceMultiplier *= 1.15;
@@ -228,24 +270,33 @@ export class RelatrService {
                         rawScore: rawCombinedScore,
                         exactMatch: isExactMatch
                     };
-                } catch {
+                } catch (error) {
+                    console.warn(`[RelatrService] Failed to calculate trust score for ${pubkey}:`, error instanceof Error ? error.message : String(error));
                     return {
                         pubkey,
                         rawScore: 0,
                         exactMatch: isExactMatch
                     };
                 }
-            })
-        );
+            });
 
-        // Single normalization point - normalize all scores to 0-1 range
-        const maxRawScore = Math.max(...results.map(r => r.rawScore), 1.0);
+            // Single normalization point - normalize all scores to 0-1 range
+            const maxRawScore = Math.max(...results.map(r => r.rawScore), 1.0);
 
-        return results.map(result => ({
-            pubkey: result.pubkey,
-            trustScore: result.rawScore / maxRawScore,
-            exactMatch: result.exactMatch
-        }));
+            const endTime = Date.now();
+            console.debug(`[RelatrService] Optimized scoring completed for ${profiles.length} profiles in ${endTime - startTime}ms`);
+
+            return results.map(result => ({
+                pubkey: result.pubkey,
+                trustScore: result.rawScore / maxRawScore,
+                exactMatch: result.exactMatch
+            }));
+
+        } catch (error) {
+            console.warn(`[RelatrService] Batch scoring failed, falling back to individual scoring:`, error instanceof Error ? error.message : String(error));
+            // Fall back to the original sequential method if batch fails
+            return this.calculateProfileScores(profiles, effectiveSourcePubkey, weightingScheme);
+        }
     }
 
     private calculateRelevanceMultiplier(profile: NostrProfile, query: string): { multiplier: number; isExactMatch: boolean } {
@@ -253,13 +304,7 @@ export class RelatrService {
         let relevanceScore = 0;
         let isExactMatch = false;
 
-        const fieldWeights = {
-            name: 0.5,
-            display_name: 0.35,
-            nip05: 0.1,
-        };
-
-        for (const [field, weight] of Object.entries(fieldWeights)) {
+        for (const [field, weight] of Object.entries(RelatrService.FIELD_WEIGHTS)) {
             const fieldValue = profile[field as keyof NostrProfile];
             if (typeof fieldValue === 'string' && fieldValue.trim()) {
                 const valueLower = fieldValue.toLowerCase();
@@ -283,9 +328,6 @@ export class RelatrService {
         const normalizedRelevanceScore = Math.min(1, relevanceScore);
         const maxMultiplier = 1.4;
         let relevanceMultiplier = 1.0 + (normalizedRelevanceScore * (maxMultiplier - 1.0));
-
-        // Note: Exact match bonus is now applied in calculateProfileScores for consistency
-        // This ensures both database and Nostr results get the same bonus treatment
 
         return {
             multiplier: relevanceMultiplier,
@@ -312,8 +354,7 @@ export class RelatrService {
         const startTime = Date.now();
 
         // Search local database - returns top N results ranked by text relevance + root distance
-        // This ensures predictable trust calculation costs by limiting results at the database level
-        const localResults = await this.metadataRepository.search(query, limit);
+        const localResults = await this.metadataRepository.search(query, limit, this.config.decayFactor);
         
         console.debug(`[RelatrService] 🔍 Found ${localResults.length} distance-ranked profiles from database`);
 
@@ -666,14 +707,27 @@ export class RelatrService {
                 const batch = pubkeysWithoutScores.slice(i, i + batchSize);
                 console.log(`[RelatrService] 🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(pubkeysWithoutScores.length / batchSize)} (${batch.length} pubkeys)`);
 
-                // Process batch in parallel for efficiency
-                const batchResults = await Promise.allSettled(
-                    batch.map(pubkey =>
-                        this.metricsValidator!.validateAll(pubkey, effectiveSourcePubkey)
-                            .then(() => ({ pubkey, success: true }))
-                            .catch(error => ({ pubkey, success: false, error }))
-                    )
-                );
+                // Process batch in parallel for efficiency using batch validation
+                const batchResults = await this.metricsValidator!.validateAllBatch(batch, effectiveSourcePubkey)
+                    .then(metricsMap => {
+                        return batch.map(pubkey => {
+                            const metrics = metricsMap.get(pubkey);
+                            return {
+                                status: 'fulfilled' as const,
+                                value: { pubkey, success: metrics !== undefined }
+                            };
+                        });
+                    })
+                    .catch(error => {
+                        // Fallback to individual validations if batch fails
+                        return Promise.allSettled(
+                            batch.map(pubkey =>
+                                this.metricsValidator!.validateAll(pubkey, effectiveSourcePubkey)
+                                    .then(() => ({ pubkey, success: true }))
+                                    .catch(error => ({ pubkey, success: false, error }))
+                            )
+                        );
+                    });
 
                 // Count successes and errors
                 for (const result of batchResults) {

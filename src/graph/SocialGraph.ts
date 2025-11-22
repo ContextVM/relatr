@@ -89,6 +89,42 @@ export class SocialGraph {
   }
 
   /**
+   * Get distances for multiple pubkeys in a single batch operation
+   * Leverages precomputed distances from nostr-social-duck's nsd_root_distances table
+   * @param pubkeys - Array of target public keys
+   * @returns Map of pubkey to distance (1000 if unreachable)
+   * @throws SocialGraphError if graph is not initialized
+   */
+  async getDistancesBatch(
+    pubkeys: string[],
+  ): Promise<Map<string, number | null>> {
+    this.ensureInitialized();
+
+    if (!pubkeys || !Array.isArray(pubkeys)) {
+      throw new SocialGraphError(
+        "Pubkeys must be a non-empty array",
+        "GET_DISTANCES_BATCH",
+      );
+    }
+
+    if (pubkeys.length === 0) {
+      return new Map();
+    }
+
+    try {
+      return await this.graph!.getShortestDistancesBatch(
+        this.rootPubkey,
+        pubkeys,
+      );
+    } catch (error) {
+      throw new SocialGraphError(
+        `Failed to get distances batch: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_DISTANCES_BATCH",
+      );
+    }
+  }
+
+  /**
    * Switch the root pubkey
    * @param newRoot - New root public key
    * @throws SocialGraphError if operation fails

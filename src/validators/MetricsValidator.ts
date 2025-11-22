@@ -177,6 +177,142 @@ export class MetricsValidator {
   }
 
   /**
+   * Validate all metrics for multiple pubkeys in batch
+   * Checks cache first for all pubkeys, then validates only those not cached
+   * @param pubkeys - Array of target public keys to validate
+   * @param sourcePubkey - Optional source pubkey for reciprocity validation
+   * @param searchQuery - Optional search query for context-aware validations
+   * @returns Map of pubkey to ProfileMetrics
+   */
+  async validateAllBatch(
+    pubkeys: string[],
+    sourcePubkey?: string,
+    searchQuery?: string,
+  ): Promise<Map<string, ProfileMetrics>> {
+    if (!pubkeys || !Array.isArray(pubkeys)) {
+      throw new ValidationError("Pubkeys must be a non-empty array");
+    }
+
+    if (pubkeys.length === 0) {
+      return new Map();
+    }
+
+    const results = new Map<string, ProfileMetrics>();
+    const now = Math.floor(Date.now() / 1000);
+
+    try {
+      // Check cache for all pubkeys in batch
+      const cachedMetrics = await executeWithRetry(async () => {
+        return await this.metricsRepository.getBatch(pubkeys);
+      });
+
+      // Identify pubkeys that need validation (not in cache or expired)
+      const pubkeysToValidate: string[] = [];
+      for (const pubkey of pubkeys) {
+        const cached = cachedMetrics.get(pubkey);
+        if (cached) {
+          results.set(pubkey, cached);
+        } else {
+          pubkeysToValidate.push(pubkey);
+        }
+      }
+
+      // If all pubkeys were cached, return early
+      if (pubkeysToValidate.length === 0) {
+        return results;
+      }
+
+      // Fetch profiles for pubkeys that need validation
+      const profiles = await Promise.all(
+        pubkeysToValidate.map(async (pubkey) => {
+          const profile =
+            (await this.metadataRepository.get(pubkey)) ||
+            (await this.fetchProfile(pubkey));
+          return { pubkey, profile };
+        }),
+      );
+
+      // Validate all uncached pubkeys in parallel
+      const validationPromises = profiles.map(async ({ pubkey, profile }) => {
+        try {
+          const context: ValidationContext = {
+            pubkey,
+            sourcePubkey,
+            searchQuery,
+            profile,
+            graphManager: this.graphManager,
+            pool: this.pool,
+            relays: this.nostrRelays,
+          };
+
+          const metrics = await this.registry.executeAll(context);
+
+          const result: ProfileMetrics = {
+            pubkey,
+            metrics,
+            computedAt: now,
+            expiresAt: now + this.cacheTtlSeconds,
+          };
+
+          // Cache the results
+          try {
+            await this.metricsRepository.save(pubkey, result);
+          } catch (error) {
+            console.warn(`Cache write failed for ${pubkey}:`, error);
+          }
+
+          return { pubkey, result };
+        } catch (error) {
+          // Return default metrics on validation errors
+          const errorMetrics: ProfileMetrics = {
+            pubkey,
+            metrics: {},
+            computedAt: now,
+            expiresAt: now + this.cacheTtlSeconds,
+          };
+          return { pubkey, result: errorMetrics };
+        }
+      });
+
+      const validationResults = await Promise.all(validationPromises);
+
+      // Add validation results to the final map
+      for (const { pubkey, result } of validationResults) {
+        results.set(pubkey, result);
+      }
+
+      return results;
+    } catch (error) {
+      // If batch validation fails, fall back to individual validations
+      console.warn(
+        "Batch validation failed, falling back to individual validations:",
+        error,
+      );
+
+      const fallbackResults = new Map<string, ProfileMetrics>();
+      for (const pubkey of pubkeys) {
+        try {
+          const result = await this.validateAll(
+            pubkey,
+            sourcePubkey,
+            searchQuery,
+          );
+          fallbackResults.set(pubkey, result);
+        } catch (error) {
+          const errorMetrics: ProfileMetrics = {
+            pubkey,
+            metrics: {},
+            computedAt: now,
+            expiresAt: now + this.cacheTtlSeconds,
+          };
+          fallbackResults.set(pubkey, errorMetrics);
+        }
+      }
+      return fallbackResults;
+    }
+  }
+
+  /**
    * Register a custom validation plugin
    * @param plugin - Validation plugin to register
    */

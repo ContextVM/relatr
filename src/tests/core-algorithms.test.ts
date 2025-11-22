@@ -4,6 +4,7 @@ import { SocialGraph } from "../graph/SocialGraph";
 import { WeightProfileManager } from "../validators/weight-profiles";
 import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
 import { DatabaseManager } from "../database/DatabaseManager";
+import { normalizeDistance } from "@/utils/utils";
 
 /**
  * Phase 2 Component Tests
@@ -86,31 +87,31 @@ afterAll(() => {
 
 describe("TrustCalculator - Distance Normalization", () => {
   test("should normalize distance = 0 to 1.0", () => {
-    expect(calculator.normalizeDistance(0)).toBe(1.0);
+    expect(normalizeDistance(0)).toBe(1.0);
   });
 
   test("should apply exponential decay formula correctly", () => {
     const distance = 2;
     const expected = Math.exp(-testConfig.decayFactor * distance);
-    expect(calculator.normalizeDistance(distance)).toBeCloseTo(expected, 6);
+    expect(normalizeDistance(distance)).toBeCloseTo(expected, 6);
   });
 
   test("should return 0.0 for distance = 1000", () => {
-    expect(calculator.normalizeDistance(1000)).toBe(0.0);
+    expect(normalizeDistance(1000)).toBe(0.0);
   });
 
   test("should clamp values to [0,1] range", () => {
     for (let distance = 0; distance <= 10; distance++) {
-      const normalized = calculator.normalizeDistance(distance);
+      const normalized = normalizeDistance(distance);
       expect(normalized).toBeGreaterThanOrEqual(0.0);
       expect(normalized).toBeLessThanOrEqual(1.0);
     }
   });
 
   test("should throw error for invalid distances", () => {
-    expect(() => calculator.normalizeDistance(-1)).toThrow();
-    expect(() => calculator.normalizeDistance(NaN)).toThrow();
-    expect(() => calculator.normalizeDistance(Infinity)).toThrow();
+    expect(() => normalizeDistance(-1)).toThrow();
+    expect(() => normalizeDistance(NaN)).toThrow();
+    expect(() => normalizeDistance(Infinity)).toThrow();
   });
 });
 

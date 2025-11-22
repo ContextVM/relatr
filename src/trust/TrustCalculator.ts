@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import { SocialGraphError, ValidationError } from "../types";
 import { WeightProfileManager } from "../validators/weight-profiles";
+import { normalizeDistance } from "../utils/utils";
 
 /**
  * Trust score calculation using distance normalization and weighted metrics
@@ -17,6 +18,10 @@ export class TrustCalculator {
   private weightProfileManager: WeightProfileManager;
   private static readonly DECIMAL_PLACES = 3;
   private static readonly WEIGHT_SUM_TOLERANCE = 0.01;
+
+  // Cache for weight profiles to avoid object creation on every calculation
+  private cachedWeights: MetricWeights | null = null;
+  private cachedProfileName: string | null = null;
 
   /**
    * Create a new TrustCalculator instance
@@ -83,14 +88,17 @@ export class TrustCalculator {
     }
 
     // Get current weights from profile manager
-    const currentWeights = this.weightProfileManager.getAllWeights();
+    const currentWeights = this.getCachedWeights();
 
     // Merge and validate weights
     const finalWeights = this.mergeWeights(currentWeights, weights);
     this.validateWeights(finalWeights);
 
     // Normalize distance
-    const normalizedDistance = this.normalizeDistance(distance);
+    const normalizedDistance = normalizeDistance(
+      distance,
+      this.config.decayFactor,
+    );
 
     // Calculate weighted score
     const rawScore = this.calculateWeightedScore(
@@ -132,42 +140,6 @@ export class TrustCalculator {
       components,
       computedAt: Math.floor(Date.now() / 1000),
     };
-  }
-
-  /**
-   * Normalize distance using exponential decay formula: e^(-α × distance)
-   * @param distance - Social distance in hops
-   * @returns Normalized distance value [0,1]
-   */
-  normalizeDistance(distance: number): number {
-    if (
-      typeof distance !== "number" ||
-      distance < 0 ||
-      isNaN(distance) ||
-      !isFinite(distance)
-    ) {
-      throw new SocialGraphError(
-        "Distance must be a non-negative finite number",
-        "NORMALIZE_DISTANCE",
-      );
-    }
-
-    if (distance <= 1) {
-      // Direct connections (distance 0 or 1) get full trust score
-      return 1.0;
-    }
-
-    // Special case: distance = 1000 → normalized = 0.0 (unreachable)
-    if (distance === 1000) {
-      return 0.0;
-    }
-
-    // Apply exponential decay: e^(-α × distance)
-    const decayFactor = this.config.decayFactor;
-    const normalized = Math.exp(-decayFactor * distance);
-
-    // Ensure result is in [0,1] range
-    return Math.max(0.0, Math.min(1.0, normalized));
   }
 
   /**
@@ -295,6 +267,36 @@ export class TrustCalculator {
    */
   updateConfig(newConfig: Partial<RelatrConfig>): void {
     this.config = { ...this.config, ...newConfig };
+    // Clear cache when config changes as weights might be affected
+    this.clearCache();
+  }
+
+  /**
+   * Get weights with caching to avoid object creation on every calculation
+   * @private
+   */
+  private getCachedWeights(): MetricWeights {
+    const currentProfile = this.weightProfileManager.getActiveProfile();
+    const currentProfileName = currentProfile?.name || "default";
+
+    // Return cached weights if profile hasn't changed
+    if (this.cachedWeights && this.cachedProfileName === currentProfileName) {
+      return this.cachedWeights;
+    }
+
+    // Update cache with new weights
+    this.cachedWeights = this.weightProfileManager.getAllWeights();
+    this.cachedProfileName = currentProfileName;
+    return this.cachedWeights;
+  }
+
+  /**
+   * Clear the weight cache
+   * @private
+   */
+  private clearCache(): void {
+    this.cachedWeights = null;
+    this.cachedProfileName = null;
   }
 
   /**

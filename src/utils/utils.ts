@@ -31,3 +31,44 @@ export function sanitizeProfile(profile: NostrProfile): NostrProfile {
 
   return sanitized;
 }
+
+/**
+ * Unified distance normalization utilities
+ * Single source of truth for distance normalization logic
+ */
+
+/**
+ * Normalize distance using exponential decay formula: e^(-α × distance)
+ * @param distance - Social distance in hops
+ * @param decayFactor - Decay factor (default: 0.5)
+ * @returns Normalized distance value [0,1]
+ */
+export function normalizeDistance(
+  distance: number,
+  decayFactor: number,
+): number {
+  if (
+    typeof distance !== "number" ||
+    distance < 0 ||
+    isNaN(distance) ||
+    !isFinite(distance)
+  ) {
+    throw new Error("Distance must be a non-negative finite number");
+  }
+
+  if (distance <= 1) {
+    // Direct connections (distance 0 or 1) get full trust score
+    return 1.0;
+  }
+
+  // Special case: distance = 1000 → normalized = 0.0 (unreachable)
+  if (distance === 1000) {
+    return 0.0;
+  }
+
+  // Apply exponential decay: e^(-α × distance)
+  const normalized = Math.exp(-decayFactor * distance);
+
+  // Ensure result is in [0,1] range
+  return Math.max(0.0, Math.min(1.0, normalized));
+}
