@@ -28,7 +28,7 @@ export const RelatrConfigSchema = z.object({
   cacheTtlSeconds: z
     .number()
     .positive()
-    .default(60 * 60 * 1000 * 48),
+    .default(60 * 60 * 1000 * 72),
   numberOfHops: z.number().int().positive().default(1),
   syncInterval: z
     .number()

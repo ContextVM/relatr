@@ -1,12 +1,6 @@
-import type {
-  NostrProfile,
-  ProfileMetrics,
-  DataStoreKey,
-  MetricWeights,
-} from "../types";
+import type { ProfileMetrics, MetricWeights, NostrProfile } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import { withTimeout } from "@/utils/utils";
 import {
   WeightProfileManager,
   type CoverageValidationResult,
@@ -19,9 +13,9 @@ import {
 } from "./plugins";
 import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { RelayPool } from "applesauce-relay";
-import type { NostrEvent } from "nostr-tools";
-import { executeWithRetry } from "nostr-social-duck";
+import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
+import { logger } from "@/utils/Logger";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -122,7 +116,7 @@ export class MetricsValidator {
       }
     } catch (error) {
       // Cache error shouldn't prevent validation
-      console.warn("Cache read failed, proceeding with validation:", error);
+      logger.warn("Cache read failed, proceeding with validation:", error);
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -159,7 +153,7 @@ export class MetricsValidator {
         await this.metricsRepository.save(pubkey, result);
       } catch (error) {
         // Cache error shouldn't prevent returning results
-        console.warn("Cache write failed:", error);
+        logger.warn("Cache write failed:", error);
       }
 
       return result;
@@ -258,7 +252,7 @@ export class MetricsValidator {
           try {
             await this.metricsRepository.save(pubkey, result);
           } catch (error) {
-            console.warn(`Cache write failed for ${pubkey}:`, error);
+            logger.warn(`Cache write failed for ${pubkey}:`, error);
           }
 
           return { pubkey, result };
@@ -284,7 +278,7 @@ export class MetricsValidator {
       return results;
     } catch (error) {
       // If batch validation fails, fall back to individual validations
-      console.warn(
+      logger.warn(
         "Batch validation failed, falling back to individual validations:",
         error,
       );

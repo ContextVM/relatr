@@ -28,6 +28,7 @@ import {
 } from '../types';
 import { MetricsValidator } from '../validators/MetricsValidator';
 import { ALL_PLUGINS } from '../validators/plugins';
+import { logger } from '../utils/Logger';
 
 export class RelatrService {
     private static readonly SEARCH_RELAYS = [
@@ -100,7 +101,7 @@ export class RelatrService {
             }
             
             if (!graphExists) {
-                console.log(`[RelatrService]  🆕 Social graph tables not found in database. Creating new graph...`);
+                logger.info('🆕 Social graph tables not found in database. Creating new graph...');
                 
                 await this.socialGraphBuilder.createGraph({
                     sourcePubkey: this.config.defaultSourcePubkey,
@@ -108,14 +109,14 @@ export class RelatrService {
                     connection: sharedConnection
                 });
                 
-                console.log('[RelatrService] ✅ Social graph created successfully.');
+                logger.info('✅ Social graph created successfully.');
             }
             
             // Step 5: Initialize the social graph with the shared connection
             this.socialGraph = new RelatrSocialGraph(sharedConnection);
             await this.socialGraph.initialize(this.config.defaultSourcePubkey);
             const graphStats = await this.socialGraph.getStats()
-            console.log('[RelatrService] Social graph stats', graphStats);
+            logger.info('Social graph stats', graphStats);
             
             // Step 6: Initialize trust calculation components
             const weightProfileManager = createWeightProfileManager();
@@ -126,11 +127,11 @@ export class RelatrService {
             
             // Step 7: If this is the first time running, fetch initial metadata
             if (!graphExists && (await this.metadataRepository.getStats()).totalEntries === 0) {
-                console.log('[RelatrService] 👤 Fetching initial profile metadata...');
+                logger.info('👤 Fetching initial profile metadata...');
                 const keys = Object.keys(graphStats.sizeByDistance);
                 const maxDistance = keys.length ? Math.max(...keys.map(Number)) : null;
                 const pubkeys = await this.socialGraph.getAllUsersInGraph();
-                console.log(`[RelatrService] 📊 Found ${pubkeys.length.toLocaleString()} pubkeys within ${maxDistance || this.config.numberOfHops} hops for metadata fetching`);
+                logger.info(`📊 Found ${pubkeys.length.toLocaleString()} pubkeys within ${maxDistance || this.config.numberOfHops} hops for metadata fetching`);
                 await this.pubkeyMetadataFetcher.fetchMetadata({
                     pubkeys,
                     sourcePubkey: this.config.defaultSourcePubkey
@@ -143,7 +144,7 @@ export class RelatrService {
             this.startBackgroundCleanup();
             this.startPeriodicSync();
             this.startPeriodicValidationSync();
-            console.log('[RelatrService] Background processes started');
+            logger.info('Background processes started');
             
         } catch (error) {
             await this.cleanup();
@@ -271,7 +272,7 @@ export class RelatrService {
                         exactMatch: isExactMatch
                     };
                 } catch (error) {
-                    console.warn(`[RelatrService] Failed to calculate trust score for ${pubkey}:`, error instanceof Error ? error.message : String(error));
+                    logger.warn(`Failed to calculate trust score for ${pubkey}:`, error instanceof Error ? error.message : String(error));
                     return {
                         pubkey,
                         rawScore: 0,
@@ -292,7 +293,7 @@ export class RelatrService {
             }));
 
         } catch (error) {
-            console.warn(`[RelatrService] Batch scoring failed, falling back to individual scoring:`, error instanceof Error ? error.message : String(error));
+            logger.warn(`Batch scoring failed, falling back to individual scoring:`, error instanceof Error ? error.message : String(error));
             // Fall back to the original sequential method if batch fails
             return this.calculateProfileScores(profiles, effectiveSourcePubkey, weightingScheme);
         }
@@ -355,74 +356,107 @@ export class RelatrService {
         // Search local database - returns top N results ranked by text relevance + root distance
         const localResults = await this.metadataRepository.search(query, limit, this.config.decayFactor);
         
-        console.debug(`[RelatrService] 🔍 Found ${localResults.length} distance-ranked profiles from database`);
+        logger.debug(`🔍 Found ${localResults.length} distance-ranked profiles from database`);
 
         // Prepare profiles for trust scoring
-        const profilesForScoring = localResults.map((r) => {
-            return {
-                pubkey: r.pubkey,
-                relevanceMultiplier: r.score,
-                isExactMatch: r.isExactMatch
-            };
-        });
+        const profilesForScoring = localResults.map((r) => ({
+            pubkey: r.pubkey,
+            relevanceMultiplier: r.score,
+            isExactMatch: r.isExactMatch
+        }));
 
         // Extend to Nostr if needed
+        const nostrProfiles = await this.extendSearchWithNostr(query, limit, profilesForScoring, extendToNostr);
+
+        // Process and return final results
+        return this.processSearchResults(
+            [...profilesForScoring, ...nostrProfiles],
+            nostrProfiles,
+            effectiveSourcePubkey,
+            weightingScheme,
+            limit,
+            startTime
+        );
+    }
+
+    /**
+     * Extend search to Nostr relays for additional results
+     */
+    private async extendSearchWithNostr(
+        query: string,
+        limit: number,
+        profilesForScoring: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[],
+        extendToNostr?: boolean
+    ): Promise<{ pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[]> {
         const nostrProfiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[] = [];
         const shouldExtendToNostr = extendToNostr || profilesForScoring.length === 0;
         
-        if (shouldExtendToNostr) {
-            const remaining = Math.max(0, limit - profilesForScoring.length);
-            
-            if (remaining > 0) {
-                console.debug(`[RelatrService] 🔍 Extending search to Nostr relays for up to ${remaining} results`);
-
-                const searchFilter = { kinds: [0], search: query, limit: remaining };
-
-                try {
-                    if (this.pool) {
-                        const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
-                            const events: NostrEvent[] = [];
-                            const subscription = this.pool!.request(
-                                RelatrService.SEARCH_RELAYS,
-                                searchFilter,
-                                { retries: 1 }
-                            ).subscribe({
-                                next: (event) => events.push(event),
-                                error: (error) => reject(error),
-                                complete: () => resolve(events)
-                            });
-
-                            setTimeout(() => {
-                                subscription.unsubscribe();
-                                resolve(events);
-                            }, 5000);
-                        });
-
-                        for (const event of nostrEvents) {
-                            const existingPubkey = profilesForScoring.find(p => p.pubkey === event.pubkey);
-                            if (!existingPubkey && !nostrProfiles.find(p => p.pubkey === event.pubkey)) {
-                                const profile = JSON.parse(event.content);
-                                // Calculate relevance for Nostr profiles
-                                const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
-                                nostrProfiles.push({
-                                    pubkey: event.pubkey,
-                                    relevanceMultiplier: multiplier,
-                                    isExactMatch
-                                });
-                                this.metadataRepository!.save({ pubkey: event.pubkey, ...profile }).catch(err => {
-                                    console.warn(`[RelatrService] Failed to cache profile for ${event.pubkey}:`, err);
-                                });
-                            }
-                        }
-                    }
-                } catch {
-                    // Remote search failed, continue with local results only
-                }
-            }
+        if (!shouldExtendToNostr || !this.pool) {
+            return nostrProfiles;
         }
 
-        // Calculate trust scores for all candidates
-        const finalProfiles = [...profilesForScoring, ...nostrProfiles];
+        const remaining = Math.max(0, limit - profilesForScoring.length);
+        if (remaining <= 0) {
+            return nostrProfiles;
+        }
+
+        logger.debug(`🔍 Extending search to Nostr relays for up to ${remaining} results`);
+
+        const searchFilter = { kinds: [0], search: query, limit: remaining };
+
+        try {
+            const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
+                const events: NostrEvent[] = [];
+                const subscription = this.pool!.request(
+                    RelatrService.SEARCH_RELAYS,
+                    searchFilter,
+                    { retries: 1 }
+                ).subscribe({
+                    next: (event) => events.push(event),
+                    error: (error) => reject(error),
+                    complete: () => resolve(events)
+                });
+
+                setTimeout(() => {
+                    subscription.unsubscribe();
+                    resolve(events);
+                }, 5000);
+            });
+
+            for (const event of nostrEvents) {
+                const existingPubkey = profilesForScoring.find(p => p.pubkey === event.pubkey);
+                if (!existingPubkey && !nostrProfiles.find(p => p.pubkey === event.pubkey)) {
+                    const profile = JSON.parse(event.content);
+                    const { multiplier, isExactMatch } = this.calculateRelevanceMultiplier(profile, query);
+                    nostrProfiles.push({
+                        pubkey: event.pubkey,
+                        relevanceMultiplier: multiplier,
+                        isExactMatch
+                    });
+                    this.metadataRepository!.save({ pubkey: event.pubkey, ...profile }).catch(err => {
+                        logger.warn(`Failed to cache profile for ${event.pubkey}:`, err);
+                    });
+                }
+            }
+        } catch {
+            // Remote search failed, continue with local results only
+            logger.debug('Nostr relay search failed, continuing with local results only');
+        }
+
+        return nostrProfiles;
+    }
+
+    /**
+     * Process search results by calculating trust scores and formatting output
+     */
+    private async processSearchResults(
+        finalProfiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[],
+        nostrProfiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[],
+        effectiveSourcePubkey: string,
+        weightingScheme: WeightingScheme | undefined,
+        limit: number,
+        startTime: number
+    ): Promise<SearchProfilesResult> {
         const profilesWithScores = await this.calculateProfileScores(
             finalProfiles,
             effectiveSourcePubkey,
@@ -430,12 +464,7 @@ export class RelatrService {
         );
 
         // Queue high-scoring Nostr profiles for discovery
-        profilesWithScores.forEach(profile => {
-            if (profile.trustScore > 0.5 && nostrProfiles.find(p => p.pubkey === profile.pubkey)) {
-                this.discoveryQueue.add(profile.pubkey);
-                console.debug(`[RelatrService] 📥 Queued ${profile.pubkey} for contact discovery`);
-            }
-        });
+        this.queueProfilesForDiscovery(profilesWithScores, nostrProfiles);
 
         // Sort by trust score and return top results
         profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
@@ -448,13 +477,28 @@ export class RelatrService {
         }));
 
         const endTime = Date.now();
-        console.log(`[RelatrService] Search completed in ${endTime - startTime}ms`);
+        logger.info(`Search completed in ${endTime - startTime}ms`);
 
         return {
             results,
             totalFound: results.length,
             searchTimeMs: endTime - startTime
         };
+    }
+
+    /**
+     * Queue high-scoring Nostr profiles for contact discovery
+     */
+    private queueProfilesForDiscovery(
+        profilesWithScores: { pubkey: string; trustScore: number; exactMatch: boolean }[],
+        nostrProfiles: { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[]
+    ): void {
+        profilesWithScores.forEach(profile => {
+            if (profile.trustScore > 0.5 && nostrProfiles.find(p => p.pubkey === profile.pubkey)) {
+                this.discoveryQueue.add(profile.pubkey);
+                logger.debug(`📥 Queued ${profile.pubkey} for contact discovery`);
+            }
+        });
     }
 
 
@@ -569,12 +613,12 @@ export class RelatrService {
                     const deleted = await this.metricsRepository.cleanup();
                     // Only log if entries were actually deleted
                     if (deleted > 0) {
-                        console.log(`[RelatrService] Background cleanup completed: ${deleted} expired entries removed`);
+                        logger.info(`Background cleanup completed: ${deleted} expired entries removed`);
                     }
                 }
             } catch (error) {
                 // Log error but don't crash the service
-                console.error('[RelatrService] Background cleanup failed:', error instanceof Error ? error.message : String(error));
+                logger.error('Background cleanup failed:', error instanceof Error ? error.message : String(error));
             }
         }, this.config.cleanupInterval);
     }
@@ -586,14 +630,14 @@ export class RelatrService {
      * @param sourcePubkey Source pubkey to sync from
      */
     async syncProfiles(force: boolean = false, hops: number = 1, sourcePubkey?: string): Promise<void> {
-        console.log('[RelatrService] Starting profile sync and metrics pre-caching...');
+        logger.info('Starting profile sync and metrics pre-caching...');
         if (!this.pool || !this.dbManager || !this.metricsValidator || !this.socialGraph || !this.metadataRepository || !this.pubkeyMetadataFetcher || !this.settingsRepository) {
             throw new RelatrError('Service not properly initialized', 'NOT_INITIALIZED');
         }
         const startTime = Date.now();
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
         const syncKey = `contact_sync:${effectiveSourcePubkey}`;
-        console.log(`[RelatrService] Syncing profiles for ${hops} hops from ${effectiveSourcePubkey}`);
+        logger.info(`Syncing profiles for ${hops} hops from ${effectiveSourcePubkey}`);
         try {
             // Check last sync time unless forced
             if (!force) {
@@ -602,17 +646,17 @@ export class RelatrService {
                 if (lastSyncTimeStr) {
                     const lastSyncTime = parseInt(lastSyncTimeStr);
                     if (Date.now() - lastSyncTime < this.config.syncInterval) {
-                        console.log(`[RelatrService] Skipping contact sync - last sync was recent.`);
+                        logger.info(`Skipping contact sync - last sync was recent.`);
                         return;
                     }
                 }
             }
 
-            console.log('[RelatrService] Starting profile sync and metrics pre-caching...');
+            logger.info('Starting profile sync and metrics pre-caching...');
             // Step 1: Get all pubkeys from the social graph
             const discoveredPubkeys = await this.socialGraph.getAllUsersInGraph();
             
-            // Step 2: Fetch metadata for ALL pubkeys to ensure we have the latest metadata            console.log(`[RelatrService] 📊 Fetching metadata for ${discoveredPubkeys.length.toLocaleString()} pubkeys`);
+            // Step 2: Fetch metadata for ALL pubkeys to ensure we have the latest metadata            logger.info(`📊 Fetching metadata for ${discoveredPubkeys.length.toLocaleString()} pubkeys`);
             
             await this.pubkeyMetadataFetcher.fetchMetadata({
                 pubkeys: discoveredPubkeys,
@@ -622,10 +666,10 @@ export class RelatrService {
             const now = Date.now();
             await this.settingsRepository.set(syncKey, now.toString());
 
-            console.log(`[RelatrService] Sync completed in ${Date.now() - startTime}ms`);
+            logger.info(`Sync completed in ${Date.now() - startTime}ms`);
 
         } catch (error) {
-            console.error('[RelatrService] Profile sync error:', error instanceof Error ? error.message : String(error));
+            logger.error('Profile sync error:', error instanceof Error ? error.message : String(error));
             throw error;
         }
     }
@@ -674,7 +718,7 @@ export class RelatrService {
      * @param sourcePubkey - Source pubkey for reciprocity validation (optional)
      */
     async syncValidations(batchSize: number = 50, sourcePubkey?: string): Promise<void> {
-        console.log('[RelatrService] Starting validation sync...');
+        logger.info('Starting validation sync...');
         if (!this.socialGraph || !this.metricsValidator || !this.metricsRepository) {
             throw new RelatrError('Service not properly initialized for validation sync', 'NOT_INITIALIZED');
         }
@@ -685,14 +729,14 @@ export class RelatrService {
         try {
             // Step 1: Get all pubkeys from the social graph
             const allPubkeys = await this.socialGraph.getAllUsersInGraph();
-            console.log(`[RelatrService] 📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`);
+            logger.info(`📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`);
 
             // Step 2: Identify pubkeys without validation scores
             const pubkeysWithoutScores = (await this.metricsRepository.getPubkeysWithoutScores(allPubkeys))
-            console.log(`[RelatrService] 🔍 Found ${pubkeysWithoutScores.length.toLocaleString()} pubkeys missing validation scores`);
+            logger.info(`🔍 Found ${pubkeysWithoutScores.length.toLocaleString()} pubkeys missing validation scores`);
 
             if (pubkeysWithoutScores.length === 0) {
-                console.log('[RelatrService] ✅ All pubkeys have validation scores, no sync needed');
+                logger.info('✅ All pubkeys have validation scores, no sync needed');
                 return;
             }
 
@@ -703,7 +747,7 @@ export class RelatrService {
 
             for (let i = 0; i < pubkeysWithoutScores.length; i += batchSize) {
                 const batch = pubkeysWithoutScores.slice(i, i + batchSize);
-                console.log(`[RelatrService] 🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(pubkeysWithoutScores.length / batchSize)} (${batch.length} pubkeys)`);
+                logger.info(`🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(pubkeysWithoutScores.length / batchSize)} (${batch.length} pubkeys)`);
 
                 // Process batch in parallel for efficiency using batch validation
                 const batchResults = await this.metricsValidator!.validateAllBatch(batch, effectiveSourcePubkey)
@@ -736,21 +780,21 @@ export class RelatrService {
                         errorCount++;
                         if (result.status === 'fulfilled') {
                             const { pubkey, error } = result.value as { pubkey: string; success: boolean; error: any };
-                            console.warn(`[RelatrService] ⚠️ Validation failed for ${pubkey}:`, error instanceof Error ? error.message : String(error));
+                            logger.warn(`⚠️ Validation failed for ${pubkey}:`, error instanceof Error ? error.message : String(error));
                         } else {
-                            console.warn(`[RelatrService] ⚠️ Validation failed for unknown pubkey:`, result.reason instanceof Error ? result.reason.message : String(result.reason));
+                            logger.warn(`⚠️ Validation failed for unknown pubkey:`, result.reason instanceof Error ? result.reason.message : String(result.reason));
                         }
                     }
                 }
 
                 // Log progress
-                console.log(`[RelatrService] 📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`);
+                logger.info(`📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`);
             }
 
-            console.log(`[RelatrService] ✅ Validation sync completed in ${Date.now() - startTime}ms. Processed: ${processedCount}, Successful: ${successCount}, Failed: ${errorCount}`);
+            logger.info(`✅ Validation sync completed in ${Date.now() - startTime}ms. Processed: ${processedCount}, Successful: ${successCount}, Failed: ${errorCount}`);
 
         } catch (error) {
-            console.error('[RelatrService] Validation sync error:', error instanceof Error ? error.message : String(error));
+            logger.error('Validation sync error:', error instanceof Error ? error.message : String(error));
             throw error;
         }
     }
@@ -767,13 +811,13 @@ export class RelatrService {
         this.syncInterval = setInterval(async () => {
             try {
                 if (this.initialized) {
-                    console.log('[RelatrService] Starting periodic background sync...');
+                    logger.info('Starting periodic background sync...');
                     await this.syncProfiles(false, 1);
-                    console.log('[RelatrService] Periodic sync completed');
+                    logger.info('Periodic sync completed');
                 }
             } catch (error) {
                 // Log error but don't crash the service
-                console.error('[RelatrService] Periodic sync failed:', error instanceof Error ? error.message : String(error));
+                logger.error('Periodic sync failed:', error instanceof Error ? error.message : String(error));
             }
         }, this.config.syncInterval);
     }
@@ -790,16 +834,16 @@ export class RelatrService {
         this.validationInterval = setInterval(async () => {
             try {
                 if (this.initialized) {
-                    console.log('[RelatrService] Starting periodic validation sync...');
+                    logger.info('Starting periodic validation sync...');
                     await this.syncValidations(50); // Process in batches of 50
-                    console.log('[RelatrService] Periodic validation sync completed');
+                    logger.info('Periodic validation sync completed');
                     if (this.discoveryQueue.size > 0 && this.socialGraph) {
                         await this.processDiscoveryQueue();
                     }
                 }
             } catch (error) {
                 // Log error but don't crash the service
-                console.error('[RelatrService] Periodic validation sync failed:', error instanceof Error ? error.message : String(error));
+                logger.error('Periodic validation sync failed:', error instanceof Error ? error.message : String(error));
             }
         }, this.config.validationSyncInterval);
     }
@@ -828,12 +872,12 @@ export class RelatrService {
             }
 
             if (!dirExists) {
-                console.log(`[RelatrService] 📁 Creating data directory: ${dataDir}`);
+                logger.info(`📁 Creating data directory: ${dataDir}`);
 
                 // Create directory recursively
                 await Bun.$`mkdir -p ${dataDir}`;
 
-                console.log(`[RelatrService] ✅ Data directory created`);
+                logger.info(`✅ Data directory created`);
             } else {
                 // Check if directory is writable by current user
                 try {

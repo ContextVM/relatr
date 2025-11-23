@@ -1,5 +1,6 @@
 {
   "name": "relatr",
+  "description": "Decentralized trust metric service for the Nostr ecosystem that computes personalized trust scores from the unique perspective of a public key",
   "version": "0.0.12",
   "type": "module",
   "private": true,
@@ -7,8 +8,8 @@
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
     "format": "prettier --write .",
-    "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun",
-    "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr"
+    "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\"",
+    "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\""
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
@@ -26,11 +27,18 @@
     "@modelcontextprotocol/sdk": "^1.22.0",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
-    "nostr-social-duck": "^0.1.18",
+    "nostr-social-duck": "^0.1.19",
     "nostr-tools": "^2.18.0",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "@duckdb/node-bindings-linux-x64": "^1.4.2-r.1",
+    "@duckdb/node-bindings-linux-arm64": "^1.4.2-r.1",
+    "@duckdb/node-bindings-darwin-x64": "^1.4.2-r.1",
+    "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1",
+    "@duckdb/node-bindings-win32-x64": "^1.4.2-r.1"
   }
 }

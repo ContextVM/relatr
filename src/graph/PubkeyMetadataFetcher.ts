@@ -4,6 +4,7 @@ import type { NostrEvent } from "nostr-tools";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrProfile } from "@/types";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
+import { logger } from "@/utils/Logger";
 
 /**
  * Parameters for metadata fetching
@@ -59,8 +60,8 @@ export class PubkeyMetadataFetcher {
       };
     }
 
-    console.log(
-      `[PubkeyMetadataFetcher] 👤 Starting metadata fetch for ${pubkeys.length.toLocaleString()} pubkeys...`,
+    logger.info(
+      `👤 Starting metadata fetch for ${pubkeys.length.toLocaleString()} pubkeys...`,
     );
 
     try {
@@ -73,7 +74,7 @@ export class PubkeyMetadataFetcher {
       );
 
       if (profileEvents.length === 0) {
-        console.warn("[PubkeyMetadataFetcher] ⚠️ No profile events found.");
+        logger.warn("⚠️ No profile events found.");
         return {
           success: true,
           message: "No profile events found.",
@@ -85,7 +86,7 @@ export class PubkeyMetadataFetcher {
       await this.storeProfileMetadata(profileEvents);
 
       const message = `Fetched and cached metadata for ${profileEvents.length} profiles.`;
-      console.log(`[PubkeyMetadataFetcher] ✅ ${message}`);
+      logger.info(`✅ ${message}`);
 
       return {
         success: true,
@@ -111,10 +112,7 @@ export class PubkeyMetadataFetcher {
         const profile = { ...content, pubkey: event.pubkey };
         await this.metadataRepository.save(profile);
       } catch (e) {
-        console.warn(
-          `[PubkeyMetadataFetcher] Failed to save profile for ${event.pubkey}:`,
-          e,
-        );
+        logger.warn(`Failed to save profile for ${event.pubkey}:`, e);
       }
     }
   }
