@@ -179,6 +179,28 @@ export class SocialGraph {
     });
   }
 
+  async areMutualFollows(source: string, target: string): Promise<boolean> {
+    this.ensureInitialized();
+
+    if (!source || typeof source !== "string") {
+      throw new SocialGraphError(
+        "Source pubkey must be a non-empty string",
+        "DOES_FOLLOW",
+      );
+    }
+
+    if (!target || typeof target !== "string") {
+      throw new SocialGraphError(
+        "Target pubkey must be a non-empty string",
+        "DOES_FOLLOW",
+      );
+    }
+
+    return executeWithRetry(async () => {
+      return await this.graph!.areMutualFollows(source, target);
+    });
+  }
+
   /**
    * Check if the social graph is initialized
    * @returns True if initialized
@@ -205,7 +227,6 @@ export class SocialGraph {
   async getStats(): Promise<{
     users: number;
     follows: number;
-    mutes: number;
     sizeByDistance: {
       [distance: number]: number;
     };
@@ -217,7 +238,6 @@ export class SocialGraph {
       const stats = {
         users: 0,
         follows: 0,
-        mutes: 0,
         sizeByDistance: {} as { [distance: number]: number },
       };
 
@@ -226,7 +246,6 @@ export class SocialGraph {
       const pubkeyDistribution = await this.graph?.getDistanceDistribution();
       stats.users = statsResult?.totalFollows || 0;
       stats.follows = statsResult?.totalFollows || 0;
-      stats.mutes = 0;
       stats.sizeByDistance = Object.fromEntries(
         Object.entries(pubkeyDistribution!).map(([key, value]) => [
           parseInt(key),
@@ -267,60 +286,6 @@ export class SocialGraph {
         `Failed to check if ${pubkey} is in graph: ${error instanceof Error ? error.message : String(error)}`,
       );
       return false;
-    }
-  }
-
-  /**
-   * Get muted pubkeys for a user
-   * @param pubkey - Public key of the user
-   * @returns Array of muted pubkeys
-   * @throws SocialGraphError if operation fails
-   */
-  getMutedByUser(pubkey: string): string[] {
-    this.ensureInitialized();
-
-    if (!pubkey || typeof pubkey !== "string") {
-      throw new SocialGraphError(
-        "Pubkey must be a non-empty string",
-        "GET_MUTED_BY_USER",
-      );
-    }
-
-    try {
-      // nostr-social-duck doesn't support mute lists, return empty array
-      return [];
-    } catch (error) {
-      throw new SocialGraphError(
-        `Failed to get muted users for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "GET_MUTED_BY_USER",
-      );
-    }
-  }
-
-  /**
-   * Get users who muted a pubkey
-   * @param pubkey - Public key to check
-   * @returns Array of pubkeys that muted the target
-   * @throws SocialGraphError if operation fails
-   */
-  getUserMutedBy(pubkey: string): string[] {
-    this.ensureInitialized();
-
-    if (!pubkey || typeof pubkey !== "string") {
-      throw new SocialGraphError(
-        "Pubkey must be a non-empty string",
-        "GET_USER_MUTED_BY",
-      );
-    }
-
-    try {
-      // nostr-social-duck doesn't support mute lists, return empty array
-      return [];
-    } catch (error) {
-      throw new SocialGraphError(
-        `Failed to get users who muted ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "GET_USER_MUTED_BY",
-      );
     }
   }
 

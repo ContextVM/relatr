@@ -45,7 +45,7 @@ export function sanitizeProfile(profile: NostrProfile): NostrProfile {
  */
 export function normalizeDistance(
   distance: number,
-  decayFactor: number,
+  decayFactor: number = 0.5,
 ): number {
   if (
     typeof distance !== "number" ||

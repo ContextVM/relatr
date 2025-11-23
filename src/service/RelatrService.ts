@@ -284,7 +284,6 @@ export class RelatrService {
             const maxRawScore = Math.max(...results.map(r => r.rawScore), 1.0);
 
             const endTime = Date.now();
-            console.debug(`[RelatrService] Optimized scoring completed for ${profiles.length} profiles in ${endTime - startTime}ms`);
 
             return results.map(result => ({
                 pubkey: result.pubkey,
@@ -477,7 +476,7 @@ export class RelatrService {
             }
 
             // Get social graph stats
-            let socialGraphStats = { users: 0, follows: 0, mutes: 0 };
+            let socialGraphStats: StatsResult['socialGraph']['stats'] = { users: 0, follows: 0};
             let rootPubkey = "";
 
             if (this.socialGraph) {
@@ -485,7 +484,6 @@ export class RelatrService {
                 socialGraphStats = {
                     users: fullStats.users,
                     follows: fullStats.follows,
-                    mutes: fullStats.mutes
                 };
                 rootPubkey = this.socialGraph.getCurrentRoot();
             }
@@ -512,7 +510,7 @@ export class RelatrService {
                     metadata: { totalEntries: 0 }
                 },
                 socialGraph: {
-                    stats: { users: 0, follows: 0, mutes: 0 },
+                    stats: { users: 0, follows: 0 },
                     rootPubkey: ""
                 }
             };

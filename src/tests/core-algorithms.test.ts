@@ -413,11 +413,9 @@ describe("SocialGraph - Basic Operations", () => {
     const stats = await socialGraph.getStats();
     expect(stats).toHaveProperty("users");
     expect(stats).toHaveProperty("follows");
-    expect(stats).toHaveProperty("mutes");
     expect(stats).toHaveProperty("sizeByDistance");
     expect(stats.users).toBeGreaterThanOrEqual(0);
     expect(stats.follows).toBeGreaterThanOrEqual(0);
-    expect(stats.mutes).toBeGreaterThanOrEqual(0);
   });
 
   test("should switch root pubkey", async () => {

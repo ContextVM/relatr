@@ -278,18 +278,13 @@ export class ReciprocityPlugin implements ValidationPlugin {
         return 0.0;
       }
 
-      // Check follow relationships
-      const sourceFollowsTarget = await ctx.graphManager.doesFollow(
+      const areMutualFollows = await ctx.graphManager.areMutualFollows(
         ctx.sourcePubkey,
         ctx.pubkey,
-      );
-      const targetFollowsSource = await ctx.graphManager.doesFollow(
-        ctx.pubkey,
-        ctx.sourcePubkey,
       );
 
       // Reciprocity is only true if both follow each other
-      return sourceFollowsTarget && targetFollowsSource ? 1.0 : 0.0;
+      return areMutualFollows ? 1.0 : 0.0;
     } catch (error) {
       return 0.0;
     }
