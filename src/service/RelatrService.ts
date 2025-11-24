@@ -717,7 +717,7 @@ export class RelatrService {
      * @param batchSize - Number of validations to process in each batch (default: 50)
      * @param sourcePubkey - Source pubkey for reciprocity validation (optional)
      */
-    async syncValidations(batchSize: number = 50, sourcePubkey?: string): Promise<void> {
+    async syncValidations(batchSize: number = 250, sourcePubkey?: string): Promise<void> {
         logger.info('Starting validation sync...');
         if (!this.socialGraph || !this.metricsValidator || !this.metricsRepository) {
             throw new RelatrError('Service not properly initialized for validation sync', 'NOT_INITIALIZED');
@@ -821,7 +821,7 @@ export class RelatrService {
             try {
                 if (this.initialized) {
                     logger.info('Starting periodic validation sync...');
-                    await this.syncValidations(250); // Process in batches of 50
+                    await this.syncValidations();
                     logger.info('Periodic validation sync completed');
                     if (this.discoveryQueue.size > 0 && this.socialGraph) {
                         await this.processDiscoveryQueue();
