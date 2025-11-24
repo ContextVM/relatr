@@ -749,27 +749,13 @@ export class RelatrService {
                 const batch = pubkeysWithoutScores.slice(i, i + batchSize);
                 logger.info(`🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(pubkeysWithoutScores.length / batchSize)} (${batch.length} pubkeys)`);
 
-                // Process batch in parallel for efficiency using batch validation
-                const batchResults = await this.metricsValidator!.validateAllBatch(batch, effectiveSourcePubkey)
-                    .then(metricsMap => {
-                        return batch.map(pubkey => {
-                            const metrics = metricsMap.get(pubkey);
-                            return {
-                                status: 'fulfilled' as const,
-                                value: { pubkey, success: metrics !== undefined }
-                            };
-                        });
-                    })
-                    .catch(error => {
-                        // Fallback to individual validations if batch fails
-                        return Promise.allSettled(
-                            batch.map(pubkey =>
-                                this.metricsValidator!.validateAll(pubkey, effectiveSourcePubkey)
-                                    .then(() => ({ pubkey, success: true }))
-                                    .catch(error => ({ pubkey, success: false, error }))
-                            )
-                        );
-                    });
+                const batchResults = await Promise.allSettled(
+                    batch.map(pubkey =>
+                        this.metricsValidator!.validateAll(pubkey, effectiveSourcePubkey)
+                            .then(() => ({ pubkey, success: true }))
+                            .catch(error => ({ pubkey, success: false, error }))
+                    )
+                );
 
                 // Count successes and errors
                 for (const result of batchResults) {
@@ -835,7 +821,7 @@ export class RelatrService {
             try {
                 if (this.initialized) {
                     logger.info('Starting periodic validation sync...');
-                    await this.syncValidations(50); // Process in batches of 50
+                    await this.syncValidations(250); // Process in batches of 50
                     logger.info('Periodic validation sync completed');
                     if (this.discoveryQueue.size > 0 && this.socialGraph) {
                         await this.processDiscoveryQueue();
