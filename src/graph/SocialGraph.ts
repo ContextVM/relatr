@@ -2,6 +2,7 @@ import { DuckDBSocialGraphAnalyzer, executeWithRetry } from "nostr-social-duck";
 import { DuckDBConnection } from "@duckdb/node-api";
 import { SocialGraphError } from "../types";
 import type { NostrEvent } from "nostr-tools";
+import { logger } from "../utils/Logger";
 
 /**
  * Social graph operations wrapper for Relatr v2
@@ -32,8 +33,8 @@ export class SocialGraph {
    */
   async initialize(rootPubkey: string): Promise<void> {
     if (this.initialized || !this.connection) {
-      console.warn(
-        "[SocialGraph] ⚠️ Social graph already initialized or connection not provided",
+      logger.warn(
+        "⚠️ Social graph already initialized or connection not provided",
       );
       return;
     }
@@ -282,7 +283,7 @@ export class SocialGraph {
       return await this.graph!.pubkeyExists(pubkey);
     } catch (error) {
       // Log the error but don't crash the service
-      console.warn(
+      logger.warn(
         `Failed to check if ${pubkey} is in graph: ${error instanceof Error ? error.message : String(error)}`,
       );
       return false;

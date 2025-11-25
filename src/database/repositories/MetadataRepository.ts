@@ -55,14 +55,14 @@ export class MetadataRepository {
       const rows = await result.getRows();
       if (rows.length === 0) return null;
 
-      const row = rows[0] as any[];
+      const row = rows[0] as unknown[];
       return {
-        pubkey: row[0],
-        name: row[1],
-        display_name: row[2],
-        nip05: row[3],
-        lud16: row[4],
-        about: row[5],
+        pubkey: row[0] as string,
+        name: (row[1] as string | null) || undefined,
+        display_name: (row[2] as string | null) || undefined,
+        nip05: (row[3] as string | null) || undefined,
+        lud16: (row[4] as string | null) || undefined,
+        about: (row[5] as string | null) || undefined,
       };
     } catch (error) {
       throw new DatabaseError(
@@ -181,31 +181,42 @@ export class MetadataRepository {
 
       const rows = await result.getRows();
 
-      return rows.map((row: any[], index) => {
+      return rows.map((row: unknown[], index) => {
+        const rowArray = row as unknown[];
         let textScore = 0;
-        if (row[1] && typeof row[1].toDouble === "function") {
-          textScore = row[1].toDouble();
+        if (
+          rowArray[1] &&
+          typeof (rowArray[1] as { toDouble: () => number }).toDouble ===
+            "function"
+        ) {
+          textScore = (rowArray[1] as { toDouble: () => number }).toDouble();
         } else {
-          textScore = Number(row[1]);
+          textScore = Number(rowArray[1]);
         }
 
         let isExactMatch = false;
-        if (row[2] && typeof row[2] === "boolean") {
-          isExactMatch = row[2];
-        } else if (row[2] && typeof row[2].toBoolean === "function") {
-          isExactMatch = row[2].toBoolean();
+        if (rowArray[2] && typeof rowArray[2] === "boolean") {
+          isExactMatch = rowArray[2] as boolean;
+        } else if (
+          rowArray[2] &&
+          typeof (rowArray[2] as { toBoolean: () => boolean }).toBoolean ===
+            "function"
+        ) {
+          isExactMatch = (
+            rowArray[2] as { toBoolean: () => boolean }
+          ).toBoolean();
         } else {
-          isExactMatch = Boolean(row[2]);
+          isExactMatch = Boolean(rowArray[2]);
         }
 
         return {
-          pubkey: row[0],
+          pubkey: rowArray[0] as string,
           score: textScore,
           rank: index + 1,
           isExactMatch: isExactMatch,
         };
       });
-    } catch (error) {
+    } catch {
       return [];
     }
   }
@@ -217,9 +228,9 @@ export class MetadataRepository {
       );
       const rows = await result.getRows();
       // DuckDB returns columns by index, not by name
-      const values = Object.values(rows[0] as any);
-      return { totalEntries: Number(values[0] || 0) };
-    } catch (error) {
+      const rowArray = rows[0] as unknown[];
+      return { totalEntries: Number(rowArray[0] || 0) };
+    } catch {
       return { totalEntries: 0 };
     }
   }

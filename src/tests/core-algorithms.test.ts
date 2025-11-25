@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
 import { WeightProfileManager } from "../validators/weight-profiles";
-import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
+import type { RelatrConfig, ProfileMetrics } from "../types";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { normalizeDistance } from "@/utils/utils";
 
@@ -201,6 +201,7 @@ describe("TrustCalculator - Score Calculation", () => {
       calculator.calculate(
         "0000000000000000000000000000000000000000000000000000000000000009",
         "000000000000000000000000000000000000000000000000000000000000000a",
+        /* eslint-disable @typescript-eslint/no-explicit-any */
         null as any,
         1,
       ),
@@ -389,6 +390,8 @@ describe("SocialGraph - Basic Operations", () => {
   });
 
   test("should throw error when created with invalid connection", () => {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+
     expect(() => new SocialGraph(null as any)).toThrow();
   });
 

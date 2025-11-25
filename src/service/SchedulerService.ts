@@ -216,7 +216,7 @@ export class SchedulerService implements ISchedulerService {
               const { pubkey, error } = result.value as {
                 pubkey: string;
                 success: boolean;
-                error: any;
+                error: unknown;
               };
               logger.warn(
                 `⚠️ Validation failed for ${pubkey}:`,

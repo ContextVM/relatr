@@ -20,21 +20,22 @@ import type { RelatrServiceDependencies } from './ServiceInterfaces';
 import { RelatrService } from './RelatrService';
 import { SearchService } from './SearchService';
 import { SchedulerService } from './SchedulerService';
+import { dirname } from "path";
 
 export class RelatrFactory {
     static async createRelatrService(config: RelatrConfig): Promise<RelatrService> {
         if (!config) throw new RelatrError('Configuration required', 'FACTORY_CONFIG');
         
-        const result = RelatrConfigSchema.safeParse(config);
+        const validationResult = RelatrConfigSchema.safeParse(config);
         
-        if (!result.success) {
-            const errorMessages = result.error.errors.map(err =>
-                `${err.path.join('.')}: ${err.message}`
-            ).join(', ');
-            throw new ValidationError(`Configuration validation failed: ${errorMessages}`, 'config');
+        if (!validationResult.success) {
+          const errorMessages = validationResult.error.errors.map(err =>
+            `${err.path.join('.')}: ${err.message}`
+          ).join(', ');
+          throw new ValidationError(`Configuration validation failed: ${errorMessages}`, 'config');
         }
         
-        const validatedConfig = result.data;
+        const validatedConfig = validationResult.data;
         
         try {
             // Step 0: Ensure data directory exists with proper permissions
@@ -60,10 +61,10 @@ export class RelatrFactory {
             // Step 4: Check if social graph exists and handle first-time setup
             let graphExists = false;
             try {
-                const result = await sharedConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
+                await sharedConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
                 graphExists = true;
-            } catch (e) {
-                graphExists = false;
+            } catch {
+              graphExists = false;
             }
             
             if (!graphExists) {
@@ -121,7 +122,6 @@ export class RelatrFactory {
                     pubkeys,
                     sourcePubkey: validatedConfig.defaultSourcePubkey
                 });
-                await schedulerService.syncValidations()
             }
             
             // Step 9: Start background processes
@@ -185,9 +185,9 @@ export class RelatrFactory {
                     const testFile = `${dataDir}/.write_test_${Date.now()}`;
                     await Bun.write(testFile, "test");
                     await Bun.$`rm ${testFile}`;
-                } catch (writeError) {
-                    const effectiveUid = typeof process.getuid === "function" ? process.getuid() : null;
-                    const effectiveGid = typeof process.getgid === "function" ? process.getgid() : null;
+                } catch {
+                  const effectiveUid = typeof process.getuid === "function" ? process.getuid() : null;
+                  const effectiveGid = typeof process.getgid === "function" ? process.getgid() : null;
 
                     throw new RelatrError(
                         `Data directory exists but is not writable by current user (uid=${effectiveUid} gid=${effectiveGid}). ` +
@@ -212,7 +212,6 @@ export class RelatrFactory {
      * @private
      */
     private static extractDataDirectory(filePath: string): string {
-        const { dirname } = require('path');
         return dirname(filePath);
     }
 }

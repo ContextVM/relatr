@@ -57,13 +57,11 @@ export class MetricsRepository {
 
       for (const row of rows) {
         // DuckDB returns columns by index, not by name
-        const values = Object.values(row as any);
-
-        // Indices: [0] = metric_key, [1] = metric_value, [2] = computed_at, [3] = expires_at
-        const metricKey = values[0] as string;
-        const metricValue = values[1] as number;
-        const rowComputedAt = values[2] as number;
-        const rowExpiresAt = values[3] as number;
+        const rowArray = row as unknown[];
+        const metricKey = rowArray[0] as string;
+        const metricValue = rowArray[1] as number;
+        const rowComputedAt = rowArray[2] as number;
+        const rowExpiresAt = rowArray[3] as number;
 
         if (metricKey !== undefined && metricValue !== undefined) {
           metrics[metricKey] = metricValue;
@@ -126,16 +124,16 @@ export class MetricsRepository {
       pubkeys.forEach((pubkey) => metricsMap.set(pubkey, null));
 
       // Group metrics by pubkey
-      const pubkeyMetrics = new Map<string, Array<any[]>>();
+      const pubkeyMetrics = new Map<string, Array<unknown[]>>();
 
       for (const row of rows) {
-        const values = Object.values(row as any);
-        const pubkey = values[0] as string;
+        const rowArray = row as unknown[];
+        const pubkey = rowArray[0] as string;
 
         if (!pubkeyMetrics.has(pubkey)) {
           pubkeyMetrics.set(pubkey, []);
         }
-        pubkeyMetrics.get(pubkey)!.push(values);
+        pubkeyMetrics.get(pubkey)!.push(rowArray);
       }
 
       // Build ProfileMetrics for each pubkey
@@ -145,10 +143,11 @@ export class MetricsRepository {
         let expiresAt = 0;
 
         for (const row of metricRows) {
-          const metricKey = row[1] as string;
-          const metricValue = row[2] as number;
-          const rowComputedAt = row[3] as number;
-          const rowExpiresAt = row[4] as number;
+          const rowArray = row as unknown[];
+          const metricKey = rowArray[1] as string;
+          const metricValue = rowArray[2] as number;
+          const rowComputedAt = rowArray[3] as number;
+          const rowExpiresAt = rowArray[4] as number;
 
           if (metricKey !== undefined && metricValue !== undefined) {
             metrics[metricKey] = metricValue;
@@ -183,7 +182,7 @@ export class MetricsRepository {
     try {
       // Get all pubkeys that have valid scores
       const validPubkeys = await this.getValidPubkeys();
-      
+
       // Return candidates that are NOT in the valid pubkeys set
       return candidates.filter((p) => !validPubkeys.has(p));
     } catch (error) {
@@ -201,7 +200,7 @@ export class MetricsRepository {
   private async getValidPubkeys(): Promise<Set<string>> {
     try {
       const now = Math.floor(Date.now() / 1000);
-      
+
       const result = await this.connection.run(
         `SELECT DISTINCT pubkey
          FROM profile_metrics
@@ -211,9 +210,7 @@ export class MetricsRepository {
 
       const rows = await result.getRows();
       // DuckDB returns columns by index, not by name
-      return new Set(
-        rows.map((r) => Object.values(r)[0] as string),
-      );
+      return new Set(rows.map((r) => (r as unknown[])[0] as string));
     } catch (error) {
       throw new DatabaseError(
         `Failed to get valid pubkeys: ${error instanceof Error ? error.message : String(error)}`,
@@ -241,9 +238,9 @@ export class MetricsRepository {
       );
       const rows = await result.getRows();
       // DuckDB returns columns by index, not by name
-      const values = Object.values(rows[0] as any);
-      return { totalEntries: Number(values[0] || 0) };
-    } catch (error) {
+      const rowArray = rows[0] as unknown[];
+      return { totalEntries: Number(rowArray[0] || 0) };
+    } catch {
       return { totalEntries: 0 };
     }
   }

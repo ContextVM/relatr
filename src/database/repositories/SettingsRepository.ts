@@ -16,7 +16,9 @@ export class SettingsRepository {
         { 1: key },
       );
       const rows = await result.getRows();
-      return rows.length > 0 ? (rows[0] as any).value : null;
+      return rows.length > 0
+        ? ((rows[0] as Record<string, unknown>).value as string)
+        : null;
     } catch (error) {
       throw new DatabaseError(
         `Failed to get setting ${key}: ${error instanceof Error ? error.message : String(error)}`,

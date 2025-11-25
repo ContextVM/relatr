@@ -2,7 +2,6 @@ import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-tools";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
-import type { NostrProfile } from "@/types";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 import { logger } from "@/utils/Logger";
 

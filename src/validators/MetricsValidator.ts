@@ -159,6 +159,10 @@ export class MetricsValidator {
       return result;
     } catch (error) {
       // Return a default metrics object on validation errors
+      logger.warn(
+        `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+        error instanceof Error ? error.message : String(error),
+      );
       const errorMetrics: ProfileMetrics = {
         pubkey,
         metrics: {},
@@ -258,6 +262,10 @@ export class MetricsValidator {
           return { pubkey, result };
         } catch (error) {
           // Return default metrics on validation errors
+          logger.warn(
+            `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+            error instanceof Error ? error.message : String(error),
+          );
           const errorMetrics: ProfileMetrics = {
             pubkey,
             metrics: {},
@@ -293,6 +301,10 @@ export class MetricsValidator {
           );
           fallbackResults.set(pubkey, result);
         } catch (error) {
+          logger.warn(
+            `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+            error instanceof Error ? error.message : String(error),
+          );
           const errorMetrics: ProfileMetrics = {
             pubkey,
             metrics: {},
@@ -419,7 +431,7 @@ export class MetricsValidator {
         // Return minimal profile on parse error
         return { pubkey };
       }
-    } catch (error) {
+    } catch {
       // Return minimal profile on error
       return { pubkey };
     }

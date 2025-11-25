@@ -4,7 +4,7 @@
  */
 
 import type {
-  NostrEvent,
+  NostrProfile,
   RelatrConfig,
   CalculateTrustScoreParams,
   SearchProfilesParams,
@@ -33,7 +33,7 @@ export interface ISearchService {
     weightingScheme?: string,
   ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]>;
   calculateRelevanceMultiplier(
-    profile: any,
+    profile: NostrProfile,
     query: string,
   ): { multiplier: number; isExactMatch: boolean };
 }

@@ -89,7 +89,7 @@ describe("SocialGraph - Benchmark Tests", () => {
     const totalTime = endTime - startTime;
 
     // Validate measurements
-    measurements.forEach((measurement, index) => {
+    measurements.forEach((measurement) => {
       expect(typeof measurement.distance).toBe("number");
       expect(measurement.distance).toBeGreaterThanOrEqual(0);
       expect(measurement.distance).toBeLessThanOrEqual(1000);

@@ -1,7 +1,6 @@
 import { validateAndDecodePubkey } from '@/utils/utils.nostr';
 import type {
     CalculateTrustScoreParams,
-    NostrProfile,
     RelatrConfig,
     SearchProfilesParams,
     SearchProfilesResult,
@@ -139,7 +138,7 @@ export class RelatrService implements IRelatrService {
                     rootPubkey
                 }
             };
-        } catch (error) {
+        } catch {
             // Return minimal stats on error
             return {
                 timestamp,

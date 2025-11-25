@@ -1,4 +1,5 @@
 import type { MetricWeights } from "../types";
+import { logger } from "../utils/Logger";
 
 /**
  * Weight profile interface for managing validation weights separately from plugins
@@ -179,7 +180,7 @@ export class WeightProfileManager {
 
     // If total weight exceeds 1.0, normalize all weights
     if (totalWeight > 1.0) {
-      console.warn(
+      logger.warn(
         `Weight profile '${profile.name}' has total weight ${totalWeight.toFixed(4)}. ` +
           `Normalizing to sum to 1.0.`,
       );

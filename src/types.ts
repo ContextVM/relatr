@@ -111,7 +111,7 @@ export interface ValidationResult {
   valid: boolean;
   score: number;
   reason?: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 export interface ValidationMetrics {

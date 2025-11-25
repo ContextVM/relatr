@@ -2,6 +2,7 @@ import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { DatabaseError } from "../types";
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
+import { logger } from "../utils/Logger";
 
 /**
  * Manages the DuckDB database instance and connection.
@@ -24,8 +25,8 @@ export class DatabaseManager {
     if (!DatabaseManager.instance) {
       DatabaseManager.instance = new DatabaseManager(dbPath);
     } else if (DatabaseManager.instance.dbPath !== dbPath) {
-      console.warn(
-        `[DatabaseManager] Warning: Requested DB path ${dbPath} differs from initialized path ${DatabaseManager.instance.dbPath}. Ignoring new path.`,
+      logger.warn(
+        `Warning: Requested DB path ${dbPath} differs from initialized path ${DatabaseManager.instance.dbPath}. Ignoring new path.`,
       );
     }
     return DatabaseManager.instance;
@@ -50,7 +51,7 @@ export class DatabaseManager {
       // Load schema
       await this.loadSchema();
 
-      console.log(`[DatabaseManager] Initialized DuckDB at ${this.dbPath}`);
+      logger.info(`Initialized DuckDB at ${this.dbPath}`);
     } catch (error) {
       throw new DatabaseError(
         `Failed to initialize database: ${error instanceof Error ? error.message : String(error)}`,
@@ -74,11 +75,7 @@ export class DatabaseManager {
       const statements = schema.split(";").filter((stmt) => stmt.trim());
       for (const statement of statements) {
         if (statement.trim()) {
-          try {
-            await this.connection.run(statement);
-          } catch (error) {
-            throw error;
-          }
+          await this.connection.run(statement);
         }
       }
     } catch (error) {
@@ -106,9 +103,9 @@ export class DatabaseManager {
       this.connection?.closeSync();
       this.connection = null;
       this.duckDB = null;
-      console.log("[DatabaseManager] Database connections closed");
+      logger.info("Database connections closed");
     } catch (error) {
-      console.error("Error closing database:", error);
+      logger.error("Error closing database:", error);
     }
   }
 }

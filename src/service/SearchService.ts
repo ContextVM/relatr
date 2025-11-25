@@ -1,7 +1,3 @@
-import {
-  fetchEventsForPubkeys,
-  validateAndDecodePubkey,
-} from "@/utils/utils.nostr";
 import { RelayPool } from "applesauce-relay";
 import type { NostrEvent } from "nostr-tools";
 import type {
@@ -16,7 +12,7 @@ import type { SocialGraph } from "../graph/SocialGraph";
 import type { MetricsValidator } from "../validators/MetricsValidator";
 import type { TrustCalculator } from "../trust/TrustCalculator";
 import type { ISearchService } from "./ServiceInterfaces";
-import { RelatrError, ValidationError } from "../types";
+import { ValidationError } from "../types";
 import { logger } from "../utils/Logger";
 
 export class SearchService implements ISearchService {
@@ -244,8 +240,6 @@ export class SearchService implements ISearchService {
       return [];
     }
 
-    const startTime = Date.now();
-
     try {
       // Extract pubkeys for batch operations
       const profilePubkeys = profiles.map((p) => p.pubkey);
@@ -318,8 +312,6 @@ export class SearchService implements ISearchService {
       // Single normalization point - normalize all scores to 0-1 range
       const maxRawScore = Math.max(...results.map((r) => r.rawScore), 1.0);
 
-      const endTime = Date.now();
-
       return results.map((result) => ({
         pubkey: result.pubkey,
         trustScore: result.rawScore / maxRawScore,
@@ -370,7 +362,7 @@ export class SearchService implements ISearchService {
 
     const normalizedRelevanceScore = Math.min(1, relevanceScore);
     const maxMultiplier = 1.4;
-    let relevanceMultiplier =
+    const relevanceMultiplier =
       1.0 + normalizedRelevanceScore * (maxMultiplier - 1.0);
 
     return {

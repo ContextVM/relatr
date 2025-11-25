@@ -10,6 +10,7 @@ import { loadConfig } from "../config.js";
 import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
 import type { SearchProfileResult } from "../types.js";
+import { logger } from "../utils/Logger.js";
 
 /**
  * Start the MCP server for Relatr
@@ -48,20 +49,18 @@ export async function startMCPServer(): Promise<void> {
     });
     await server.connect(transport);
 
-    console.error("[Relatr MCP] Server started successfully");
-    console.error("[Relatr MCP] With key:", await transport["getPublicKey"]());
+    logger.info(
+      `Server started successfully with key: ${await transport["getPublicKey"]()}`,
+    );
   } catch (error) {
-    console.error("[Relatr MCP] Failed to start server:", error);
+    logger.error("Failed to start server:", error);
 
     // Cleanup on error
     if (relatrService) {
       try {
         await relatrService.shutdown();
       } catch (shutdownError) {
-        console.error(
-          "[Relatr MCP] Error during shutdown cleanup:",
-          shutdownError,
-        );
+        logger.error("Error during shutdown cleanup:", shutdownError);
       }
     }
 
@@ -349,17 +348,15 @@ function registerSearchProfilesTool(
  */
 function setupGracefulShutdown(relatrService: RelatrService): void {
   const gracefulShutdown = async (signal: string): Promise<void> => {
-    console.error(
-      `[Relatr MCP] Received ${signal}, shutting down gracefully...`,
-    );
+    logger.info(`Received ${signal}, shutting down gracefully...`);
 
     try {
       // Shutdown RelatrService
       await relatrService.shutdown();
-      console.error("[Relatr MCP] Shutdown complete");
+      logger.info("Shutdown complete");
       process.exit(0);
     } catch (error) {
-      console.error("[Relatr MCP] Error during shutdown:", error);
+      logger.error("Error during shutdown:", error);
       process.exit(1);
     }
   };
@@ -370,17 +367,12 @@ function setupGracefulShutdown(relatrService: RelatrService): void {
 
   // Handle uncaught exceptions
   process.on("uncaughtException", (error) => {
-    console.error("[Relatr MCP] Uncaught exception:", error);
+    logger.error("Uncaught exception:", error);
     gracefulShutdown("uncaughtException");
   });
 
   process.on("unhandledRejection", (reason, promise) => {
-    console.error(
-      "[Relatr MCP] Unhandled rejection at:",
-      promise,
-      "reason:",
-      reason,
-    );
+    logger.error("Unhandled rejection at:", promise, "reason:", reason);
     gracefulShutdown("unhandledRejection");
   });
 }
@@ -388,7 +380,7 @@ function setupGracefulShutdown(relatrService: RelatrService): void {
 // Start the server if this file is run directly
 if (import.meta.main) {
   startMCPServer().catch((error) => {
-    console.error("[Relatr MCP] Fatal error:", error);
+    logger.error("Fatal error:", error);
     process.exit(1);
   });
 }
