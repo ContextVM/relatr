@@ -6,7 +6,7 @@ import { MetricsRepository } from '../database/repositories/MetricsRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
 import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
-import { SocialGraphBuilder } from '../graph/SocialGraphBuilder';
+import { SocialGraphBuilder, type SocialGraphCreationResult } from '../graph/SocialGraphBuilder';
 import { TrustCalculator } from '../trust/TrustCalculator';
 import type { MetadataRepository as IMetadataRepository } from '../database/repositories/MetadataRepository';
 import type { MetricsRepository as IMetricsRepository } from '../database/repositories/MetricsRepository';
@@ -67,10 +67,12 @@ export class RelatrFactory {
               graphExists = false;
             }
             
+            let creationResult: SocialGraphCreationResult | undefined;
+
             if (!graphExists) {
                 logger.info('🆕 Social graph tables not found in database. Creating new graph...');
                 
-                await socialGraphBuilder.createGraph({
+                creationResult = await socialGraphBuilder.createGraph({
                     sourcePubkey: validatedConfig.defaultSourcePubkey,
                     hops: validatedConfig.numberOfHops,
                     connection: sharedConnection
@@ -80,8 +82,9 @@ export class RelatrFactory {
             }
             
             // Step 5: Initialize the social graph with the shared connection
-            const socialGraph = new RelatrSocialGraph(sharedConnection);
+            const socialGraph = new RelatrSocialGraph(sharedConnection, creationResult?.socialGraph);
             await socialGraph.initialize(validatedConfig.defaultSourcePubkey);
+            
             const graphStats = await socialGraph.getStats();
             logger.info('Social graph stats', graphStats);
             

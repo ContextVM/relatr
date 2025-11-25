@@ -17,13 +17,21 @@ export class SocialGraph {
   /**
    * Create a new SocialGraph instance
    * @param connection - DuckDBConnection instance to use
+   * @param existingGraph - Optional existing DuckDBSocialGraphAnalyzer instance to reuse
    */
-  constructor(connection: DuckDBConnection) {
+  constructor(
+    connection: DuckDBConnection,
+    existingGraph?: DuckDBSocialGraphAnalyzer,
+  ) {
     if (!connection) {
       throw new SocialGraphError("DuckDBConnection is required", "CONSTRUCTOR");
     }
     this.connection = connection;
     this.rootPubkey = ""; // Will be set during initialization
+
+    if (existingGraph) {
+      this.graph = existingGraph;
+    }
   }
 
   /**
@@ -32,22 +40,29 @@ export class SocialGraph {
    * @throws SocialGraphError if initialization fails
    */
   async initialize(rootPubkey: string): Promise<void> {
-    if (this.initialized || !this.connection) {
-      logger.warn(
-        "⚠️ Social graph already initialized or connection not provided",
-      );
+    if (this.initialized) {
+      logger.warn("⚠️ Social graph already initialized");
       return;
+    }
+
+    if (!this.connection) {
+      throw new SocialGraphError("DuckDBConnection is required", "INITIALIZE");
     }
 
     try {
       this.rootPubkey = rootPubkey;
 
-      // Use the shared connection passed in constructor
-      this.graph = await DuckDBSocialGraphAnalyzer.connect(
-        this.connection,
-        undefined,
-        this.rootPubkey,
-      );
+      // If we already have a graph instance (from constructor), just set the root pubkey
+      if (this.graph) {
+        await this.graph.setRootPubkey(rootPubkey);
+      } else {
+        // Otherwise, create a new graph instance
+        this.graph = await DuckDBSocialGraphAnalyzer.connect(
+          this.connection,
+          undefined,
+          this.rootPubkey,
+        );
+      }
 
       this.initialized = true;
     } catch (error) {
@@ -175,9 +190,17 @@ export class SocialGraph {
       );
     }
 
-    return executeWithRetry(async () => {
-      return await this.graph!.isDirectFollow(source, target);
-    });
+    try {
+      return await executeWithRetry(async () => {
+        return await this.graph!.isDirectFollow(source, target);
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to check if ${source} follows ${target} after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
   }
 
   async areMutualFollows(source: string, target: string): Promise<boolean> {
@@ -197,9 +220,17 @@ export class SocialGraph {
       );
     }
 
-    return executeWithRetry(async () => {
-      return await this.graph!.areMutualFollows(source, target);
-    });
+    try {
+      return await executeWithRetry(async () => {
+        return await this.graph!.areMutualFollows(source, target);
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to check mutual follows between ${source} and ${target} after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type NostrProfile } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
+import { logger } from "../../utils/Logger";
 
 export interface SearchResult {
   pubkey: string;
@@ -17,58 +18,72 @@ export class MetadataRepository {
   }
 
   async save(profile: NostrProfile): Promise<void> {
-    return executeWithRetry(async () => {
-      const now = Math.floor(Date.now() / 1000);
+    try {
+      return await executeWithRetry(async () => {
+        const now = Math.floor(Date.now() / 1000);
 
-      // Delete existing
-      await this.connection.run(
-        "DELETE FROM pubkey_metadata WHERE pubkey = $1",
-        { 1: profile.pubkey },
-      );
+        // Delete existing
+        await this.connection.run(
+          "DELETE FROM pubkey_metadata WHERE pubkey = $1",
+          { 1: profile.pubkey },
+        );
 
-      // Insert new
-      await this.connection.run(
-        `INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        {
-          1: profile.pubkey,
-          2: profile.name || null,
-          3: profile.display_name || null,
-          4: profile.nip05 || null,
-          5: profile.lud16 || null,
-          6: profile.about || null,
-          7: now,
-        },
+        // Insert new
+        await this.connection.run(
+          `INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          {
+            1: profile.pubkey,
+            2: profile.name || null,
+            3: profile.display_name || null,
+            4: profile.nip05 || null,
+            5: profile.lud16 || null,
+            6: profile.about || null,
+            7: now,
+          },
+        );
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to save metadata for ${profile.pubkey} after retries:`,
+        error instanceof Error ? error.message : String(error),
       );
-    });
+      throw new DatabaseError(
+        `Failed to save metadata for ${profile.pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        "METADATA_SAVE",
+      );
+    }
   }
 
   async get(pubkey: string): Promise<NostrProfile | null> {
     try {
-      const result = await this.connection.run(
-        `SELECT pubkey, name, display_name, nip05, lud16, about
-         FROM pubkey_metadata
-         WHERE pubkey = $1`,
-        { 1: pubkey },
-      );
+      return await executeWithRetry(async () => {
+        const result = await this.connection.run(
+          `SELECT pubkey, name, display_name, nip05, lud16, about
+           FROM pubkey_metadata
+           WHERE pubkey = $1`,
+          { 1: pubkey },
+        );
 
-      const rows = await result.getRows();
-      if (rows.length === 0) return null;
+        const rows = await result.getRows();
+        if (rows.length === 0) return null;
 
-      const row = rows[0] as unknown[];
-      return {
-        pubkey: row[0] as string,
-        name: (row[1] as string | null) || undefined,
-        display_name: (row[2] as string | null) || undefined,
-        nip05: (row[3] as string | null) || undefined,
-        lud16: (row[4] as string | null) || undefined,
-        about: (row[5] as string | null) || undefined,
-      };
+        const row = rows[0] as unknown[];
+        return {
+          pubkey: row[0] as string,
+          name: (row[1] as string | null) || undefined,
+          display_name: (row[2] as string | null) || undefined,
+          nip05: (row[3] as string | null) || undefined,
+          lud16: (row[4] as string | null) || undefined,
+          about: (row[5] as string | null) || undefined,
+        };
+      });
     } catch (error) {
-      throw new DatabaseError(
-        `Failed to get metadata for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "METADATA_GET",
+      logger.warn(
+        `Failed to get metadata for ${pubkey} after retries:`,
+        error instanceof Error ? error.message : String(error),
       );
+      return null;
     }
   }
 
@@ -83,12 +98,13 @@ export class MetadataRepository {
     decayFactor: number = 0.5,
   ): Promise<SearchResult[]> {
     try {
-      // Calculate candidate limit: return enough candidates for trust calculation
-      // but not so many that we process thousands of profiles
-      const candidateLimit = Math.max(limit * 20, 100);
+      return await executeWithRetry(async () => {
+        // Calculate candidate limit: return enough candidates for trust calculation
+        // but not so many that we process thousands of profiles
+        const candidateLimit = Math.max(limit * 20, 100);
 
-      const result = await this.connection.run(
-        `
+        const result = await this.connection.run(
+          `
         WITH ranked_matches AS (
           SELECT
             m.pubkey,
@@ -134,7 +150,7 @@ export class MetadataRepository {
                 WHEN d.distance = 1000 THEN 0.0
                 ELSE exp(-$3 * d.distance)
               END +
-               0.5 * COALESCE(v.avg_validation, 0.5)) *
+                0.5 * COALESCE(v.avg_validation, 0.5)) *
               CASE
                 WHEN LOWER(m.name) = LOWER($1) THEN 1.4
                 WHEN LOWER(m.display_name) = LOWER($1) THEN 1.3
@@ -176,61 +192,72 @@ export class MetadataRepository {
         ORDER BY pre_rank_score DESC, text_score DESC, distance ASC
         LIMIT $2
         `,
-        { 1: query, 2: candidateLimit, 3: decayFactor },
-      );
+          { 1: query, 2: candidateLimit, 3: decayFactor },
+        );
 
-      const rows = await result.getRows();
+        const rows = await result.getRows();
 
-      return rows.map((row: unknown[], index) => {
-        const rowArray = row as unknown[];
-        let textScore = 0;
-        if (
-          rowArray[1] &&
-          typeof (rowArray[1] as { toDouble: () => number }).toDouble ===
-            "function"
-        ) {
-          textScore = (rowArray[1] as { toDouble: () => number }).toDouble();
-        } else {
-          textScore = Number(rowArray[1]);
-        }
+        return rows.map((row: unknown[], index) => {
+          const rowArray = row as unknown[];
+          let textScore = 0;
+          if (
+            rowArray[1] &&
+            typeof (rowArray[1] as { toDouble: () => number }).toDouble ===
+              "function"
+          ) {
+            textScore = (rowArray[1] as { toDouble: () => number }).toDouble();
+          } else {
+            textScore = Number(rowArray[1]);
+          }
 
-        let isExactMatch = false;
-        if (rowArray[2] && typeof rowArray[2] === "boolean") {
-          isExactMatch = rowArray[2] as boolean;
-        } else if (
-          rowArray[2] &&
-          typeof (rowArray[2] as { toBoolean: () => boolean }).toBoolean ===
-            "function"
-        ) {
-          isExactMatch = (
-            rowArray[2] as { toBoolean: () => boolean }
-          ).toBoolean();
-        } else {
-          isExactMatch = Boolean(rowArray[2]);
-        }
+          let isExactMatch = false;
+          if (rowArray[2] && typeof rowArray[2] === "boolean") {
+            isExactMatch = rowArray[2] as boolean;
+          } else if (
+            rowArray[2] &&
+            typeof (rowArray[2] as { toBoolean: () => boolean }).toBoolean ===
+              "function"
+          ) {
+            isExactMatch = (
+              rowArray[2] as { toBoolean: () => boolean }
+            ).toBoolean();
+          } else {
+            isExactMatch = Boolean(rowArray[2]);
+          }
 
-        return {
-          pubkey: rowArray[0] as string,
-          score: textScore,
-          rank: index + 1,
-          isExactMatch: isExactMatch,
-        };
+          return {
+            pubkey: rowArray[0] as string,
+            score: textScore,
+            rank: index + 1,
+            isExactMatch: isExactMatch,
+          };
+        });
       });
-    } catch {
+    } catch (error) {
+      logger.warn(
+        `Failed to search metadata after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
       return [];
     }
   }
 
   async getStats(): Promise<{ totalEntries: number }> {
     try {
-      const result = await this.connection.run(
-        "SELECT COUNT(*) as count FROM pubkey_metadata",
+      return await executeWithRetry(async () => {
+        const result = await this.connection.run(
+          "SELECT COUNT(*) as count FROM pubkey_metadata",
+        );
+        const rows = await result.getRows();
+        // DuckDB returns columns by index, not by name
+        const rowArray = rows[0] as unknown[];
+        return { totalEntries: Number(rowArray[0] || 0) };
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to get metadata stats after retries:`,
+        error instanceof Error ? error.message : String(error),
       );
-      const rows = await result.getRows();
-      // DuckDB returns columns by index, not by name
-      const rowArray = rows[0] as unknown[];
-      return { totalEntries: Number(rowArray[0] || 0) };
-    } catch {
       return { totalEntries: 0 };
     }
   }

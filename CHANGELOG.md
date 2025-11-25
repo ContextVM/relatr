@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.1
+
+### Patch Changes
+
+- refactor: improve error handling, initialization and logging
+
 ## 0.1.0
 
 ### Minor Changes

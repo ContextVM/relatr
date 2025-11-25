@@ -27,6 +27,7 @@ export interface SocialGraphCreationResult {
     users: number;
     follows: number;
   };
+  socialGraph?: DuckDBSocialGraphAnalyzer;
 }
 
 interface DiscoveryResult {
@@ -83,7 +84,11 @@ export class SocialGraphBuilder {
       );
 
       const socialGraph: DuckDBSocialGraphAnalyzer =
-        await DuckDBSocialGraphAnalyzer.connect(connection);
+        await DuckDBSocialGraphAnalyzer.connect(
+          connection,
+          undefined,
+          sourcePubkey,
+        );
 
       // Ingest all contact events
       await socialGraph.ingestEvents(contactEvents);
@@ -96,11 +101,6 @@ export class SocialGraphBuilder {
       const message = `DuckDB social graph updated in shared database.`;
       logger.info(`✨ ${message}`);
 
-      // Only close if we created the connection
-      if (!connection) {
-        await socialGraph.close();
-      }
-
       return {
         success: true,
         message,
@@ -109,6 +109,7 @@ export class SocialGraphBuilder {
           users: graphStats.uniqueFollowers,
           follows: graphStats.totalFollows,
         },
+        socialGraph: connection ? socialGraph : undefined,
       };
     } catch (error) {
       throw new Error(
