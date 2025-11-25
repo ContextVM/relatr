@@ -109,6 +109,7 @@ export class DatabaseManager {
     }
     return this.connection;
   }
+
   /**
    * Close the database connection and all tracked connections
    */
