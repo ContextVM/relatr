@@ -1,4 +1,4 @@
-import type { NostrEvent } from "nostr-tools";
+export type { NostrEvent } from "nostr-tools";
 
 /**
  * Core type definitions for Relatr v2

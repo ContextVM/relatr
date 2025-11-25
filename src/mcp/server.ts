@@ -7,7 +7,9 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
+import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
+import type { SearchProfileResult } from "../types.js";
 
 /**
  * Start the MCP server for Relatr
@@ -20,10 +22,9 @@ export async function startMCPServer(): Promise<void> {
   let server: McpServer | null = null;
 
   try {
-    // Load configuration and initialize RelatrService
+    // Load configuration and initialize RelatrService using factory
     const config = loadConfig();
-    relatrService = new RelatrService(config);
-    await relatrService.initialize();
+    relatrService = await RelatrFactory.createRelatrService(config);
 
     // Create MCP server
     server = new McpServer({
@@ -311,7 +312,7 @@ function registerSearchProfilesTool(
         const searchResult =
           await relatrService.searchProfiles(validatedParams);
         const result = {
-          results: searchResult.results.map((result) => ({
+          results: searchResult.results.map((result: SearchProfileResult) => ({
             pubkey: result.pubkey,
             trustScore: result.trustScore,
             rank: result.rank,

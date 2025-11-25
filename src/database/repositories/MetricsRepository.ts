@@ -181,31 +181,43 @@ export class MetricsRepository {
     if (!candidates || candidates.length === 0) return [];
 
     try {
-      const now = Math.floor(Date.now() / 1000);
-
-      // Create placeholders for IN clause
-      const placeholders = candidates.map((_, i) => `$${i + 1}`).join(",");
-      const params: Record<string, string> = {};
-      candidates.forEach((pubkey, i) => {
-        params[(i + 1).toString()] = pubkey;
-      });
-      params[(candidates.length + 1).toString()] = now.toString();
-
-      const result = await this.connection.run(
-        `SELECT DISTINCT pubkey
-         FROM profile_metrics
-         WHERE pubkey IN (${placeholders}) AND expires_at > $${candidates.length + 1}`,
-        params,
-      );
-
-      const rows = await result.getRows();
-      const existingPubkeys = new Set(rows.map((r: any) => r.pubkey));
-
-      return candidates.filter((p) => !existingPubkeys.has(p));
+      // Get all pubkeys that have valid scores
+      const validPubkeys = await this.getValidPubkeys();
+      
+      // Return candidates that are NOT in the valid pubkeys set
+      return candidates.filter((p) => !validPubkeys.has(p));
     } catch (error) {
       throw new DatabaseError(
         `Failed to check missing scores: ${error instanceof Error ? error.message : String(error)}`,
         "METRICS_CHECK_MISSING",
+      );
+    }
+  }
+
+  /**
+   * Get all pubkeys that currently have valid (non-expired) metrics
+   * @returns Set of pubkeys with valid metrics
+   */
+  private async getValidPubkeys(): Promise<Set<string>> {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      
+      const result = await this.connection.run(
+        `SELECT DISTINCT pubkey
+         FROM profile_metrics
+         WHERE expires_at > $1`,
+        { 1: now },
+      );
+
+      const rows = await result.getRows();
+      // DuckDB returns columns by index, not by name
+      return new Set(
+        rows.map((r) => Object.values(r)[0] as string),
+      );
+    } catch (error) {
+      throw new DatabaseError(
+        `Failed to get valid pubkeys: ${error instanceof Error ? error.message : String(error)}`,
+        "METRICS_GET_VALID_PUBKEYS",
       );
     }
   }
