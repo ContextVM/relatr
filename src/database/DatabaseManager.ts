@@ -49,8 +49,9 @@ export class DatabaseManager {
       logger.info(`[DatabaseManager] Creating DuckDB instance...`);
       this.duckDB = await DuckDBInstance.create(resolvedPath, {
         access_mode: "READ_WRITE",
-        max_memory: "512MB",
-        threads: "4",
+        max_memory: "256MB",
+        threads: "1",
+        checkpoint_threshold: "10MB",
       });
       logger.info(`[DatabaseManager] DuckDB instance created successfully`);
 
@@ -113,7 +114,11 @@ export class DatabaseManager {
    */
   public async close(): Promise<void> {
     try {
-      this.connection?.closeSync();
+      if (this.connection) {
+        logger.info("Checkpointing database...");
+        await this.connection.run("CHECKPOINT");
+        this.connection.closeSync();
+      }
       this.connection = null;
       this.duckDB = null;
       logger.info("Database connections closed");
