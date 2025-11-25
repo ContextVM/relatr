@@ -22,8 +22,8 @@ COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
 # Compile the MCP server as the main entry point
-RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr
-RUN bun build --compile --minify --sourcemap ./manager.ts --outfile manager
+RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external "@duckdb/node-api" --external "@duckdb/node-bindings-*"
+RUN bun build --compile --minify --sourcemap ./manager.ts --outfile manager --external "@duckdb/node-api" --external "@duckdb/node-bindings-*"
 
 # copy production dependencies and compiled binary into final image
 FROM base AS release
@@ -32,7 +32,7 @@ COPY --from=prerelease /usr/src/app/relatr .
 COPY --from=prerelease /usr/src/app/manager .
 
 # copy necessary source files for runtime (schema, etc.)
-COPY --from=prerelease /usr/src/app/src/database/schema.sql ./src/database/schema.sql
+COPY --from=prerelease /usr/src/app/src/database/duckdb-schema.sql ./src/database/duckdb-schema.sql
 
 # copy .env.example for process-pastry schema
 COPY --from=prerelease /usr/src/app/.env.example ./.env.example

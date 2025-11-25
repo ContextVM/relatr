@@ -3,8 +3,8 @@ import type { NostrEvent } from "nostr-tools";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "../types";
 import type { RelayPool } from "applesauce-relay";
-import { SQLiteError } from "bun:sqlite";
 import { decode, npubEncode, nprofileEncode } from "nostr-tools/nip19";
+import { logger } from "./Logger";
 
 export async function negSyncFromRelays(
   pool: RelayPool | null,
@@ -16,8 +16,8 @@ export async function negSyncFromRelays(
   if (!pool) {
     throw new RelatrError("Relay pool not initialized", "NOT_INITIALIZED");
   }
-  console.debug(
-    `[Utils] 📡 Fetching events from ${relays.join(", ")} - Kind: ${filter.kinds?.join(", ")}, Authors: ${filter.authors?.length || 0}`,
+  logger.debug(
+    `📡 Fetching events from ${relays.join(", ")} - Kind: ${filter.kinds?.join(", ")}, Authors: ${filter.authors?.length || 0}`,
   );
 
   const eventsObservable = pool.sync(relays, eventStore, filter);
@@ -33,21 +33,16 @@ export async function negSyncFromRelays(
           try {
             eventStore.add(evt);
           } catch (error) {
-            if (error instanceof SQLiteError) {
-              console.warn(
-                `[Utils] ⚠️ Failed to add event to event store:`,
-                error.message,
-                "Skipping...",
-              );
-            }
+            logger.warn(
+              `⚠️ Failed to add event to event store:`,
+              error instanceof Error ? error.message : String(error),
+              "Skipping...",
+            );
           }
           collected.push(evt);
         },
         error: (err) => {
-          console.warn(
-            `[Utils] ⚠️ Stream error from ${relays.join(", ")}:`,
-            err,
-          );
+          logger.warn(`⚠️ Stream error from ${relays.join(", ")}:`, err);
           resolve([]);
         },
         complete: () => resolve(collected),
@@ -62,17 +57,19 @@ export async function negSyncFromRelays(
       signal.addEventListener(
         "abort",
         () => {
-          console.warn(`[Utils] 🛑 Request aborted for ${relays.join(", ")}`);
+          logger.warn(`🛑 Request aborted for ${relays.join(", ")}`);
           try {
             sub.unsubscribe();
-          } catch (_) {}
+          } catch {
+            // Ignore validation errors for invalid pubkeys
+          }
           resolve([]);
         },
         { once: true },
       );
     });
   } catch (error) {
-    console.warn(`[Utils] ❌ Request failed for ${relays.join(", ")}:`, error);
+    logger.warn(`❌ Request failed for ${relays.join(", ")}:`, error);
     return [];
   }
 }
@@ -98,8 +95,8 @@ export async function fetchEventsForPubkeys(
   const allEvents: NostrEvent[] = [];
 
   for (let i = 0; i < pubkeys.length; i += 500) {
-    console.log(
-      `[Utils] 📥 Fetching kind ${kind} events: batch ${Math.floor(i / 500) + 1}/${Math.ceil(pubkeys.length / 500)} (${i + 1}-${Math.min(i + 500, pubkeys.length)} of ${pubkeys.length} pubkeys)`,
+    logger.info(
+      `📥 Fetching kind ${kind} events: batch ${Math.floor(i / 500) + 1}/${Math.ceil(pubkeys.length / 500)} (${i + 1}-${Math.min(i + 500, pubkeys.length)} of ${pubkeys.length} pubkeys)`,
     );
     const batch = pubkeys.slice(i, i + 500);
 
@@ -168,6 +165,10 @@ export function validateAndDecodePubkey(identifier: string): string | null {
     }
   } catch (error) {
     // Invalid nip19 format
+    logger.warn(
+      `[Utils] ⚠️ Invalid nip19 identifier: ${identifier}`,
+      error instanceof Error ? error.message : String(error),
+    );
     return null;
   }
 

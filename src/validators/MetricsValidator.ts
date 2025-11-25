@@ -1,12 +1,6 @@
-import type {
-  NostrProfile,
-  ProfileMetrics,
-  DataStoreKey,
-  MetricWeights,
-} from "../types";
+import type { ProfileMetrics, MetricWeights, NostrProfile } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import { withTimeout } from "@/utils/utils";
 import {
   WeightProfileManager,
   type CoverageValidationResult,
@@ -17,9 +11,11 @@ import {
   ALL_PLUGINS,
   type ValidationPlugin,
 } from "./plugins";
-import type { DataStore } from "@/database/data-store";
+import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { RelayPool } from "applesauce-relay";
-import type { NostrEvent } from "nostr-tools";
+import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
+import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
+import { logger } from "@/utils/Logger";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -29,17 +25,19 @@ export class MetricsValidator {
   private pool: RelayPool;
   private nostrRelays: string[];
   private graphManager: SocialGraph;
-  private dataStore: DataStore<ProfileMetrics>;
+  private metricsRepository: MetricsRepository;
   private timeoutMs: number = 10000;
+  private cacheTtlSeconds: number = 3600;
   private registry: ValidationRegistry;
   private weightProfileManager: WeightProfileManager;
+  private metadataRepository: MetadataRepository;
 
   /**
    * Create a new MetricsValidator instance
    * @param pool - Shared RelayPool instance for Nostr operations
    * @param nostrRelays - Array of Nostr relay URLs
    * @param graphManager - SocialGraph instance for reciprocity checks
-   * @param dataStore - Cache instance for storing profile metrics
+   * @param metricsRepository - Repository for storing profile metrics
    * @param plugins - Array of validation plugins to register (defaults to all available plugins)
    * @param weightProfileManager - Optional weight profile manager
    */
@@ -47,7 +45,9 @@ export class MetricsValidator {
     pool: RelayPool,
     nostrRelays: string[],
     graphManager: SocialGraph,
-    dataStore: DataStore<ProfileMetrics>,
+    metricsRepository: MetricsRepository,
+    metadataRepository: MetadataRepository,
+    cacheTtlSeconds?: number,
     plugins: ValidationPlugin[] = ALL_PLUGINS,
     weightProfileManager?: WeightProfileManager,
   ) {
@@ -63,15 +63,20 @@ export class MetricsValidator {
       throw new ValidationError("SocialGraph instance is required");
     }
 
-    if (!dataStore) {
-      throw new ValidationError("Cache instance is required");
+    if (!metricsRepository) {
+      throw new ValidationError("MetricsRepository instance is required");
+    }
+
+    if (!metadataRepository) {
+      throw new ValidationError("MetadataRepository instance is required");
     }
 
     this.pool = pool;
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
-    this.dataStore = dataStore;
-
+    this.metricsRepository = metricsRepository;
+    this.cacheTtlSeconds = cacheTtlSeconds || 60 * 60 * 1000 * 48;
+    this.metadataRepository = metadataRepository;
     // Initialize weight profile manager
     this.weightProfileManager =
       weightProfileManager || new WeightProfileManager();
@@ -101,27 +106,26 @@ export class MetricsValidator {
     if (!pubkey || typeof pubkey !== "string") {
       throw new ValidationError("Pubkey must be a non-empty string");
     }
-
-    const dataStoreKey: DataStoreKey = sourcePubkey
-      ? [pubkey, sourcePubkey]
-      : pubkey;
-
     try {
       // Check cache first
-      const cached = await this.dataStore.get(dataStoreKey);
+      const cached = await executeWithRetry(async () => {
+        return await this.metricsRepository.get(pubkey);
+      });
       if (cached) {
         return cached;
       }
     } catch (error) {
       // Cache error shouldn't prevent validation
-      console.warn("Cache read failed, proceeding with validation:", error);
+      logger.warn("Cache read failed, proceeding with validation:", error);
     }
 
     const now = Math.floor(Date.now() / 1000);
 
     try {
       // Get profile for validations
-      const profile = await this.fetchProfile(pubkey);
+      const profile =
+        (await this.metadataRepository.get(pubkey)) ||
+        (await this.fetchProfile(pubkey));
 
       // Create validation context
       const context: ValidationContext = {
@@ -141,26 +145,176 @@ export class MetricsValidator {
         pubkey,
         metrics,
         computedAt: now,
+        expiresAt: now + this.cacheTtlSeconds,
       };
 
       // Cache the results
       try {
-        await this.dataStore.set(dataStoreKey, result);
+        await this.metricsRepository.save(pubkey, result);
       } catch (error) {
         // Cache error shouldn't prevent returning results
-        console.warn("Cache write failed:", error);
+        logger.warn("Cache write failed:", error);
       }
 
       return result;
     } catch (error) {
       // Return a default metrics object on validation errors
+      logger.warn(
+        `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+        error instanceof Error ? error.message : String(error),
+      );
       const errorMetrics: ProfileMetrics = {
         pubkey,
         metrics: {},
         computedAt: now,
+        expiresAt: now + this.cacheTtlSeconds,
       };
 
       return errorMetrics;
+    }
+  }
+
+  /**
+   * Validate all metrics for multiple pubkeys in batch
+   * Checks cache first for all pubkeys, then validates only those not cached
+   * @param pubkeys - Array of target public keys to validate
+   * @param sourcePubkey - Optional source pubkey for reciprocity validation
+   * @param searchQuery - Optional search query for context-aware validations
+   * @returns Map of pubkey to ProfileMetrics
+   */
+  async validateAllBatch(
+    pubkeys: string[],
+    sourcePubkey?: string,
+    searchQuery?: string,
+  ): Promise<Map<string, ProfileMetrics>> {
+    if (!pubkeys || !Array.isArray(pubkeys)) {
+      throw new ValidationError("Pubkeys must be a non-empty array");
+    }
+
+    if (pubkeys.length === 0) {
+      return new Map();
+    }
+
+    const results = new Map<string, ProfileMetrics>();
+    const now = Math.floor(Date.now() / 1000);
+
+    try {
+      // Check cache for all pubkeys in batch
+      const cachedMetrics = await executeWithRetry(async () => {
+        return await this.metricsRepository.getBatch(pubkeys);
+      });
+
+      // Identify pubkeys that need validation (not in cache or expired)
+      const pubkeysToValidate: string[] = [];
+      for (const pubkey of pubkeys) {
+        const cached = cachedMetrics.get(pubkey);
+        if (cached) {
+          results.set(pubkey, cached);
+        } else {
+          pubkeysToValidate.push(pubkey);
+        }
+      }
+
+      // If all pubkeys were cached, return early
+      if (pubkeysToValidate.length === 0) {
+        return results;
+      }
+
+      // Fetch profiles for pubkeys that need validation
+      const profiles = await Promise.all(
+        pubkeysToValidate.map(async (pubkey) => {
+          const profile =
+            (await this.metadataRepository.get(pubkey)) ||
+            (await this.fetchProfile(pubkey));
+          return { pubkey, profile };
+        }),
+      );
+
+      // Validate all uncached pubkeys in parallel
+      const validationPromises = profiles.map(async ({ pubkey, profile }) => {
+        try {
+          const context: ValidationContext = {
+            pubkey,
+            sourcePubkey,
+            searchQuery,
+            profile,
+            graphManager: this.graphManager,
+            pool: this.pool,
+            relays: this.nostrRelays,
+          };
+
+          const metrics = await this.registry.executeAll(context);
+
+          const result: ProfileMetrics = {
+            pubkey,
+            metrics,
+            computedAt: now,
+            expiresAt: now + this.cacheTtlSeconds,
+          };
+
+          // Cache the results
+          try {
+            await this.metricsRepository.save(pubkey, result);
+          } catch (error) {
+            logger.warn(`Cache write failed for ${pubkey}:`, error);
+          }
+
+          return { pubkey, result };
+        } catch (error) {
+          // Return default metrics on validation errors
+          logger.warn(
+            `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+          const errorMetrics: ProfileMetrics = {
+            pubkey,
+            metrics: {},
+            computedAt: now,
+            expiresAt: now + this.cacheTtlSeconds,
+          };
+          return { pubkey, result: errorMetrics };
+        }
+      });
+
+      const validationResults = await Promise.all(validationPromises);
+
+      // Add validation results to the final map
+      for (const { pubkey, result } of validationResults) {
+        results.set(pubkey, result);
+      }
+
+      return results;
+    } catch (error) {
+      // If batch validation fails, fall back to individual validations
+      logger.warn(
+        "Batch validation failed, falling back to individual validations:",
+        error,
+      );
+
+      const fallbackResults = new Map<string, ProfileMetrics>();
+      for (const pubkey of pubkeys) {
+        try {
+          const result = await this.validateAll(
+            pubkey,
+            sourcePubkey,
+            searchQuery,
+          );
+          fallbackResults.set(pubkey, result);
+        } catch (error) {
+          logger.warn(
+            `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+          const errorMetrics: ProfileMetrics = {
+            pubkey,
+            metrics: {},
+            computedAt: now,
+            expiresAt: now + this.cacheTtlSeconds,
+          };
+          fallbackResults.set(pubkey, errorMetrics);
+        }
+      }
+      return fallbackResults;
     }
   }
 
@@ -277,7 +431,7 @@ export class MetricsValidator {
         // Return minimal profile on parse error
         return { pubkey };
       }
-    } catch (error) {
+    } catch {
       // Return minimal profile on error
       return { pubkey };
     }

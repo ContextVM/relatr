@@ -1,9 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { Database } from "bun:sqlite";
 import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
 import { WeightProfileManager } from "../validators/weight-profiles";
-import type { RelatrConfig, TrustScore, ProfileMetrics } from "../types";
+import type { RelatrConfig, ProfileMetrics } from "../types";
+import { DatabaseManager } from "../database/DatabaseManager";
+import { normalizeDistance } from "@/utils/utils";
 
 /**
  * Phase 2 Component Tests
@@ -19,7 +20,6 @@ const testConfig: RelatrConfig = {
   serverSecretKey: "test_server_secret_key",
   serverRelays: ["wss://relay.example.com"],
   decayFactor: 0.5,
-  duckDbPath: ":memory:",
   cacheTtlSeconds: 3600,
   numberOfHops: 1,
   syncInterval: 1000,
@@ -48,18 +48,15 @@ const testMetrics: ProfileMetrics = {
     reciprocity: 0.8,
   },
   computedAt: Math.floor(Date.now() / 1000),
+  expiresAt: Math.floor(Date.now() / 1000) + 1000,
 };
 
 // Shared instances
-let db: Database;
 let calculator: TrustCalculator;
 let socialGraph: SocialGraph;
 let weightProfileManager: WeightProfileManager;
 
 beforeAll(async () => {
-  // Initialize database
-  db = new Database(":memory:");
-
   // Initialize weight profile manager with test weights
   weightProfileManager = new WeightProfileManager();
   weightProfileManager.registerProfile({
@@ -72,8 +69,12 @@ beforeAll(async () => {
 
   calculator = new TrustCalculator(testConfig, weightProfileManager);
 
-  // Initialize social graph once for all tests
-  socialGraph = new SocialGraph(":memory:");
+  // Initialize DuckDB connection and social graph once for all tests
+  const dbManager = DatabaseManager.getInstance(":memory:");
+  await dbManager.initialize();
+  const duckDb = dbManager.getConnection();
+
+  socialGraph = new SocialGraph(duckDb);
   await socialGraph.initialize(
     "0000000000000000000000000000000000000000000000000000000000000000",
   );
@@ -82,36 +83,35 @@ beforeAll(async () => {
 afterAll(() => {
   // Cleanup
   socialGraph?.cleanup();
-  db.close();
 });
 
 describe("TrustCalculator - Distance Normalization", () => {
   test("should normalize distance = 0 to 1.0", () => {
-    expect(calculator.normalizeDistance(0)).toBe(1.0);
+    expect(normalizeDistance(0)).toBe(1.0);
   });
 
   test("should apply exponential decay formula correctly", () => {
     const distance = 2;
     const expected = Math.exp(-testConfig.decayFactor * distance);
-    expect(calculator.normalizeDistance(distance)).toBeCloseTo(expected, 6);
+    expect(normalizeDistance(distance)).toBeCloseTo(expected, 6);
   });
 
   test("should return 0.0 for distance = 1000", () => {
-    expect(calculator.normalizeDistance(1000)).toBe(0.0);
+    expect(normalizeDistance(1000)).toBe(0.0);
   });
 
   test("should clamp values to [0,1] range", () => {
     for (let distance = 0; distance <= 10; distance++) {
-      const normalized = calculator.normalizeDistance(distance);
+      const normalized = normalizeDistance(distance);
       expect(normalized).toBeGreaterThanOrEqual(0.0);
       expect(normalized).toBeLessThanOrEqual(1.0);
     }
   });
 
   test("should throw error for invalid distances", () => {
-    expect(() => calculator.normalizeDistance(-1)).toThrow();
-    expect(() => calculator.normalizeDistance(NaN)).toThrow();
-    expect(() => calculator.normalizeDistance(Infinity)).toThrow();
+    expect(() => normalizeDistance(-1)).toThrow();
+    expect(() => normalizeDistance(NaN)).toThrow();
+    expect(() => normalizeDistance(Infinity)).toThrow();
   });
 });
 
@@ -201,6 +201,7 @@ describe("TrustCalculator - Score Calculation", () => {
       calculator.calculate(
         "0000000000000000000000000000000000000000000000000000000000000009",
         "000000000000000000000000000000000000000000000000000000000000000a",
+        /* eslint-disable @typescript-eslint/no-explicit-any */
         null as any,
         1,
       ),
@@ -226,6 +227,7 @@ describe("TrustCalculator - Score Calculation", () => {
         reciprocity: 0,
       },
       computedAt: Math.floor(Date.now() / 1000),
+      expiresAt: Math.floor(Date.now() / 1000) + 1000,
     };
 
     const sourcePubkey =
@@ -387,8 +389,10 @@ describe("SocialGraph - Basic Operations", () => {
     );
   });
 
-  test("should throw error when created with invalid path", () => {
-    expect(() => new SocialGraph("")).toThrow();
+  test("should throw error when created with invalid connection", () => {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+
+    expect(() => new SocialGraph(null as any)).toThrow();
   });
 
   test("should get distance between pubkeys", async () => {
@@ -412,11 +416,9 @@ describe("SocialGraph - Basic Operations", () => {
     const stats = await socialGraph.getStats();
     expect(stats).toHaveProperty("users");
     expect(stats).toHaveProperty("follows");
-    expect(stats).toHaveProperty("mutes");
     expect(stats).toHaveProperty("sizeByDistance");
     expect(stats.users).toBeGreaterThanOrEqual(0);
     expect(stats.follows).toBeGreaterThanOrEqual(0);
-    expect(stats.mutes).toBeGreaterThanOrEqual(0);
   });
 
   test("should switch root pubkey", async () => {
@@ -447,8 +449,11 @@ describe("SocialGraph - Basic Operations", () => {
     ).toThrow();
   });
 
-  test("should throw errors when not initialized", () => {
-    const uninitializedGraph = new SocialGraph(":memory:");
+  test("should throw errors when not initialized", async () => {
+    const dbManager = DatabaseManager.getInstance(":memory:test");
+    await dbManager.initialize();
+    const duckDb = dbManager.getConnection();
+    const uninitializedGraph = new SocialGraph(duckDb);
 
     expect(() => uninitializedGraph.getCurrentRoot()).toThrow();
     expect(() =>

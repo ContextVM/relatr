@@ -13,10 +13,6 @@ export const RelatrConfigSchema = z.object({
     .string()
     .min(1, "DEFAULT_SOURCE_PUBKEY is required")
     .default(GIGI_PUBKEY),
-  duckDbPath: z
-    .string()
-    .min(1, "DUCKDB_PATH is required")
-    .default("./data/social-graph.db"),
   databasePath: z.string().default("./data/relatr.db"),
   nostrRelays: z
     .array(z.string())
@@ -32,7 +28,7 @@ export const RelatrConfigSchema = z.object({
   cacheTtlSeconds: z
     .number()
     .positive()
-    .default(60 * 60 * 1000 * 48),
+    .default(60 * 60 * 1000 * 72),
   numberOfHops: z.number().int().positive().default(1),
   syncInterval: z
     .number()
@@ -58,7 +54,6 @@ export function loadConfig(): RelatrConfig {
     defaultSourcePubkey: process.env.DEFAULT_SOURCE_PUBKEY
       ? normalizeToPubkey(process.env.DEFAULT_SOURCE_PUBKEY)
       : undefined,
-    duckDbPath: process.env.DUCKDB_PATH,
     databasePath: process.env.DATABASE_PATH,
     nostrRelays: process.env.NOSTR_RELAYS?.split(",").map((relay) =>
       relay.trim(),

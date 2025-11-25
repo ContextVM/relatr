@@ -1,9 +1,11 @@
 import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
+import { DuckDBConnection } from "@duckdb/node-api";
 import type { RelatrConfig } from "../types";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { NostrEvent } from "nostr-tools";
+import { logger } from "../utils/Logger";
 
 /**
  * Parameters for social graph creation
@@ -11,6 +13,7 @@ import type { NostrEvent } from "nostr-tools";
 export interface SocialGraphCreationParams {
   sourcePubkey: string;
   hops: number;
+  connection: DuckDBConnection;
 }
 
 /**
@@ -54,18 +57,18 @@ export class SocialGraphBuilder {
   public async createGraph(
     params: SocialGraphCreationParams,
   ): Promise<SocialGraphCreationResult> {
-    const { sourcePubkey, hops } = params;
+    const { sourcePubkey, hops, connection } = params;
 
-    console.log("[SocialGraphBuilder] 🚀 Starting social graph creation...");
-    console.log(`[SocialGraphBuilder] Pubkey ${sourcePubkey}, Hops ${hops}`);
+    logger.info("🚀 Starting social graph creation...");
+    logger.info(`Pubkey ${sourcePubkey}, Hops ${hops}`);
 
     try {
       // Discover pubkeys in the social graph
       const { contactEvents } = await this.discoverPubkeys(sourcePubkey, hops);
 
       if (contactEvents.length === 0) {
-        console.warn(
-          "[SocialGraphBuilder] ⚠️ No contact list events found. The social graph will be empty.",
+        logger.warn(
+          "⚠️ No contact list events found. The social graph will be empty.",
         );
         return {
           success: true,
@@ -75,29 +78,28 @@ export class SocialGraphBuilder {
         };
       }
 
-      console.log(
-        `[SocialGraphBuilder] 📊 Found ${contactEvents.length} contact list events. Building graph...`,
+      logger.info(
+        `📊 Found ${contactEvents.length} contact list events. Building graph...`,
       );
-      // await Bun.write('./data/socialGraph.jsonl', contactEvents.map(event => JSON.stringify(event)).join('\n'));
 
-      // Create and populate the DuckDB social graph with file persistence
-      const socialGraph = await DuckDBSocialGraphAnalyzer.create({
-        dbPath: this.config.duckDbPath,
-      });
+      const socialGraph: DuckDBSocialGraphAnalyzer =
+        await DuckDBSocialGraphAnalyzer.connect(connection);
 
       // Ingest all contact events
       await socialGraph.ingestEvents(contactEvents);
 
       const graphStats = await socialGraph.getStats();
-      console.log(
-        `[SocialGraphBuilder] ✅ Graph stats: ${graphStats.uniqueFollowers.toLocaleString()} unique followers, ${graphStats.totalFollows.toLocaleString()} total follows.`,
+      logger.info(
+        `✅ Graph stats: ${graphStats.totalFollows.toLocaleString()} total follows.`,
       );
 
-      const message = `DuckDB social graph saved to ${this.config.duckDbPath}.`;
-      console.log(`[SocialGraphBuilder] ✨ ${message}`);
+      const message = `DuckDB social graph updated in shared database.`;
+      logger.info(`✨ ${message}`);
 
-      // Close the analyzer to ensure data is persisted
-      await socialGraph.close();
+      // Only close if we created the connection
+      if (!connection) {
+        await socialGraph.close();
+      }
 
       return {
         success: true,
@@ -127,14 +129,12 @@ export class SocialGraphBuilder {
     hops: number,
   ): Promise<DiscoveryResult> {
     const crawledPubkeys: Set<string> = new Set();
-    let pubkeysToCrawl: Set<string> = new Set([sourcePubkey]);
+    const pubkeysToCrawl: Set<string> = new Set([sourcePubkey]);
     const allContactEvents: NostrEvent[] = [];
 
     for (let hop = 0; hop <= hops; hop++) {
       if (pubkeysToCrawl.size === 0) {
-        console.log(
-          `[SocialGraphBuilder] 🏁 Hop ${hop}: No new pubkeys to crawl.`,
-        );
+        logger.info(`🏁 Hop ${hop}: No new pubkeys to crawl.`);
         break;
       }
 
@@ -168,19 +168,19 @@ export class SocialGraphBuilder {
         }
       }
 
-      console.log(
-        `[SocialGraphBuilder] 🔍 Hop ${hop}: Found ${hopContactEvents.length} contact events, discovered ${newDiscoveredThisHop.toLocaleString()} new pubkeys.`,
+      logger.info(
+        `🔍 Hop ${hop}: Found ${hopContactEvents.length} contact events, discovered ${newDiscoveredThisHop.toLocaleString()} new pubkeys.`,
       );
 
       if (newDiscoveredThisHop === 0) {
-        console.log(
-          `[SocialGraphBuilder] 🛑 Hop ${hop}: no new pubkeys discovered, stopping early.`,
+        logger.info(
+          `🛑 Hop ${hop}: no new pubkeys discovered, stopping early.`,
         );
         break;
       }
     }
 
-    console.log(
+    logger.info(
       `[SocialGraphBuilder] 🎯 Discovery complete: ${allContactEvents.length.toLocaleString()} total contact events from ${crawledPubkeys.size.toLocaleString()} pubkeys across ${hops} hops.`,
     );
 

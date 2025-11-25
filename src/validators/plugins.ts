@@ -8,6 +8,7 @@ import {
 } from "./weight-profiles";
 import type { RelayPool } from "applesauce-relay";
 import type { NostrEvent } from "nostr-tools";
+import { logger } from "../utils/Logger";
 
 /**
  * Validation context passed to all validation plugins
@@ -70,7 +71,7 @@ export class ValidationRegistry {
       try {
         results[name] = await plugin.validate(context);
       } catch (error) {
-        console.warn(`Validation plugin '${name}' failed:`, error);
+        logger.warn(`Validation plugin '${name}' failed:`, error);
         results[name] = 0.0; // Default to 0 on error
       }
     }
@@ -114,7 +115,7 @@ export class Nip05Plugin implements ValidationPlugin {
       const result = await withTimeout(queryProfile(nip05), this.timeoutMs);
 
       return result?.pubkey === ctx.pubkey ? 1.0 : 0.0;
-    } catch (error) {
+    } catch {
       return 0.0;
     }
   }
@@ -135,8 +136,14 @@ export class LightningPlugin implements ValidationPlugin {
     }
 
     // Check for lud06 (LNURL format)
-    if ((ctx.profile as any).lud06) {
-      return this.isValidLnurlFormat((ctx.profile as any).lud06) ? 1.0 : 0.0;
+    if (
+      ctx.profile &&
+      "lud06" in ctx.profile &&
+      typeof (ctx.profile as { lud06?: string }).lud06 === "string"
+    ) {
+      return this.isValidLnurlFormat((ctx.profile as { lud06: string }).lud06)
+        ? 1.0
+        : 0.0;
     }
 
     return 0.0;
@@ -255,7 +262,7 @@ export class EventPlugin implements ValidationPlugin {
       });
 
       return event ? 1.0 : 0.0;
-    } catch (error) {
+    } catch {
       return 0.0;
     }
   }
@@ -278,27 +285,14 @@ export class ReciprocityPlugin implements ValidationPlugin {
         return 0.0;
       }
 
-      // Check if both pubkeys exist in the graph
-      const sourceInGraph = await ctx.graphManager.isInGraph(ctx.sourcePubkey);
-      const targetInGraph = await ctx.graphManager.isInGraph(ctx.pubkey);
-
-      if (!sourceInGraph || !targetInGraph) {
-        return 0.0;
-      }
-
-      // Check follow relationships
-      const sourceFollowsTarget = await ctx.graphManager.doesFollow(
+      const areMutualFollows = await ctx.graphManager.areMutualFollows(
         ctx.sourcePubkey,
         ctx.pubkey,
-      );
-      const targetFollowsSource = await ctx.graphManager.doesFollow(
-        ctx.pubkey,
-        ctx.sourcePubkey,
       );
 
       // Reciprocity is only true if both follow each other
-      return sourceFollowsTarget && targetFollowsSource ? 1.0 : 0.0;
-    } catch (error) {
+      return areMutualFollows ? 1.0 : 0.0;
+    } catch {
       return 0.0;
     }
   }

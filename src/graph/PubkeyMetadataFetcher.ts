@@ -2,8 +2,8 @@ import { RelayPool } from "applesauce-relay";
 import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-tools";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
-import type { NostrProfile } from "@/types";
-import type { DataStore } from "@/database/data-store";
+import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
+import { logger } from "@/utils/Logger";
 
 /**
  * Parameters for metadata fetching
@@ -29,16 +29,16 @@ export interface MetadataFetchResult {
 export class PubkeyMetadataFetcher {
   private pool: RelayPool;
   private eventStore?: EventStore;
-  private metadataCache: DataStore<NostrProfile>;
+  private metadataRepository: MetadataRepository;
 
   constructor(
     pool: RelayPool,
-    metadataCache: DataStore<NostrProfile>,
+    metadataRepository: MetadataRepository,
     eventStore?: EventStore,
   ) {
     this.pool = pool;
     this.eventStore = eventStore;
-    this.metadataCache = metadataCache;
+    this.metadataRepository = metadataRepository;
   }
 
   /**
@@ -59,8 +59,8 @@ export class PubkeyMetadataFetcher {
       };
     }
 
-    console.log(
-      `[PubkeyMetadataFetcher] 👤 Starting metadata fetch for ${pubkeys.length.toLocaleString()} pubkeys...`,
+    logger.info(
+      `👤 Starting metadata fetch for ${pubkeys.length.toLocaleString()} pubkeys...`,
     );
 
     try {
@@ -73,7 +73,7 @@ export class PubkeyMetadataFetcher {
       );
 
       if (profileEvents.length === 0) {
-        console.warn("[PubkeyMetadataFetcher] ⚠️ No profile events found.");
+        logger.warn("⚠️ No profile events found.");
         return {
           success: true,
           message: "No profile events found.",
@@ -81,12 +81,11 @@ export class PubkeyMetadataFetcher {
         };
       }
 
-      // TODO: Review performance of this method
       // Cache the metadata
       await this.storeProfileMetadata(profileEvents);
 
       const message = `Fetched and cached metadata for ${profileEvents.length} profiles.`;
-      console.log(`[PubkeyMetadataFetcher] ✅ ${message}`);
+      logger.info(`✅ ${message}`);
 
       return {
         success: true,
@@ -107,17 +106,12 @@ export class PubkeyMetadataFetcher {
   private async storeProfileMetadata(events: NostrEvent[]): Promise<void> {
     for (const event of events) {
       try {
-        const profile = JSON.parse(event.content);
-        await this.metadataCache.set(event.pubkey, {
-          pubkey: event.pubkey,
-          name: profile.name,
-          display_name: profile.display_name,
-          nip05: profile.nip05,
-          lud16: profile.lud16,
-          about: profile.about,
-        });
+        if (!event.content) continue;
+        const content = JSON.parse(event.content);
+        const profile = { ...content, pubkey: event.pubkey };
+        await this.metadataRepository.save(profile);
       } catch (e) {
-        // ignore invalid profile
+        logger.warn(`Failed to save profile for ${event.pubkey}:`, e);
       }
     }
   }

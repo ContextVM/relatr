@@ -1,6 +1,8 @@
-import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
+import { DuckDBSocialGraphAnalyzer, executeWithRetry } from "nostr-social-duck";
+import { DuckDBConnection } from "@duckdb/node-api";
 import { SocialGraphError } from "../types";
 import type { NostrEvent } from "nostr-tools";
+import { logger } from "../utils/Logger";
 
 /**
  * Social graph operations wrapper for Relatr v2
@@ -8,19 +10,19 @@ import type { NostrEvent } from "nostr-tools";
  */
 export class SocialGraph {
   private graph: DuckDBSocialGraphAnalyzer | null = null;
-  private duckDbPath: string;
+  private connection: DuckDBConnection | null = null;
   private rootPubkey: string;
   private initialized: boolean = false;
 
   /**
    * Create a new SocialGraph instance
-   * @param duckDbPath - Path to DuckDB database file
+   * @param connection - DuckDBConnection instance to use
    */
-  constructor(duckDbPath: string) {
-    if (!duckDbPath) {
-      throw new SocialGraphError("DuckDB path is required", "CONSTRUCTOR");
+  constructor(connection: DuckDBConnection) {
+    if (!connection) {
+      throw new SocialGraphError("DuckDBConnection is required", "CONSTRUCTOR");
     }
-    this.duckDbPath = duckDbPath;
+    this.connection = connection;
     this.rootPubkey = ""; // Will be set during initialization
   }
 
@@ -29,22 +31,23 @@ export class SocialGraph {
    * @param rootPubkey - Root public key to use for distance calculations
    * @throws SocialGraphError if initialization fails
    */
-  async initialize(rootPubkey?: string): Promise<void> {
-    if (this.initialized) {
+  async initialize(rootPubkey: string): Promise<void> {
+    if (this.initialized || !this.connection) {
+      logger.warn(
+        "⚠️ Social graph already initialized or connection not provided",
+      );
       return;
     }
 
     try {
-      const root =
-        rootPubkey ||
-        "0000000000000000000000000000000000000000000000000000000000000000";
-      this.rootPubkey = root;
+      this.rootPubkey = rootPubkey;
 
-      // Create DuckDB analyzer with file persistence
-      this.graph = await DuckDBSocialGraphAnalyzer.create({
-        dbPath: this.duckDbPath,
-        rootPubkey: this.rootPubkey,
-      });
+      // Use the shared connection passed in constructor
+      this.graph = await DuckDBSocialGraphAnalyzer.connect(
+        this.connection,
+        undefined,
+        this.rootPubkey,
+      );
 
       this.initialized = true;
     } catch (error) {
@@ -82,6 +85,42 @@ export class SocialGraph {
       throw new SocialGraphError(
         `Failed to get distance for ${targetPubkey}: ${error instanceof Error ? error.message : String(error)}`,
         "GET_DISTANCE",
+      );
+    }
+  }
+
+  /**
+   * Get distances for multiple pubkeys in a single batch operation
+   * Leverages precomputed distances from nostr-social-duck's nsd_root_distances table
+   * @param pubkeys - Array of target public keys
+   * @returns Map of pubkey to distance (1000 if unreachable)
+   * @throws SocialGraphError if graph is not initialized
+   */
+  async getDistancesBatch(
+    pubkeys: string[],
+  ): Promise<Map<string, number | null>> {
+    this.ensureInitialized();
+
+    if (!pubkeys || !Array.isArray(pubkeys)) {
+      throw new SocialGraphError(
+        "Pubkeys must be a non-empty array",
+        "GET_DISTANCES_BATCH",
+      );
+    }
+
+    if (pubkeys.length === 0) {
+      return new Map();
+    }
+
+    try {
+      return await this.graph!.getShortestDistancesBatch(
+        this.rootPubkey,
+        pubkeys,
+      );
+    } catch (error) {
+      throw new SocialGraphError(
+        `Failed to get distances batch: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_DISTANCES_BATCH",
       );
     }
   }
@@ -136,16 +175,31 @@ export class SocialGraph {
       );
     }
 
-    try {
+    return executeWithRetry(async () => {
       return await this.graph!.isDirectFollow(source, target);
-    } catch (error) {
-      // Handle the case where the prepared statement fails
-      console.warn(
-        `Failed to check follow relationship between ${source} and ${target}:`,
-        error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  async areMutualFollows(source: string, target: string): Promise<boolean> {
+    this.ensureInitialized();
+
+    if (!source || typeof source !== "string") {
+      throw new SocialGraphError(
+        "Source pubkey must be a non-empty string",
+        "DOES_FOLLOW",
       );
-      return false;
     }
+
+    if (!target || typeof target !== "string") {
+      throw new SocialGraphError(
+        "Target pubkey must be a non-empty string",
+        "DOES_FOLLOW",
+      );
+    }
+
+    return executeWithRetry(async () => {
+      return await this.graph!.areMutualFollows(source, target);
+    });
   }
 
   /**
@@ -174,7 +228,6 @@ export class SocialGraph {
   async getStats(): Promise<{
     users: number;
     follows: number;
-    mutes: number;
     sizeByDistance: {
       [distance: number]: number;
     };
@@ -186,20 +239,20 @@ export class SocialGraph {
       const stats = {
         users: 0,
         follows: 0,
-        mutes: 0,
         sizeByDistance: {} as { [distance: number]: number },
       };
 
-      // For now, return mock stats since the actual implementation is commented
-      // This allows tests to pass while we work on the actual implementation
-      stats.users = 1; // At least the root user
-      stats.follows = 0;
-      stats.mutes = 0;
-
-      // Initialize sizeByDistance with zeros for common distances
-      for (let distance = 1; distance <= 6; distance++) {
-        stats.sizeByDistance[distance] = 0;
-      }
+      this.ensureInitialized();
+      const statsResult = await this.graph?.getStats();
+      const pubkeyDistribution = await this.graph?.getDistanceDistribution();
+      stats.users = statsResult?.totalFollows || 0;
+      stats.follows = statsResult?.totalFollows || 0;
+      stats.sizeByDistance = Object.fromEntries(
+        Object.entries(pubkeyDistribution!).map(([key, value]) => [
+          parseInt(key),
+          value,
+        ]),
+      );
 
       return stats;
     } catch (error) {
@@ -230,64 +283,10 @@ export class SocialGraph {
       return await this.graph!.pubkeyExists(pubkey);
     } catch (error) {
       // Log the error but don't crash the service
-      console.warn(
+      logger.warn(
         `Failed to check if ${pubkey} is in graph: ${error instanceof Error ? error.message : String(error)}`,
       );
       return false;
-    }
-  }
-
-  /**
-   * Get muted pubkeys for a user
-   * @param pubkey - Public key of the user
-   * @returns Array of muted pubkeys
-   * @throws SocialGraphError if operation fails
-   */
-  getMutedByUser(pubkey: string): string[] {
-    this.ensureInitialized();
-
-    if (!pubkey || typeof pubkey !== "string") {
-      throw new SocialGraphError(
-        "Pubkey must be a non-empty string",
-        "GET_MUTED_BY_USER",
-      );
-    }
-
-    try {
-      // nostr-social-duck doesn't support mute lists, return empty array
-      return [];
-    } catch (error) {
-      throw new SocialGraphError(
-        `Failed to get muted users for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "GET_MUTED_BY_USER",
-      );
-    }
-  }
-
-  /**
-   * Get users who muted a pubkey
-   * @param pubkey - Public key to check
-   * @returns Array of pubkeys that muted the target
-   * @throws SocialGraphError if operation fails
-   */
-  getUserMutedBy(pubkey: string): string[] {
-    this.ensureInitialized();
-
-    if (!pubkey || typeof pubkey !== "string") {
-      throw new SocialGraphError(
-        "Pubkey must be a non-empty string",
-        "GET_USER_MUTED_BY",
-      );
-    }
-
-    try {
-      // nostr-social-duck doesn't support mute lists, return empty array
-      return [];
-    } catch (error) {
-      throw new SocialGraphError(
-        `Failed to get users who muted ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
-        "GET_USER_MUTED_BY",
-      );
     }
   }
 
