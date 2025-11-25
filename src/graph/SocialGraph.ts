@@ -40,6 +40,7 @@ export class SocialGraph {
    * @throws SocialGraphError if initialization fails
    */
   async initialize(rootPubkey: string): Promise<void> {
+    logger.info(`[SocialGraph] initialize() called with root: ${rootPubkey}`);
     if (this.initialized) {
       logger.warn("⚠️ Social graph already initialized");
       return;

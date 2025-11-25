@@ -44,6 +44,7 @@ export class RelatrFactory {
             // Step 1: Initialize Database Manager
             const dbManager = DatabaseManager.getInstance(validatedConfig.databasePath);
             await dbManager.initialize();
+            logger.info('✅ Database initialized, proceeding with repositories...');
             
             // Use a single shared connection for all components to reduce transaction conflicts
             const sharedConnection = dbManager.getConnection();
@@ -59,11 +60,14 @@ export class RelatrFactory {
             const pubkeyMetadataFetcher = new PubkeyMetadataFetcher(pool, metadataRepository);
 
             // Step 4: Check if social graph exists and handle first-time setup
+            logger.info('🔍 Checking if social graph tables exist...');
             let graphExists = false;
             try {
                 await sharedConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
                 graphExists = true;
-            } catch {
+                logger.info('✅ Social graph tables found.');
+            } catch (err) {
+              logger.info('ℹ️ Social graph tables not found (or error checking): ' + (err instanceof Error ? err.message : String(err)));
               graphExists = false;
             }
             
@@ -82,8 +86,10 @@ export class RelatrFactory {
             }
             
             // Step 5: Initialize the social graph with the shared connection
+            logger.info('🔄 Initializing SocialGraph service...');
             const socialGraph = new RelatrSocialGraph(sharedConnection, creationResult?.socialGraph);
             await socialGraph.initialize(validatedConfig.defaultSourcePubkey);
+            logger.info('✅ SocialGraph service initialized.');
             
             const graphStats = await socialGraph.getStats();
             logger.info('Social graph stats', graphStats);
