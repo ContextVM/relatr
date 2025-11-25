@@ -1,5 +1,73 @@
 # relatr
 
+## 0.1.0
+
+### Minor Changes
+
+- feat: duckdb migration init
+
+  refactor(database): replace data-store with repository pattern and singleton manager
+  - Replace monolithic DataStore class with specialized repositories:
+    - MetadataRepository for pubkey metadata operations
+    - MetricsRepository for profile metrics with TTL support
+    - SettingsRepository for configuration storage
+  - Implement DatabaseManager singleton for centralized database lifecycle management
+  - Update all dependent services to use new repository pattern:
+    - RelatrService now uses repositories instead of direct DataStore access
+    - PubkeyMetadataFetcher uses MetadataRepository for profile storage
+    - MetricsValidator uses MetricsRepository with proper TTL handling
+    - Tests updated to use DatabaseManager singleton
+  - Remove legacy data-store.ts file and its complex caching logic
+  - Improve error handling with specific DatabaseError types
+  - Add proper connection lifecycle management with graceful shutdown
+  - Maintain backward compatibility while modernizing architecture
+
+  feat: implement multi-connection database management for transaction isolation
+  - Add connection tracking with Set to manage multiple DuckDB connections
+  - Create createConnection() method for isolated transaction contexts
+  - Update initialization logic to use separate connections for different components
+  - Improve connection cleanup in close() method to handle all tracked connections
+  - Maintain backward compatibility with existing getConnection() method
+
+  feat: implement multi-connection database management for transaction isolation
+  - Add connection tracking with Set to manage multiple DuckDB connections
+  - Create createConnection() method for isolated transaction contexts
+  - Update initialization logic to use separate connections for different components
+  - Improve connection cleanup in close() method to handle all tracked connections
+  - Maintain backward compatibility with existing getConnection() method
+
+  refactor: use shared DuckDB connection for all components, improved search algorithm
+
+  feat(core): optimize batch validation and distance calculation
+
+  Improves performance by batching validation and distance calculations,
+  leveraging DuckDB's capabilities for efficiency. Includes caching
+  of weights and distances to reduce redundant computations.
+
+  feat(graph): add areMutualFollows method, cleanup types
+
+  feat(relatr): improve performance and reliability
+
+  refactor(relatr): increase batch size for validation sync
+
+  refactor: extract services and update dependencies
+  - Extract scheduling and background tasks into SchedulerService
+  - Extract search functionality into SearchService
+  - Define service interfaces for better separation of concerns
+  - Refactor MetricsRepository for improved performance
+  - Update dependencies: nostr-social-duck, nostr-tools, @types/react
+  - Remove @modelcontextprotocol/sdk dependency
+  - Clean up RelatrService by delegating to specialized services
+
+  chore: add ESLint configuration and TypeScript support
+
+  This commit introduces ESLint with TypeScript support to the project. The changes include:
+  - Adding ESLint, TypeScript ESLint, and related dependencies
+  - Creating an ESLint configuration file that extends recommended rules and integrates with Prettier
+  - Adding a lint script to package.json
+  - Fixing code issues identified by ESLint (unused variables, type safety, error handling, etc.)
+  - Updating dependencies to their latest versions
+
 ## 0.0.12
 
 ### Patch Changes
