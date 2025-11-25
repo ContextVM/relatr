@@ -39,17 +39,26 @@ export class DatabaseManager {
     if (this.duckDB) return;
 
     try {
+      logger.info(`[DatabaseManager] Starting initialization for path: ${this.dbPath}`);
+      
       const resolvedPath =
         this.dbPath === ":memory:" ? this.dbPath : resolve(this.dbPath);
+      logger.info(`[DatabaseManager] Resolved path: ${resolvedPath}`);
 
       // Create instance
+      logger.info(`[DatabaseManager] Creating DuckDB instance...`);
       this.duckDB = await DuckDBInstance.create(resolvedPath);
+      logger.info(`[DatabaseManager] DuckDB instance created successfully`);
 
       // Create primary connection
+      logger.info(`[DatabaseManager] Creating primary connection...`);
       this.connection = await this.duckDB.connect();
+      logger.info(`[DatabaseManager] Primary connection created successfully`);
 
       // Load schema
+      logger.info(`[DatabaseManager] Loading schema...`);
       await this.loadSchema();
+      logger.info(`[DatabaseManager] Schema loaded successfully`);
 
       logger.info(`Initialized DuckDB at ${this.dbPath}`);
     } catch (error) {
