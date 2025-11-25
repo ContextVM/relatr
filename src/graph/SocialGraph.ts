@@ -54,17 +54,23 @@ export class SocialGraph {
 
       // If we already have a graph instance (from constructor), just set the root pubkey
       if (this.graph) {
+        logger.info(
+          `🔍 Reusing existing graph, setting root pubkey: ${rootPubkey}`,
+        );
         await this.graph.setRootPubkey(rootPubkey);
       } else {
         // Otherwise, create a new graph instance
+        logger.info(`🚀 Creating new graph analyzer with root: ${rootPubkey}`);
         this.graph = await DuckDBSocialGraphAnalyzer.connect(
           this.connection,
           undefined,
           this.rootPubkey,
         );
+        logger.info(`✅ Graph analyzer created successfully`);
       }
 
       this.initialized = true;
+      logger.info(`✅ Social graph initialized successfully`);
     } catch (error) {
       throw new SocialGraphError(
         `Failed to initialize social graph: ${error instanceof Error ? error.message : String(error)}`,

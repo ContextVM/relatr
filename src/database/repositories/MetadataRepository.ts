@@ -18,38 +18,65 @@ export class MetadataRepository {
   }
 
   async save(profile: NostrProfile): Promise<void> {
+    await this.saveMany([profile]);
+  }
+
+  async saveMany(profiles: NostrProfile[]): Promise<void> {
+    if (profiles.length === 0) return;
+
     try {
       return await executeWithRetry(async () => {
         const now = Math.floor(Date.now() / 1000);
 
-        // Delete existing
-        await this.connection.run(
-          "DELETE FROM pubkey_metadata WHERE pubkey = $1",
-          { 1: profile.pubkey },
-        );
+        // Extract pubkeys for deletion
+        const pubkeys = profiles.map((p) => p.pubkey);
 
-        // Insert new
-        await this.connection.run(
-          `INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          {
-            1: profile.pubkey,
-            2: profile.name || null,
-            3: profile.display_name || null,
-            4: profile.nip05 || null,
-            5: profile.lud16 || null,
-            6: profile.about || null,
-            7: now,
-          },
-        );
+        // Delete existing records in batch
+        if (pubkeys.length > 0) {
+          const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+          await this.connection.run(
+            `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
+            Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
+          );
+        }
+
+        // Insert new records in batch using VALUES clause
+        if (profiles.length > 0) {
+          const valuesClause = profiles
+            .map(
+              (_, i) =>
+                `($${i * 7 + 1}, $${i * 7 + 2}, $${i * 7 + 3}, $${i * 7 + 4}, $${i * 7 + 5}, $${i * 7 + 6}, $${i * 7 + 7})`,
+            )
+            .join(", ");
+
+          const insertQuery = `
+            INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
+            VALUES ${valuesClause}
+          `;
+
+          // Build parameters object with proper type handling
+          const params: Record<string, string | null | number> = {};
+          profiles.forEach((profile, i) => {
+            const baseIndex = i * 7;
+            params[baseIndex + 1] = profile.pubkey;
+            params[baseIndex + 2] = profile.name || null;
+            params[baseIndex + 3] = profile.display_name || null;
+            params[baseIndex + 4] = profile.nip05 || null;
+            params[baseIndex + 5] = profile.lud16 || null;
+            params[baseIndex + 6] = profile.about || null;
+            params[baseIndex + 7] = now;
+          });
+
+          await this.connection.run(insertQuery, params);
+        }
       });
     } catch (error) {
       logger.warn(
-        `Failed to save metadata for ${profile.pubkey} after retries:`,
+        `Failed to save metadata for ${profiles.length} profiles after retries:`,
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
-        `Failed to save metadata for ${profile.pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to save metadata for ${profiles.length} profiles: ${error instanceof Error ? error.message : String(error)}`,
         "METADATA_SAVE",
       );
     }

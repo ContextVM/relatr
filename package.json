@@ -1,7 +1,7 @@
 {
   "name": "relatr",
   "description": "Decentralized trust metric service for the Nostr ecosystem that computes personalized trust scores from the unique perspective of a public key",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "private": true,
   "scripts": {
@@ -30,7 +30,7 @@
     "@duckdb/node-api": "^1.4.2-r.1",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
-    "nostr-social-duck": "^0.1.20",
+    "nostr-social-duck": "^0.1.21",
     "nostr-tools": "^2.18.1",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.0",

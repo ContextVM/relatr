@@ -93,6 +93,8 @@ export async function fetchEventsForPubkeys(
   eventStore?: EventStore,
 ): Promise<NostrEvent[]> {
   const allEvents: NostrEvent[] = [];
+  // Use a single EventStore instance for all batches if not provided
+  const store = eventStore || new EventStore();
 
   for (let i = 0; i < pubkeys.length; i += 500) {
     logger.info(
@@ -118,13 +120,17 @@ export async function fetchEventsForPubkeys(
           authors: batch,
         },
         signal,
-        eventStore || new EventStore(),
+        store,
       );
+      allEvents.push(...events);
     } finally {
       clearTimeout(timer);
+      // Clear the EventStore after each batch to free memory
+      store.removeByFilters({
+        kinds: [kind],
+        authors: batch,
+      });
     }
-
-    allEvents.push(...events);
   }
 
   return allEvents;

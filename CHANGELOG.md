@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.2
+
+### Patch Changes
+
+- feat(db): batch save and validate profile metadata
+
 ## 0.1.1
 
 ### Patch Changes
