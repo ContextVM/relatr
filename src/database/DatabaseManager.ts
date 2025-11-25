@@ -47,7 +47,11 @@ export class DatabaseManager {
 
       // Create instance
       logger.info(`[DatabaseManager] Creating DuckDB instance...`);
-      this.duckDB = await DuckDBInstance.create(resolvedPath);
+      this.duckDB = await DuckDBInstance.create(resolvedPath, {
+        access_mode: "READ_WRITE",
+        max_memory: "512MB",
+        threads: "4",
+      });
       logger.info(`[DatabaseManager] DuckDB instance created successfully`);
 
       // Create primary connection
