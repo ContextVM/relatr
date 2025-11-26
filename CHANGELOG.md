@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.4
+
+### Patch Changes
+
+- fix(deps): update nostr-social-duck to v0.1.24
+
 ## 0.1.3
 
 ### Patch Changes

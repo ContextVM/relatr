@@ -8,7 +8,7 @@
         "@duckdb/node-api": "^1.4.2-r.1",
         "applesauce-core": "^4.4.2",
         "applesauce-relay": "^4.4.2",
-        "nostr-social-duck": "^0.1.22",
+        "nostr-social-duck": "^0.1.23",
         "nostr-tools": "^2.18.2",
         "process-pastry": "https://github.com/hzrd149/process-pastry",
         "react": "^19.2.0",
@@ -460,7 +460,7 @@
 
     "negotiator": ["negotiator@1.0.0", "", {}, "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg=="],
 
-    "nostr-social-duck": ["nostr-social-duck@0.1.23", "", { "dependencies": { "@duckdb/node-api": "^1.4.2-r.1" }, "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-darwin-x64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-x64": "^1.4.2-r.1", "@duckdb/node-bindings-win32-x64": "^1.4.2-r.1" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-zDtnoQNOrdIqn1pUeSpdyLeIr5S6Vs3FiIUmuvGSKtVRNIMlu+lGMU8UgtjRzmSqSSkvI/XB5g1XomLV4/OD2g=="],
+    "nostr-social-duck": ["nostr-social-duck@0.1.24", "", { "dependencies": { "@duckdb/node-api": "^1.4.2-r.1" }, "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-darwin-x64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-x64": "^1.4.2-r.1", "@duckdb/node-bindings-win32-x64": "^1.4.2-r.1" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-5sjVeAfTqeW2ghALpWDiCfpNqvwAyBLSGNBBcDRKE8b8TLgBKO1ccU45sgR5rjqqlVR/UE6j/K1GWJ0CxgX7Tw=="],
 
     "nostr-tools": ["nostr-tools@2.18.2", "", { "dependencies": { "@noble/ciphers": "^0.5.1", "@noble/curves": "1.2.0", "@noble/hashes": "1.3.1", "@scure/base": "1.1.1", "@scure/bip32": "1.3.1", "@scure/bip39": "1.2.1", "nostr-wasm": "0.1.0" }, "peerDependencies": { "typescript": ">=5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-lUCJQd9YZG3kEvxV5Zgm7qUkBpaeuvFrtqBz4TJLAxHzUn2pE7nmZZRDQmNzp5neEw20tQS3jR16o7XzzF8ncg=="],
 
