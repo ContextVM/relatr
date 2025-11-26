@@ -30,7 +30,6 @@ export async function negSyncFromRelays(
   try {
     // If an AbortSignal is provided, subscribe manually so we can unsubscribe on abort.
     return await new Promise<NostrEvent[]>((resolve) => {
-      const collected: NostrEvent[] = [];
       const sub = eventsObservable.subscribe({
         next: (evt) => {
           // The event should already be in the event store due to the sync call
@@ -44,13 +43,16 @@ export async function negSyncFromRelays(
               "Skipping...",
             );
           }
-          collected.push(evt);
         },
         error: (err) => {
           logger.warn(`⚠️ Stream error from ${relays.join(", ")}:`, err);
           resolve([]);
         },
-        complete: () => resolve(collected),
+        complete: () => {
+          // Query events from the event store to return them
+          const events = eventStore.query([filter]);
+          resolve(events);
+        },
       });
 
       if (signal.aborted) {
@@ -119,8 +121,6 @@ export async function fetchEventsForPubkeys(
   },
 ): Promise<NostrEvent[]> {
   const { onBatch, batchSize = DEFAULT_BATCH_SIZE } = options || {};
-  // Use a single EventStore instance for all batches if not provided
-  const store = eventStore || new EventStore();
 
   const totalBatches = Math.ceil(pubkeys.length / batchSize);
 
@@ -139,7 +139,10 @@ export async function fetchEventsForPubkeys(
       controller.abort();
     }, BATCH_TIMEOUT_MS);
 
+    // Create a new EventStore for each batch to allow garbage collection
+    const batchEventStore = eventStore || new EventStore();
     let events: NostrEvent[] = [];
+
     try {
       events = await negSyncFromRelays(
         pool,
@@ -149,7 +152,7 @@ export async function fetchEventsForPubkeys(
           authors: batch,
         },
         signal,
-        store,
+        batchEventStore,
       );
 
       // Process batch immediately if callback provided
@@ -158,8 +161,7 @@ export async function fetchEventsForPubkeys(
       }
     } finally {
       clearTimeout(timer);
-      // Clear the EventStore after each batch to free memory
-      store.removeByFilters({
+      batchEventStore.removeByFilters({
         kinds: [kind],
         authors: batch,
       });

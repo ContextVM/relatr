@@ -164,7 +164,7 @@ export class SocialGraphBuilder {
         3,
         undefined,
         this.pool,
-        this.eventStore,
+        undefined,
         {
           onBatch: async (events) => {
             hopEventsFetched += events.length;

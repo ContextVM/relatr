@@ -162,7 +162,7 @@ export class PubkeyMetadataFetcher {
    */
   private async processAndStoreBatch(events: NostrEvent[]): Promise<number> {
     const BATCH_SIZE = 250;
-    const profiles: NostrProfile[] = [];
+    let profilesStored = 0;
 
     // Deduplicate events by pubkey, keeping the latest event for each pubkey
     const eventsByPubkey = new Map<string, NostrEvent>();
@@ -173,51 +173,61 @@ export class PubkeyMetadataFetcher {
       }
     }
 
-    // Batch process validation first (CPU intensive)
-    for (const event of eventsByPubkey.values()) {
-      try {
-        if (!event.content) continue;
+    // Process events in smaller batches to avoid memory accumulation
+    const eventArray = Array.from(eventsByPubkey.values());
 
-        const content = JSON.parse(event.content);
-        const profile = this.validateAndSanitizeProfile(content, event.pubkey);
-        profiles.push(profile);
-      } catch (e) {
-        logger.warn(`Failed to parse profile for ${event.pubkey}:`, e);
-        // Create a minimal safe profile even if parsing fails
-        profiles.push({
-          pubkey: event.pubkey,
-          name: undefined,
-          display_name: undefined,
-          nip05: undefined,
-          lud16: undefined,
-          about: undefined,
-        });
+    for (let i = 0; i < eventArray.length; i += BATCH_SIZE) {
+      const batchEvents = eventArray.slice(i, i + BATCH_SIZE);
+      const batchProfiles: NostrProfile[] = [];
+
+      // Process validation for this batch (CPU intensive)
+      for (const event of batchEvents) {
+        try {
+          if (!event.content) continue;
+
+          const content = JSON.parse(event.content);
+          const profile = this.validateAndSanitizeProfile(
+            content,
+            event.pubkey,
+          );
+          batchProfiles.push(profile);
+        } catch (e) {
+          logger.warn(`Failed to parse profile for ${event.pubkey}:`, e);
+          // Create a minimal safe profile even if parsing fails
+          batchProfiles.push({
+            pubkey: event.pubkey,
+            name: undefined,
+            display_name: undefined,
+            nip05: undefined,
+            lud16: undefined,
+            about: undefined,
+          });
+        }
       }
-    }
 
-    let profilesStored = 0;
-
-    // Batch save to database (I/O intensive)
-    for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
-      const batch = profiles.slice(i, i + BATCH_SIZE);
-
-      try {
-        await this.metadataRepository.saveMany(batch);
-        profilesStored += batch.length;
-        logger.debug(
-          `✅ Saved batch of ${batch.length} profiles (${i + batch.length}/${profiles.length})`,
-        );
-      } catch (e) {
-        logger.warn(`Failed to save batch of ${batch.length} profiles:`, e);
-        // Fall back to individual saves for this batch
-        const individualSuccessCount =
-          await this.saveProfilesIndividually(batch);
-        profilesStored += individualSuccessCount;
+      // Save this batch to database (I/O intensive)
+      if (batchProfiles.length > 0) {
+        try {
+          await this.metadataRepository.saveMany(batchProfiles);
+          profilesStored += batchProfiles.length;
+          logger.debug(
+            `✅ Saved batch of ${batchProfiles.length} profiles (${i + batchProfiles.length}/${eventArray.length})`,
+          );
+        } catch (e) {
+          logger.warn(
+            `Failed to save batch of ${batchProfiles.length} profiles:`,
+            e,
+          );
+          // Fall back to individual saves for this batch
+          const individualSuccessCount =
+            await this.saveProfilesIndividually(batchProfiles);
+          profilesStored += individualSuccessCount;
+        }
       }
-    }
 
-    // Clear the profiles array to free memory - important for memory management
-    profiles.length = 0;
+      // Clear the batchProfiles array to free memory immediately
+      batchProfiles.length = 0;
+    }
 
     return profilesStored;
   }
