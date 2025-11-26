@@ -220,21 +220,36 @@ export class MetricsValidator {
         return results;
       }
 
-      // Fetch profiles for pubkeys that need validation
-      const profiles = await Promise.all(
-        pubkeysToValidate.map(async (pubkey) => {
-          const profile =
-            (await this.metadataRepository.get(pubkey)) ||
-            (await this.fetchProfile(pubkey));
-          return { pubkey, profile };
-        }),
-      );
+      // Fetch profiles for pubkeys that need validation in batch
+      const cachedProfiles =
+        await this.metadataRepository.getBatch(pubkeysToValidate);
+
+      // Identify pubkeys that need to be fetched from relays
+      const pubkeysToFetch: string[] = [];
+      const profiles: NostrProfile[] = [];
+
+      for (const pubkey of pubkeysToValidate) {
+        const cachedProfile = cachedProfiles.get(pubkey);
+        if (cachedProfile) {
+          profiles.push(cachedProfile);
+        } else {
+          pubkeysToFetch.push(pubkey);
+        }
+      }
+
+      // Fetch remaining profiles from relays in parallel
+      if (pubkeysToFetch.length > 0) {
+        const fetchedProfiles = await Promise.all(
+          pubkeysToFetch.map(async (pubkey) => await this.fetchProfile(pubkey)),
+        );
+        profiles.push(...fetchedProfiles);
+      }
 
       // Validate all uncached pubkeys in parallel
-      const validationPromises = profiles.map(async ({ pubkey, profile }) => {
+      const validationPromises = profiles.map(async (profile) => {
         try {
           const context: ValidationContext = {
-            pubkey,
+            pubkey: profile.pubkey,
             sourcePubkey,
             searchQuery,
             profile,
@@ -246,41 +261,51 @@ export class MetricsValidator {
           const metrics = await this.registry.executeAll(context);
 
           const result: ProfileMetrics = {
-            pubkey,
+            pubkey: profile.pubkey,
             metrics,
             computedAt: now,
             expiresAt: now + this.cacheTtlSeconds,
           };
 
-          // Cache the results
-          try {
-            await this.metricsRepository.save(pubkey, result);
-          } catch (error) {
-            logger.warn(`Cache write failed for ${pubkey}:`, error);
-          }
-
-          return { pubkey, result };
+          return { pubkey: profile.pubkey, result, success: true };
         } catch (error) {
           // Return default metrics on validation errors
           logger.warn(
-            `[MetricsValidator] ⚠️ Validation failed for ${pubkey}:`,
+            `[MetricsValidator] ️ Validation failed for ${profile.pubkey}:`,
             error instanceof Error ? error.message : String(error),
           );
           const errorMetrics: ProfileMetrics = {
-            pubkey,
+            pubkey: profile.pubkey,
             metrics: {},
             computedAt: now,
             expiresAt: now + this.cacheTtlSeconds,
           };
-          return { pubkey, result: errorMetrics };
+          return {
+            pubkey: profile.pubkey,
+            result: errorMetrics,
+            success: false,
+          };
         }
       });
 
       const validationResults = await Promise.all(validationPromises);
 
-      // Add validation results to the final map
-      for (const { pubkey, result } of validationResults) {
+      // Collect successful results for batch saving
+      const successfulResults: ProfileMetrics[] = [];
+      for (const { pubkey, result, success } of validationResults) {
         results.set(pubkey, result);
+        if (success) {
+          successfulResults.push(result);
+        }
+      }
+
+      // Save all successful results in a single batch operation
+      if (successfulResults.length > 0) {
+        try {
+          await this.metricsRepository.saveBatch(successfulResults);
+        } catch (error) {
+          logger.warn("Batch cache write failed:", error);
+        }
       }
 
       return results;

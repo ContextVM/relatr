@@ -196,47 +196,61 @@ export class SchedulerService implements ISchedulerService {
           `🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(pubkeysWithoutScores.length / batchSize)} (${batch.length} pubkeys)`,
         );
 
-        const batchResults = await Promise.allSettled(
-          batch.map((pubkey) =>
-            this.metricsValidator
-              .validateAll(pubkey, effectiveSourcePubkey)
-              .then(() => ({ pubkey, success: true }))
-              .catch((error) => ({ pubkey, success: false, error })),
-          ),
-        );
+        try {
+          // Use batch validation for the entire batch
+          const batchResults = await this.metricsValidator.validateAllBatch(
+            batch,
+            effectiveSourcePubkey,
+          );
 
-        // Count successes and errors
-        for (const result of batchResults) {
-          processedCount++;
-          if (result.status === "fulfilled" && result.value.success) {
-            successCount++;
-          } else {
-            errorCount++;
-            if (result.status === "fulfilled") {
-              const { pubkey, error } = result.value as {
-                pubkey: string;
-                success: boolean;
-                error: unknown;
-              };
+          // Count successes and errors
+          for (const [pubkey, metrics] of batchResults) {
+            processedCount++;
+            if (metrics && Object.keys(metrics.metrics || {}).length > 0) {
+              successCount++;
+            } else {
+              errorCount++;
+              logger.warn(
+                `⚠️ Validation failed for ${pubkey}: No metrics generated`,
+              );
+            }
+          }
+
+          // Log progress
+          logger.info(
+            `📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`,
+          );
+        } catch (error) {
+          // If batch validation fails, fall back to individual validations
+          logger.warn(
+            `Batch validation failed for batch ${Math.floor(i / batchSize) + 1}, falling back to individual validations:`,
+            error instanceof Error ? error.message : String(error),
+          );
+
+          // Process each pubkey individually as fallback
+          for (const pubkey of batch) {
+            try {
+              await this.metricsValidator.validateAll(
+                pubkey,
+                effectiveSourcePubkey,
+              );
+              processedCount++;
+              successCount++;
+            } catch (error) {
+              processedCount++;
+              errorCount++;
               logger.warn(
                 `⚠️ Validation failed for ${pubkey}:`,
                 error instanceof Error ? error.message : String(error),
               );
-            } else {
-              logger.warn(
-                `⚠️ Validation failed for unknown pubkey:`,
-                result.reason instanceof Error
-                  ? result.reason.message
-                  : String(result.reason),
-              );
             }
           }
-        }
 
-        // Log progress
-        logger.info(
-          `📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`,
-        );
+          // Log progress after fallback processing
+          logger.info(
+            `📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`,
+          );
+        }
       }
 
       logger.info(

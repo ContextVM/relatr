@@ -115,6 +115,67 @@ export class MetadataRepository {
   }
 
   /**
+   * Get metadata for multiple pubkeys in a single batch query
+   * @param pubkeys - Array of public keys to retrieve metadata for
+   * @returns Map of pubkey to NostrProfile (null if not found)
+   */
+  async getBatch(pubkeys: string[]): Promise<Map<string, NostrProfile | null>> {
+    if (!pubkeys || pubkeys.length === 0) {
+      return new Map();
+    }
+
+    try {
+      return await executeWithRetry(async () => {
+        // Create placeholders for IN clause
+        const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+        const params: Record<string, string> = {};
+        pubkeys.forEach((pubkey, i) => {
+          params[(i + 1).toString()] = pubkey;
+        });
+
+        const result = await this.connection.run(
+          `SELECT pubkey, name, display_name, nip05, lud16, about
+           FROM pubkey_metadata
+           WHERE pubkey IN (${placeholders})`,
+          params,
+        );
+
+        const rows = await result.getRows();
+        const profilesMap = new Map<string, NostrProfile | null>();
+
+        // Initialize all pubkeys with null (not found)
+        pubkeys.forEach((pubkey) => profilesMap.set(pubkey, null));
+
+        // Build profiles for found pubkeys
+        for (const row of rows) {
+          const rowArray = row as unknown[];
+          const pubkey = rowArray[0] as string;
+          const profile: NostrProfile = {
+            pubkey,
+            name: (rowArray[1] as string | null) || undefined,
+            display_name: (rowArray[2] as string | null) || undefined,
+            nip05: (rowArray[3] as string | null) || undefined,
+            lud16: (rowArray[4] as string | null) || undefined,
+            about: (rowArray[5] as string | null) || undefined,
+          };
+          profilesMap.set(pubkey, profile);
+        }
+
+        return profilesMap;
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to get metadata batch after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      // Return fallback map with all pubkeys as null
+      const fallbackMap = new Map<string, NostrProfile | null>();
+      pubkeys.forEach((pubkey) => fallbackMap.set(pubkey, null));
+      return fallbackMap;
+    }
+  }
+
+  /**
    * Optimized pattern-based search with distance-aware ranking
    * Uses DuckDB window functions and LIMIT to efficiently return only top candidates
    * This dramatically reduces the number of profiles requiring trust calculation

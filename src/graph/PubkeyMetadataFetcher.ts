@@ -150,7 +150,7 @@ export class PubkeyMetadataFetcher {
    * @param events Profile events to cache
    */
   private async storeProfileMetadata(events: NostrEvent[]): Promise<void> {
-    const BATCH_SIZE = 100; // Process 100 profiles at a time
+    const BATCH_SIZE = 250;
     const profiles: NostrProfile[] = [];
 
     // Deduplicate events by pubkey, keeping the latest event for each pubkey
