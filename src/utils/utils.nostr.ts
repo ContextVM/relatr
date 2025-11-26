@@ -50,7 +50,7 @@ export async function negSyncFromRelays(
         },
         complete: () => {
           // Query events from the event store to return them
-          const events = eventStore.query([filter]);
+          const events = eventStore.getByFilters(filter);
           resolve(events);
         },
       });
