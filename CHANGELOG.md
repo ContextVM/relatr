@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.3
+
+### Patch Changes
+
+- fix: init performance
+
 ## 0.1.2
 
 ### Patch Changes
