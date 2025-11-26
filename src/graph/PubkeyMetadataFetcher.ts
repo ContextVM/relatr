@@ -104,18 +104,34 @@ export class PubkeyMetadataFetcher {
       `👤 Starting metadata fetch for ${pubkeys.length.toLocaleString()} pubkeys...`,
     );
 
+    let totalProfilesFetched = 0;
+
     try {
-      const profileEvents = await fetchEventsForPubkeys(
+      // Fetch profile metadata with streaming to avoid memory accumulation
+      // Events are processed immediately via onBatch callback and stored in database,
+      // preventing O(n) memory scaling with network size.
+      await fetchEventsForPubkeys(
         pubkeys,
         0,
         undefined,
         this.pool,
         this.eventStore,
+        {
+          onBatch: async (events, batchIndex, totalBatches) => {
+            if (events.length === 0) return;
+
+            const batchProfilesFetched =
+              await this.processAndStoreBatch(events);
+            totalProfilesFetched += batchProfilesFetched;
+
+            logger.debug(
+              `✅ Processed batch ${batchIndex}/${totalBatches}: ${batchProfilesFetched} profiles (total: ${totalProfilesFetched})`,
+            );
+          },
+        },
       );
 
-      const profilesFetched = profileEvents.length;
-
-      if (profileEvents.length === 0) {
+      if (totalProfilesFetched === 0) {
         logger.warn("⚠️ No profile events found.");
         return {
           success: true,
@@ -124,19 +140,13 @@ export class PubkeyMetadataFetcher {
         };
       }
 
-      // Cache the metadata
-      await this.storeProfileMetadata(profileEvents);
-
-      const message = `Fetched and cached metadata for ${profilesFetched} profiles.`;
+      const message = `Fetched and cached metadata for ${totalProfilesFetched} profiles.`;
       logger.info(`✅ ${message}`);
-
-      // Clear the events array to free memory
-      profileEvents.length = 0;
 
       return {
         success: true,
         message,
-        profilesFetched,
+        profilesFetched: totalProfilesFetched,
       };
     } catch (error) {
       throw new Error(
@@ -146,10 +156,11 @@ export class PubkeyMetadataFetcher {
   }
 
   /**
-   * Cache profile metadata from kind 0 events
-   * @param events Profile events to cache
+   * Process and store a batch of profile events
+   * @param events Batch of profile events to process
+   * @returns Number of profiles successfully processed and stored
    */
-  private async storeProfileMetadata(events: NostrEvent[]): Promise<void> {
+  private async processAndStoreBatch(events: NostrEvent[]): Promise<number> {
     const BATCH_SIZE = 250;
     const profiles: NostrProfile[] = [];
 
@@ -184,24 +195,31 @@ export class PubkeyMetadataFetcher {
       }
     }
 
+    let profilesStored = 0;
+
     // Batch save to database (I/O intensive)
     for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
       const batch = profiles.slice(i, i + BATCH_SIZE);
 
       try {
         await this.metadataRepository.saveMany(batch);
+        profilesStored += batch.length;
         logger.debug(
           `✅ Saved batch of ${batch.length} profiles (${i + batch.length}/${profiles.length})`,
         );
       } catch (e) {
         logger.warn(`Failed to save batch of ${batch.length} profiles:`, e);
         // Fall back to individual saves for this batch
-        await this.saveProfilesIndividually(batch);
+        const individualSuccessCount =
+          await this.saveProfilesIndividually(batch);
+        profilesStored += individualSuccessCount;
       }
     }
 
-    // Clear the profiles array to free memory
+    // Clear the profiles array to free memory - important for memory management
     profiles.length = 0;
+
+    return profilesStored;
   }
 
   /**
@@ -249,13 +267,16 @@ export class PubkeyMetadataFetcher {
 
   /**
    * Fallback method to save profiles individually if batch save fails
+   * @returns Number of successfully saved profiles
    */
   private async saveProfilesIndividually(
     profiles: NostrProfile[],
-  ): Promise<void> {
+  ): Promise<number> {
+    let successCount = 0;
     for (const profile of profiles) {
       try {
         await this.metadataRepository.save(profile);
+        successCount++;
       } catch (e) {
         logger.warn(
           `Failed to save individual profile for ${profile.pubkey}:`,
@@ -263,5 +284,6 @@ export class PubkeyMetadataFetcher {
         );
       }
     }
+    return successCount;
   }
 }
