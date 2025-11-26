@@ -1,8 +1,6 @@
 import { RelayPool } from "applesauce-relay";
-import { EventStore } from "applesauce-core";
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
 import { DuckDBConnection } from "@duckdb/node-api";
-import type { RelatrConfig } from "../types";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import { logger } from "../utils/Logger";
 
@@ -39,14 +37,10 @@ interface DiscoveryResult {
  * Separates the concerns of social graph creation from the main service
  */
 export class SocialGraphBuilder {
-  private config: RelatrConfig;
   private pool: RelayPool;
-  private eventStore?: EventStore;
 
-  constructor(config: RelatrConfig, pool: RelayPool, eventStore?: EventStore) {
-    this.config = config;
+  constructor(pool: RelayPool) {
     this.pool = pool;
-    this.eventStore = eventStore;
   }
 
   /**
@@ -159,36 +153,29 @@ export class SocialGraphBuilder {
       // Fetch contact lists for this hop with streaming ingestion to avoid memory accumulation
       // Events are processed immediately via onBatch callback and ingested into DuckDB,
       // preventing O(n) memory scaling with network size.
-      await fetchEventsForPubkeys(
-        pubkeysForThisHop,
-        3,
-        undefined,
-        this.pool,
-        undefined,
-        {
-          onBatch: async (events) => {
-            hopEventsFetched += events.length;
+      await fetchEventsForPubkeys(pubkeysForThisHop, 3, undefined, this.pool, {
+        onBatch: async (events) => {
+          hopEventsFetched += events.length;
 
-            // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
-            if (socialGraph && events.length > 0) {
-              await socialGraph.ingestEvents(events);
-            }
+          // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
+          if (socialGraph && events.length > 0) {
+            await socialGraph.ingestEvents(events);
+          }
 
-            // Extract new pubkeys for next hop on the fly to avoid storing all events
-            for (const event of events) {
-              for (const tag of event.tags) {
-                if (tag[0] !== "p") continue;
-                const candidate = tag[1];
-                if (!candidate) continue;
-                if (crawledPubkeys.has(candidate)) continue;
-                if (pubkeysToCrawl.has(candidate)) continue;
-                pubkeysToCrawl.add(candidate);
-                newDiscoveredThisHop++;
-              }
+          // Extract new pubkeys for next hop on the fly to avoid storing all events
+          for (const event of events) {
+            for (const tag of event.tags) {
+              if (tag[0] !== "p") continue;
+              const candidate = tag[1];
+              if (!candidate) continue;
+              if (crawledPubkeys.has(candidate)) continue;
+              if (pubkeysToCrawl.has(candidate)) continue;
+              pubkeysToCrawl.add(candidate);
+              newDiscoveredThisHop++;
             }
-          },
+          }
         },
-      );
+      });
 
       totalEventsFetched += hopEventsFetched;
 

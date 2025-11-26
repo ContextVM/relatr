@@ -1,5 +1,4 @@
 import { RelayPool } from "applesauce-relay";
-import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-tools";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
@@ -69,16 +68,10 @@ export interface MetadataFetchResult {
  */
 export class PubkeyMetadataFetcher {
   private pool: RelayPool;
-  private eventStore?: EventStore;
   private metadataRepository: MetadataRepository;
 
-  constructor(
-    pool: RelayPool,
-    metadataRepository: MetadataRepository,
-    eventStore?: EventStore,
-  ) {
+  constructor(pool: RelayPool, metadataRepository: MetadataRepository) {
     this.pool = pool;
-    this.eventStore = eventStore;
     this.metadataRepository = metadataRepository;
   }
 
@@ -110,26 +103,18 @@ export class PubkeyMetadataFetcher {
       // Fetch profile metadata with streaming to avoid memory accumulation
       // Events are processed immediately via onBatch callback and stored in database,
       // preventing O(n) memory scaling with network size.
-      await fetchEventsForPubkeys(
-        pubkeys,
-        0,
-        undefined,
-        this.pool,
-        this.eventStore,
-        {
-          onBatch: async (events, batchIndex, totalBatches) => {
-            if (events.length === 0) return;
+      await fetchEventsForPubkeys(pubkeys, 0, undefined, this.pool, {
+        onBatch: async (events, batchIndex, totalBatches) => {
+          if (events.length === 0) return;
 
-            const batchProfilesFetched =
-              await this.processAndStoreBatch(events);
-            totalProfilesFetched += batchProfilesFetched;
+          const batchProfilesFetched = await this.processAndStoreBatch(events);
+          totalProfilesFetched += batchProfilesFetched;
 
-            logger.debug(
-              `✅ Processed batch ${batchIndex}/${totalBatches}: ${batchProfilesFetched} profiles (total: ${totalProfilesFetched})`,
-            );
-          },
+          logger.debug(
+            `✅ Processed batch ${batchIndex}/${totalBatches}: ${batchProfilesFetched} profiles (total: ${totalProfilesFetched})`,
+          );
         },
-      );
+      });
 
       if (totalProfilesFetched === 0) {
         logger.warn("⚠️ No profile events found.");

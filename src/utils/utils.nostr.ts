@@ -109,7 +109,6 @@ export async function fetchEventsForPubkeys(
     "wss://wot.grapevine.network/",
   ],
   pool: RelayPool,
-  eventStore?: EventStore,
   options?: {
     onBatch?: (
       events: NostrEvent[],
@@ -140,7 +139,7 @@ export async function fetchEventsForPubkeys(
     }, BATCH_TIMEOUT_MS);
 
     // Create a new EventStore for each batch to allow garbage collection
-    const batchEventStore = eventStore || new EventStore();
+    const batchEventStore = new EventStore();
     let events: NostrEvent[] = [];
 
     try {
