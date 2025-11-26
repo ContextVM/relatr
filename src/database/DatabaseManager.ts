@@ -100,7 +100,11 @@ export class DatabaseManager {
    */
   public async close(): Promise<void> {
     try {
-      this.connection?.closeSync();
+      if (this.connection) {
+        logger.info("Checkpointing database...");
+        await this.connection.run("CHECKPOINT");
+        this.connection.closeSync();
+      }
       this.connection = null;
       this.duckDB = null;
       logger.info("Database connections closed");
