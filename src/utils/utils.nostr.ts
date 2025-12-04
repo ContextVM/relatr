@@ -6,6 +6,11 @@ import type { RelayPool } from "applesauce-relay";
 import { decode, npubEncode, nprofileEncode } from "nostr-tools/nip19";
 import { logger } from "./Logger";
 
+/**
+ * Default batch size for fetching events from relays
+ */
+const DEFAULT_BATCH_SIZE = 500;
+
 export async function negSyncFromRelays(
   pool: RelayPool | null,
   relays: string[],
@@ -25,7 +30,6 @@ export async function negSyncFromRelays(
   try {
     // If an AbortSignal is provided, subscribe manually so we can unsubscribe on abort.
     return await new Promise<NostrEvent[]>((resolve) => {
-      const collected: NostrEvent[] = [];
       const sub = eventsObservable.subscribe({
         next: (evt) => {
           // The event should already be in the event store due to the sync call
@@ -39,13 +43,16 @@ export async function negSyncFromRelays(
               "Skipping...",
             );
           }
-          collected.push(evt);
         },
         error: (err) => {
           logger.warn(`⚠️ Stream error from ${relays.join(", ")}:`, err);
           resolve([]);
         },
-        complete: () => resolve(collected),
+        complete: () => {
+          // Query events from the event store to return them
+          const events = eventStore.getByFilters(filter);
+          resolve(events);
+        },
       });
 
       if (signal.aborted) {
@@ -81,6 +88,18 @@ export async function negSyncFromRelays(
  * @param relays Relays to query (optional)
  * @returns Array of Nostr events
  */
+/**
+ * Fetch events for a list of pubkeys from relays with streaming support to avoid memory accumulation.
+ * Note: This function clears the EventStore for the fetched authors after each batch to free memory.
+ *
+ * @param pubkeys List of pubkeys to fetch events for
+ * @param kind The event kind to fetch
+ * @param relays Relays to query (optional)
+ * @param pool Relay pool instance
+ * @param eventStore Event store instance (optional, creates a temporary one if not provided)
+ * @param options Configuration options including batch processing callback and batch size
+ * @returns Array of Nostr events if accumulate is true, otherwise empty array
+ */
 export async function fetchEventsForPubkeys(
   pubkeys: string[],
   kind: number,
@@ -90,17 +109,26 @@ export async function fetchEventsForPubkeys(
     "wss://wot.grapevine.network/",
   ],
   pool: RelayPool,
-  eventStore?: EventStore,
+  options?: {
+    onBatch?: (
+      events: NostrEvent[],
+      batchIndex: number,
+      totalBatches: number,
+    ) => Promise<void> | void;
+    accumulate?: boolean;
+    batchSize?: number;
+  },
 ): Promise<NostrEvent[]> {
-  const allEvents: NostrEvent[] = [];
-  // Use a single EventStore instance for all batches if not provided
-  const store = eventStore || new EventStore();
+  const { onBatch, batchSize = DEFAULT_BATCH_SIZE } = options || {};
 
-  for (let i = 0; i < pubkeys.length; i += 500) {
+  const totalBatches = Math.ceil(pubkeys.length / batchSize);
+
+  for (let i = 0; i < pubkeys.length; i += batchSize) {
+    const batchIndex = Math.floor(i / batchSize) + 1;
     logger.info(
-      `📥 Fetching kind ${kind} events: batch ${Math.floor(i / 500) + 1}/${Math.ceil(pubkeys.length / 500)} (${i + 1}-${Math.min(i + 500, pubkeys.length)} of ${pubkeys.length} pubkeys)`,
+      `📥 Fetching kind ${kind} events: batch ${batchIndex}/${totalBatches} (${i + 1}-${Math.min(i + batchSize, pubkeys.length)} of ${pubkeys.length} pubkeys)`,
     );
-    const batch = pubkeys.slice(i, i + 500);
+    const batch = pubkeys.slice(i, i + batchSize);
 
     const controller = new AbortController();
     const signal = controller.signal;
@@ -110,7 +138,10 @@ export async function fetchEventsForPubkeys(
       controller.abort();
     }, BATCH_TIMEOUT_MS);
 
+    // Create a new EventStore for each batch to allow garbage collection
+    const batchEventStore = new EventStore();
     let events: NostrEvent[] = [];
+
     try {
       events = await negSyncFromRelays(
         pool,
@@ -120,20 +151,23 @@ export async function fetchEventsForPubkeys(
           authors: batch,
         },
         signal,
-        store,
+        batchEventStore,
       );
-      allEvents.push(...events);
+
+      // Process batch immediately if callback provided
+      if (onBatch) {
+        await onBatch(events, batchIndex, totalBatches);
+      }
     } finally {
       clearTimeout(timer);
-      // Clear the EventStore after each batch to free memory
-      store.removeByFilters({
+      batchEventStore.removeByFilters({
         kinds: [kind],
         authors: batch,
       });
     }
   }
 
-  return allEvents;
+  return [];
 }
 
 /**

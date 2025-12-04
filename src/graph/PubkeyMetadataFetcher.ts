@@ -1,5 +1,4 @@
 import { RelayPool } from "applesauce-relay";
-import { EventStore } from "applesauce-core";
 import type { NostrEvent } from "nostr-tools";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
@@ -69,16 +68,10 @@ export interface MetadataFetchResult {
  */
 export class PubkeyMetadataFetcher {
   private pool: RelayPool;
-  private eventStore?: EventStore;
   private metadataRepository: MetadataRepository;
 
-  constructor(
-    pool: RelayPool,
-    metadataRepository: MetadataRepository,
-    eventStore?: EventStore,
-  ) {
+  constructor(pool: RelayPool, metadataRepository: MetadataRepository) {
     this.pool = pool;
-    this.eventStore = eventStore;
     this.metadataRepository = metadataRepository;
   }
 
@@ -104,18 +97,26 @@ export class PubkeyMetadataFetcher {
       `👤 Starting metadata fetch for ${pubkeys.length.toLocaleString()} pubkeys...`,
     );
 
+    let totalProfilesFetched = 0;
+
     try {
-      const profileEvents = await fetchEventsForPubkeys(
-        pubkeys,
-        0,
-        undefined,
-        this.pool,
-        this.eventStore,
-      );
+      // Fetch profile metadata with streaming to avoid memory accumulation
+      // Events are processed immediately via onBatch callback and stored in database,
+      // preventing O(n) memory scaling with network size.
+      await fetchEventsForPubkeys(pubkeys, 0, undefined, this.pool, {
+        onBatch: async (events, batchIndex, totalBatches) => {
+          if (events.length === 0) return;
 
-      const profilesFetched = profileEvents.length;
+          const batchProfilesFetched = await this.processAndStoreBatch(events);
+          totalProfilesFetched += batchProfilesFetched;
 
-      if (profileEvents.length === 0) {
+          logger.debug(
+            `✅ Processed batch ${batchIndex}/${totalBatches}: ${batchProfilesFetched} profiles (total: ${totalProfilesFetched})`,
+          );
+        },
+      });
+
+      if (totalProfilesFetched === 0) {
         logger.warn("⚠️ No profile events found.");
         return {
           success: true,
@@ -124,19 +125,13 @@ export class PubkeyMetadataFetcher {
         };
       }
 
-      // Cache the metadata
-      await this.storeProfileMetadata(profileEvents);
-
-      const message = `Fetched and cached metadata for ${profilesFetched} profiles.`;
+      const message = `Fetched and cached metadata for ${totalProfilesFetched} profiles.`;
       logger.info(`✅ ${message}`);
-
-      // Clear the events array to free memory
-      profileEvents.length = 0;
 
       return {
         success: true,
         message,
-        profilesFetched,
+        profilesFetched: totalProfilesFetched,
       };
     } catch (error) {
       throw new Error(
@@ -146,12 +141,13 @@ export class PubkeyMetadataFetcher {
   }
 
   /**
-   * Cache profile metadata from kind 0 events
-   * @param events Profile events to cache
+   * Process and store a batch of profile events
+   * @param events Batch of profile events to process
+   * @returns Number of profiles successfully processed and stored
    */
-  private async storeProfileMetadata(events: NostrEvent[]): Promise<void> {
+  private async processAndStoreBatch(events: NostrEvent[]): Promise<number> {
     const BATCH_SIZE = 250;
-    const profiles: NostrProfile[] = [];
+    let profilesStored = 0;
 
     // Deduplicate events by pubkey, keeping the latest event for each pubkey
     const eventsByPubkey = new Map<string, NostrEvent>();
@@ -162,46 +158,63 @@ export class PubkeyMetadataFetcher {
       }
     }
 
-    // Batch process validation first (CPU intensive)
-    for (const event of eventsByPubkey.values()) {
-      try {
-        if (!event.content) continue;
+    // Process events in smaller batches to avoid memory accumulation
+    const eventArray = Array.from(eventsByPubkey.values());
 
-        const content = JSON.parse(event.content);
-        const profile = this.validateAndSanitizeProfile(content, event.pubkey);
-        profiles.push(profile);
-      } catch (e) {
-        logger.warn(`Failed to parse profile for ${event.pubkey}:`, e);
-        // Create a minimal safe profile even if parsing fails
-        profiles.push({
-          pubkey: event.pubkey,
-          name: undefined,
-          display_name: undefined,
-          nip05: undefined,
-          lud16: undefined,
-          about: undefined,
-        });
+    for (let i = 0; i < eventArray.length; i += BATCH_SIZE) {
+      const batchEvents = eventArray.slice(i, i + BATCH_SIZE);
+      const batchProfiles: NostrProfile[] = [];
+
+      // Process validation for this batch (CPU intensive)
+      for (const event of batchEvents) {
+        try {
+          if (!event.content) continue;
+
+          const content = JSON.parse(event.content);
+          const profile = this.validateAndSanitizeProfile(
+            content,
+            event.pubkey,
+          );
+          batchProfiles.push(profile);
+        } catch (e) {
+          logger.warn(`Failed to parse profile for ${event.pubkey}:`, e);
+          // Create a minimal safe profile even if parsing fails
+          batchProfiles.push({
+            pubkey: event.pubkey,
+            name: undefined,
+            display_name: undefined,
+            nip05: undefined,
+            lud16: undefined,
+            about: undefined,
+          });
+        }
       }
+
+      // Save this batch to database (I/O intensive)
+      if (batchProfiles.length > 0) {
+        try {
+          await this.metadataRepository.saveMany(batchProfiles);
+          profilesStored += batchProfiles.length;
+          logger.debug(
+            `✅ Saved batch of ${batchProfiles.length} profiles (${i + batchProfiles.length}/${eventArray.length})`,
+          );
+        } catch (e) {
+          logger.warn(
+            `Failed to save batch of ${batchProfiles.length} profiles:`,
+            e,
+          );
+          // Fall back to individual saves for this batch
+          const individualSuccessCount =
+            await this.saveProfilesIndividually(batchProfiles);
+          profilesStored += individualSuccessCount;
+        }
+      }
+
+      // Clear the batchProfiles array to free memory immediately
+      batchProfiles.length = 0;
     }
 
-    // Batch save to database (I/O intensive)
-    for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
-      const batch = profiles.slice(i, i + BATCH_SIZE);
-
-      try {
-        await this.metadataRepository.saveMany(batch);
-        logger.debug(
-          `✅ Saved batch of ${batch.length} profiles (${i + batch.length}/${profiles.length})`,
-        );
-      } catch (e) {
-        logger.warn(`Failed to save batch of ${batch.length} profiles:`, e);
-        // Fall back to individual saves for this batch
-        await this.saveProfilesIndividually(batch);
-      }
-    }
-
-    // Clear the profiles array to free memory
-    profiles.length = 0;
+    return profilesStored;
   }
 
   /**
@@ -249,13 +262,16 @@ export class PubkeyMetadataFetcher {
 
   /**
    * Fallback method to save profiles individually if batch save fails
+   * @returns Number of successfully saved profiles
    */
   private async saveProfilesIndividually(
     profiles: NostrProfile[],
-  ): Promise<void> {
+  ): Promise<number> {
+    let successCount = 0;
     for (const profile of profiles) {
       try {
         await this.metadataRepository.save(profile);
+        successCount++;
       } catch (e) {
         logger.warn(
           `Failed to save individual profile for ${profile.pubkey}:`,
@@ -263,5 +279,6 @@ export class PubkeyMetadataFetcher {
         );
       }
     }
+    return successCount;
   }
 }

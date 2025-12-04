@@ -280,24 +280,36 @@ export class SchedulerService implements ISchedulerService {
       const pubkeysToProcess = Array.from(this.discoveryQueue);
       this.discoveryQueue.clear(); // Clear queue immediately to avoid reprocessing
 
-      // Fetch contact events for queued pubkeys
-      const contactEvents = await fetchEventsForPubkeys(
+      // Fetch contact events for queued pubkeys with streaming to avoid memory accumulation
+      let totalContactEvents = 0;
+      await fetchEventsForPubkeys(
         pubkeysToProcess,
         3, // kind 3 = contact lists
         undefined,
         this.pool,
         undefined,
+        {
+          onBatch: async (events, batchIndex, totalBatches) => {
+            totalContactEvents += events.length;
+
+            // Process contact events immediately to integrate into graph
+            if (events.length > 0 && this.socialGraph) {
+              await this.socialGraph.processContactEvents(events);
+              logger.debug(
+                `✅ Integrated batch ${batchIndex}/${totalBatches} with ${events.length} contact events into social graph`,
+              );
+            }
+          },
+        },
       );
 
       logger.info(
-        `📥 Fetched ${contactEvents.length} contact events for ${pubkeysToProcess.length} pubkeys`,
+        `📥 Fetched ${totalContactEvents} contact events for ${pubkeysToProcess.length} pubkeys`,
       );
 
-      // Process contact events to integrate into graph
-      if (contactEvents.length > 0 && this.socialGraph) {
-        await this.socialGraph.processContactEvents(contactEvents);
+      if (totalContactEvents > 0) {
         logger.info(
-          `✅ Integrated ${contactEvents.length} contact events into social graph`,
+          `✅ Integrated ${totalContactEvents} contact events into social graph`,
         );
       }
 

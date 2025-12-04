@@ -220,92 +220,108 @@ export class MetricsValidator {
         return results;
       }
 
-      // Fetch profiles for pubkeys that need validation in batch
-      const cachedProfiles =
-        await this.metadataRepository.getBatch(pubkeysToValidate);
-
-      // Identify pubkeys that need to be fetched from relays
-      const pubkeysToFetch: string[] = [];
-      const profiles: NostrProfile[] = [];
-
-      for (const pubkey of pubkeysToValidate) {
-        const cachedProfile = cachedProfiles.get(pubkey);
-        if (cachedProfile) {
-          profiles.push(cachedProfile);
-        } else {
-          pubkeysToFetch.push(pubkey);
-        }
-      }
-
-      // Fetch remaining profiles from relays in parallel
-      if (pubkeysToFetch.length > 0) {
-        const fetchedProfiles = await Promise.all(
-          pubkeysToFetch.map(async (pubkey) => await this.fetchProfile(pubkey)),
-        );
-        profiles.push(...fetchedProfiles);
-      }
-
-      // Validate all uncached pubkeys in parallel
-      const validationPromises = profiles.map(async (profile) => {
-        try {
-          const context: ValidationContext = {
-            pubkey: profile.pubkey,
-            sourcePubkey,
-            searchQuery,
-            profile,
-            graphManager: this.graphManager,
-            pool: this.pool,
-            relays: this.nostrRelays,
-          };
-
-          const metrics = await this.registry.executeAll(context);
-
-          const result: ProfileMetrics = {
-            pubkey: profile.pubkey,
-            metrics,
-            computedAt: now,
-            expiresAt: now + this.cacheTtlSeconds,
-          };
-
-          return { pubkey: profile.pubkey, result, success: true };
-        } catch (error) {
-          // Return default metrics on validation errors
-          logger.warn(
-            `[MetricsValidator] ️ Validation failed for ${profile.pubkey}:`,
-            error instanceof Error ? error.message : String(error),
-          );
-          const errorMetrics: ProfileMetrics = {
-            pubkey: profile.pubkey,
-            metrics: {},
-            computedAt: now,
-            expiresAt: now + this.cacheTtlSeconds,
-          };
-          return {
-            pubkey: profile.pubkey,
-            result: errorMetrics,
-            success: false,
-          };
-        }
-      });
-
-      const validationResults = await Promise.all(validationPromises);
-
-      // Collect successful results for batch saving
+      // Process validation in smaller chunks to avoid memory spikes
+      const CHUNK_SIZE = 100;
       const successfulResults: ProfileMetrics[] = [];
-      for (const { pubkey, result, success } of validationResults) {
-        results.set(pubkey, result);
-        if (success) {
-          successfulResults.push(result);
-        }
-      }
 
-      // Save all successful results in a single batch operation
-      if (successfulResults.length > 0) {
-        try {
-          await this.metricsRepository.saveBatch(successfulResults);
-        } catch (error) {
-          logger.warn("Batch cache write failed:", error);
+      for (let i = 0; i < pubkeysToValidate.length; i += CHUNK_SIZE) {
+        const chunk = pubkeysToValidate.slice(i, i + CHUNK_SIZE);
+        logger.debug(
+          `Processing validation chunk ${Math.floor(i / CHUNK_SIZE) + 1} of ${Math.ceil(pubkeysToValidate.length / CHUNK_SIZE)}`,
+        );
+
+        // Fetch profiles for this chunk
+        const cachedProfiles = await this.metadataRepository.getBatch(chunk);
+        const chunkProfiles: NostrProfile[] = [];
+        const chunkPubkeysToFetch: string[] = [];
+
+        for (const pubkey of chunk) {
+          const cachedProfile = cachedProfiles.get(pubkey);
+          if (cachedProfile) {
+            chunkProfiles.push(cachedProfile);
+          } else {
+            chunkPubkeysToFetch.push(pubkey);
+          }
         }
+
+        // Fetch remaining profiles from relays in parallel for this chunk
+        if (chunkPubkeysToFetch.length > 0) {
+          const fetchedProfiles = await Promise.all(
+            chunkPubkeysToFetch.map(
+              async (pubkey) => await this.fetchProfile(pubkey),
+            ),
+          );
+          chunkProfiles.push(...fetchedProfiles);
+        }
+
+        // Validate this chunk in parallel
+        const validationPromises = chunkProfiles.map(async (profile) => {
+          try {
+            const context: ValidationContext = {
+              pubkey: profile.pubkey,
+              sourcePubkey,
+              searchQuery,
+              profile,
+              graphManager: this.graphManager,
+              pool: this.pool,
+              relays: this.nostrRelays,
+            };
+
+            const metrics = await this.registry.executeAll(context);
+
+            const result: ProfileMetrics = {
+              pubkey: profile.pubkey,
+              metrics,
+              computedAt: now,
+              expiresAt: now + this.cacheTtlSeconds,
+            };
+
+            return { pubkey: profile.pubkey, result, success: true };
+          } catch (error) {
+            // Return default metrics on validation errors
+            logger.warn(
+              `[MetricsValidator] ️ Validation failed for ${profile.pubkey}:`,
+              error instanceof Error ? error.message : String(error),
+            );
+            const errorMetrics: ProfileMetrics = {
+              pubkey: profile.pubkey,
+              metrics: {},
+              computedAt: now,
+              expiresAt: now + this.cacheTtlSeconds,
+            };
+            return {
+              pubkey: profile.pubkey,
+              result: errorMetrics,
+              success: false,
+            };
+          }
+        });
+
+        const chunkValidationResults = await Promise.all(validationPromises);
+
+        // Process chunk results and save immediately
+        const chunkSuccessfulResults: ProfileMetrics[] = [];
+        for (const { pubkey, result, success } of chunkValidationResults) {
+          results.set(pubkey, result);
+          if (success) {
+            chunkSuccessfulResults.push(result);
+          }
+        }
+
+        // Save this chunk's successful results immediately
+        if (chunkSuccessfulResults.length > 0) {
+          try {
+            await this.metricsRepository.saveBatch(chunkSuccessfulResults);
+            successfulResults.push(...chunkSuccessfulResults);
+          } catch (error) {
+            logger.warn("Chunk batch cache write failed:", error);
+          }
+        }
+
+        // Clear arrays to free memory
+        chunkProfiles.length = 0;
+        chunkPubkeysToFetch.length = 0;
+        chunkSuccessfulResults.length = 0;
       }
 
       return results;

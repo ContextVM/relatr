@@ -1,10 +1,7 @@
 import { RelayPool } from "applesauce-relay";
-import { EventStore } from "applesauce-core";
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
 import { DuckDBConnection } from "@duckdb/node-api";
-import type { RelatrConfig } from "../types";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
-import type { NostrEvent } from "nostr-tools";
 import { logger } from "../utils/Logger";
 
 /**
@@ -32,7 +29,7 @@ export interface SocialGraphCreationResult {
 
 interface DiscoveryResult {
   pubkeys: string[];
-  contactEvents: NostrEvent[];
+  eventsFetched: number;
 }
 
 /**
@@ -40,14 +37,10 @@ interface DiscoveryResult {
  * Separates the concerns of social graph creation from the main service
  */
 export class SocialGraphBuilder {
-  private config: RelatrConfig;
   private pool: RelayPool;
-  private eventStore?: EventStore;
 
-  constructor(config: RelatrConfig, pool: RelayPool, eventStore?: EventStore) {
-    this.config = config;
+  constructor(pool: RelayPool) {
     this.pool = pool;
-    this.eventStore = eventStore;
   }
 
   /**
@@ -63,14 +56,30 @@ export class SocialGraphBuilder {
     logger.info("🚀 Starting social graph creation...");
     logger.info(`Pubkey ${sourcePubkey}, Hops ${hops}`);
 
-    try {
-      // Discover pubkeys in the social graph
-      const { contactEvents } = await this.discoverPubkeys(sourcePubkey, hops);
+    let socialGraph: DuckDBSocialGraphAnalyzer | null = null;
+    let totalEventsFetched = 0;
 
-      if (contactEvents.length === 0) {
+    try {
+      // Initialize social graph analyzer early for streaming ingestion
+      socialGraph = await DuckDBSocialGraphAnalyzer.connect(
+        connection,
+        undefined,
+        sourcePubkey,
+      );
+
+      // Discover pubkeys in the social graph with streaming ingestion
+      const { eventsFetched } = await this.discoverPubkeys(
+        sourcePubkey,
+        hops,
+        socialGraph,
+      );
+      totalEventsFetched = eventsFetched;
+
+      if (totalEventsFetched === 0) {
         logger.warn(
           "⚠️ No contact list events found. The social graph will be empty.",
         );
+        await socialGraph.close();
         return {
           success: true,
           message: "No contact list events found, graph is empty.",
@@ -80,18 +89,8 @@ export class SocialGraphBuilder {
       }
 
       logger.info(
-        `📊 Found ${contactEvents.length} contact list events. Building graph...`,
+        `📊 Processed ${totalEventsFetched} contact list events. Building graph...`,
       );
-
-      const socialGraph: DuckDBSocialGraphAnalyzer =
-        await DuckDBSocialGraphAnalyzer.connect(
-          connection,
-          undefined,
-          sourcePubkey,
-        );
-
-      // Ingest all contact events
-      await socialGraph.ingestEvents(contactEvents);
 
       const graphStats = await socialGraph.getStats();
       logger.info(
@@ -104,7 +103,7 @@ export class SocialGraphBuilder {
       return {
         success: true,
         message,
-        eventsFetched: contactEvents.length,
+        eventsFetched: totalEventsFetched,
         graphSize: {
           users: graphStats.uniqueFollowers,
           follows: graphStats.totalFollows,
@@ -112,6 +111,10 @@ export class SocialGraphBuilder {
         socialGraph: connection ? socialGraph : undefined,
       };
     } catch (error) {
+      // Clean up social graph on error
+      if (socialGraph) {
+        await socialGraph.close();
+      }
       throw new Error(
         `Social graph creation failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -128,10 +131,11 @@ export class SocialGraphBuilder {
   private async discoverPubkeys(
     sourcePubkey: string,
     hops: number,
+    socialGraph?: DuckDBSocialGraphAnalyzer,
   ): Promise<DiscoveryResult> {
     const crawledPubkeys: Set<string> = new Set();
     const pubkeysToCrawl: Set<string> = new Set([sourcePubkey]);
-    const allContactEvents: NostrEvent[] = [];
+    let totalEventsFetched = 0;
 
     for (let hop = 0; hop <= hops; hop++) {
       if (pubkeysToCrawl.size === 0) {
@@ -144,33 +148,39 @@ export class SocialGraphBuilder {
       pubkeysToCrawl.clear();
 
       let newDiscoveredThisHop = 0;
+      let hopEventsFetched = 0;
 
-      // Fetch contact lists for this hop
-      const hopContactEvents = await fetchEventsForPubkeys(
-        pubkeysForThisHop,
-        3,
-        undefined,
-        this.pool,
-        this.eventStore,
-      );
+      // Fetch contact lists for this hop with streaming ingestion to avoid memory accumulation
+      // Events are processed immediately via onBatch callback and ingested into DuckDB,
+      // preventing O(n) memory scaling with network size.
+      await fetchEventsForPubkeys(pubkeysForThisHop, 3, undefined, this.pool, {
+        onBatch: async (events) => {
+          hopEventsFetched += events.length;
 
-      // Accumulate events from all hops
-      allContactEvents.push(...hopContactEvents);
+          // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
+          if (socialGraph && events.length > 0) {
+            await socialGraph.ingestEvents(events);
+          }
 
-      for (const event of hopContactEvents) {
-        for (const tag of event.tags) {
-          if (tag[0] !== "p") continue;
-          const candidate = tag[1];
-          if (!candidate) continue;
-          if (crawledPubkeys.has(candidate)) continue;
-          if (pubkeysToCrawl.has(candidate)) continue;
-          pubkeysToCrawl.add(candidate);
-          newDiscoveredThisHop++;
-        }
-      }
+          // Extract new pubkeys for next hop on the fly to avoid storing all events
+          for (const event of events) {
+            for (const tag of event.tags) {
+              if (tag[0] !== "p") continue;
+              const candidate = tag[1];
+              if (!candidate) continue;
+              if (crawledPubkeys.has(candidate)) continue;
+              if (pubkeysToCrawl.has(candidate)) continue;
+              pubkeysToCrawl.add(candidate);
+              newDiscoveredThisHop++;
+            }
+          }
+        },
+      });
+
+      totalEventsFetched += hopEventsFetched;
 
       logger.info(
-        `🔍 Hop ${hop}: Found ${hopContactEvents.length} contact events, discovered ${newDiscoveredThisHop.toLocaleString()} new pubkeys.`,
+        `🔍 Hop ${hop}: Found ${hopEventsFetched} contact events, discovered ${newDiscoveredThisHop.toLocaleString()} new pubkeys.`,
       );
 
       if (newDiscoveredThisHop === 0) {
@@ -182,12 +192,12 @@ export class SocialGraphBuilder {
     }
 
     logger.info(
-      `[SocialGraphBuilder] 🎯 Discovery complete: ${allContactEvents.length.toLocaleString()} total contact events from ${crawledPubkeys.size.toLocaleString()} pubkeys across ${hops} hops.`,
+      `[SocialGraphBuilder] 🎯 Discovery complete: ${totalEventsFetched.toLocaleString()} total contact events from ${crawledPubkeys.size.toLocaleString()} pubkeys across ${hops} hops.`,
     );
 
     return {
       pubkeys: Array.from(crawledPubkeys),
-      contactEvents: allContactEvents,
+      eventsFetched: totalEventsFetched,
     };
   }
 }
