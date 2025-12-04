@@ -1,5 +1,12 @@
 # relatr
 
+## 0.1.5
+
+### Patch Changes
+
+- feat: streaming data patterns
+  - This change introduces streaming to fetch pubkey metadata, avoiding memory accumulation and enabling scaling to larger network sizes. Events are processed immediately via onBatch callback and stored in database, preventing O(n) memory scaling with network size.
+
 ## 0.1.4
 
 ### Patch Changes
