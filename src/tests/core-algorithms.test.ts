@@ -151,7 +151,7 @@ describe("TrustCalculator - Score Calculation", () => {
       );
     const expectedScore = weightedSum / totalWeight;
 
-    // Score is now rounded to 3 decimal places, so we use precision of 2
+    // Score is now rounded to 2 decimal places, so we use precision of 2
     expect(result.score).toBeCloseTo(expectedScore, 2);
   });
 

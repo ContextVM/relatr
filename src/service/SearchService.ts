@@ -314,7 +314,7 @@ export class SearchService implements ISearchService {
 
       return results.map((result) => ({
         pubkey: result.pubkey,
-        trustScore: result.rawScore / maxRawScore,
+        trustScore: Number((result.rawScore / maxRawScore).toFixed(2)),
         exactMatch: result.exactMatch,
       }));
     } catch (error) {

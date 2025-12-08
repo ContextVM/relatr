@@ -111,7 +111,7 @@ export function createWeightProfileManager(): WeightProfileManager {
       ["nip05Valid", 0.15],
       ["lightningAddress", 0.1],
       ["eventKind10002", 0.1],
-      ["reciprocity", 0.15],
+      ["reciprocity", 0.1],
       ["isRootNip05", 0.05],
     ]),
   });

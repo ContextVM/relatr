@@ -16,7 +16,6 @@ import { normalizeDistance } from "../utils/utils";
 export class TrustCalculator {
   private config: RelatrConfig;
   private weightProfileManager: WeightProfileManager;
-  private static readonly DECIMAL_PLACES = 3;
   private static readonly WEIGHT_SUM_TOLERANCE = 0.01;
 
   // Cache for weight profiles to avoid object creation on every calculation
@@ -245,10 +244,7 @@ export class TrustCalculator {
    * @returns Rounded value
    * @private
    */
-  private roundToDecimalPlaces(
-    value: number,
-    places: number = TrustCalculator.DECIMAL_PLACES,
-  ): number {
+  private roundToDecimalPlaces(value: number, places: number = 2): number {
     const multiplier = Math.pow(10, places);
     return Math.round(value * multiplier) / multiplier;
   }
