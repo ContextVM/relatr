@@ -38,6 +38,8 @@ export class RelatrFactory {
         const validatedConfig = validationResult.data;
         
         try {
+            logger.debug('Starting Relatr factory initialization...');
+            
             // Step 0: Ensure data directory exists with proper permissions
             await RelatrFactory.ensureDataDirectory(validatedConfig.databasePath);
             
@@ -55,30 +57,37 @@ export class RelatrFactory {
             
             // Step 3: Initialize network components and builders first
             const pool = new RelayPool();
-            const socialGraphBuilder = new SocialGraphBuilder(validatedConfig, pool);
+            const socialGraphBuilder = new SocialGraphBuilder(pool);
             const pubkeyMetadataFetcher = new PubkeyMetadataFetcher(pool, metadataRepository);
 
             // Step 4: Check if social graph exists and handle first-time setup
             let graphExists = false;
             try {
-                await sharedConnection.run("SELECT 1 FROM nsd_follows LIMIT 1");
-                graphExists = true;
-            } catch {
-              graphExists = false;
+                const result = await sharedConnection.run(`
+                    SELECT EXISTS (
+                        SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+                        WHERE TABLE_SCHEMA = 'main'
+                        AND TABLE_NAME = 'nsd_follows'
+                    ) as table_exists
+                `);
+                const rows = await result.getRows();
+                const row = rows[0] as unknown[];
+                graphExists = Boolean(row[0]);
+            } catch (error) {
+                graphExists = false;
             }
             
             let creationResult: SocialGraphCreationResult | undefined;
 
             if (!graphExists) {
-                logger.info('🆕 Social graph tables not found in database. Creating new graph...');
+                logger.info('Social graph tables not found in database. Creating new graph...');
                 
                 creationResult = await socialGraphBuilder.createGraph({
                     sourcePubkey: validatedConfig.defaultSourcePubkey,
                     hops: validatedConfig.numberOfHops,
                     connection: sharedConnection
                 });
-                
-                logger.info('✅ Social graph created successfully.');
+                logger.info('Social graph created successfully.');
             }
             
             // Step 5: Initialize the social graph with the shared connection
@@ -116,20 +125,25 @@ export class RelatrFactory {
             
             // Step 8: If this is the first time running, fetch initial metadata
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {
-                logger.info('👤 Fetching initial profile metadata...');
-                const keys = Object.keys(graphStats.sizeByDistance);
-                const maxDistance = keys.length ? Math.max(...keys.map(Number)) : null;
-                const pubkeys = await socialGraph.getAllUsersInGraph();
-                logger.info(`📊 Found ${pubkeys.length.toLocaleString()} pubkeys within ${maxDistance || validatedConfig.numberOfHops} hops for metadata fetching`);
-                await pubkeyMetadataFetcher.fetchMetadata({
-                    pubkeys,
-                    sourcePubkey: validatedConfig.defaultSourcePubkey
-                });
+                logger.info('Fetching initial profile metadata...');
+                try {
+                    const keys = Object.keys(graphStats.sizeByDistance);
+                    const maxDistance = keys.length ? Math.max(...keys.map(Number)) : null;
+                    const pubkeys = await socialGraph.getAllUsersInGraph();
+                    logger.info(`Found ${pubkeys.length.toLocaleString()} pubkeys within ${maxDistance || validatedConfig.numberOfHops} hops for metadata fetching`);
+                    await pubkeyMetadataFetcher.fetchMetadata({
+                        pubkeys,
+                        sourcePubkey: validatedConfig.defaultSourcePubkey
+                    });
+                } catch (error) {
+                    logger.warn('Initial metadata fetch failed:', error instanceof Error ? error.message : String(error));
+                    // Continue despite metadata fetch failure
+                }
             }
             
             // Step 9: Start background processes
             await schedulerService.start();
-            logger.info('✅ Background processes started');
+            logger.info('Background processes started');
 
             const dependencies: RelatrServiceDependencies = {
                 config: validatedConfig,
@@ -145,10 +159,12 @@ export class RelatrFactory {
                 schedulerService
             };
 
+            logger.debug('Relatr factory initialization completed');
             return new RelatrService(dependencies);
 
         } catch (error) {
             // Cleanup on error
+            logger.error('Factory initialization failed:', error instanceof Error ? error.message : String(error));
             if (error instanceof RelatrError) {
                 throw error;
             }
