@@ -1,7 +1,7 @@
 {
   "name": "relatr",
   "description": "Decentralized trust metric service for the Nostr ecosystem that computes personalized trust scores from the unique perspective of a public key",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "type": "module",
   "private": true,
   "scripts": {
@@ -20,18 +20,18 @@
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.7.4",
-    "typescript-eslint": "^8.48.1"
+    "typescript-eslint": "^8.49.0"
   },
   "peerDependencies": {
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.1.39",
+    "@contextvm/sdk": "^0.1.40",
     "@duckdb/node-api": "^1.4.2-r.1",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
     "nostr-social-duck": "^0.1.24",
-    "nostr-tools": "^2.18.2",
+    "nostr-tools": "^2.19.2",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
