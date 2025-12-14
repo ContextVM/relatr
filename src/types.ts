@@ -164,3 +164,26 @@ export class SocialGraphError extends RelatrError {
 
 // Weighting scheme type
 export type WeightingScheme = "default" | "social" | "validation" | "strict";
+
+// TA-related types
+export interface TASubscriber {
+  id: number;
+  subscriberPubkey: string;
+  latestRank: number | null;
+  createdAt: number;
+  updatedAt: number;
+  isActive: boolean;
+}
+
+export interface TARegistrationResult {
+  success: boolean;
+  message: string;
+  subscriberPubkey: string;
+  createdAt: number;
+}
+
+export interface TARankUpdateResult {
+  published: boolean;
+  rank: number;
+  previousRank: number | null;
+}

@@ -26,15 +26,15 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.1.40",
+    "@contextvm/sdk": "^0.1.41",
     "@duckdb/node-api": "^1.4.2-r.1",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
     "nostr-social-duck": "^0.1.24",
-    "nostr-tools": "^2.19.2",
+    "nostr-tools": "^2.19.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {

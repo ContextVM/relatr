@@ -9,6 +9,7 @@ import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
+import { TAService } from "../service/TAService.js";
 import type { SearchProfileResult } from "../types.js";
 import { logger } from "../utils/Logger.js";
 
@@ -20,12 +21,15 @@ import { logger } from "../utils/Logger.js";
  */
 export async function startMCPServer(): Promise<void> {
   let relatrService: RelatrService | null = null;
+  let taService: TAService | null = null;
   let server: McpServer | null = null;
 
   try {
     // Load configuration and initialize RelatrService using factory
     const config = loadConfig();
-    relatrService = await RelatrFactory.createRelatrService(config);
+    const services = await RelatrFactory.createRelatrService(config);
+    relatrService = services.relatrService;
+    taService = services.taService;
 
     // Create MCP server
     server = new McpServer({
@@ -37,6 +41,7 @@ export async function startMCPServer(): Promise<void> {
     registerCalculateTrustScoreTool(server, relatrService);
     registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
+    registerRegisterTAProviderTool(server, relatrService, taService);
 
     // Setup graceful shutdown
     setupGracefulShutdown(relatrService);
@@ -46,6 +51,7 @@ export async function startMCPServer(): Promise<void> {
     const transport = new NostrServerTransport({
       signer: new PrivateKeySigner(config.serverSecretKey),
       relayHandler: new ApplesauceRelayPool(config.serverRelays),
+      injectClientPubkey: true,
     });
     await server.connect(transport);
 
@@ -334,6 +340,107 @@ function registerSearchProfilesTool(
             {
               type: "text",
               text: `Error searching profiles: ${errorMessage}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Register the register_ta_provider tool
+ */
+function registerRegisterTAProviderTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  taService: TAService | null,
+): void {
+  // Input schema (empty - client pubkey comes from _meta)
+  const inputSchema = z.object({});
+
+  // Output schema
+  const outputSchema = z.object({
+    success: z.boolean(),
+    message: z.string(),
+    subscriberPubkey: z.string(),
+    createdAt: z.number(),
+  });
+
+  server.registerTool(
+    "register_ta_provider",
+    {
+      title: "Register as TA Provider",
+      description:
+        "Register this Relatr server as your Trusted Assertions provider. The server will publish Kind 30382 events with trust rankings for pubkeys.",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (_, { _meta }) => {
+      try {
+        // Check if TA service is available
+        if (!taService) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: TA service not available.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Extract client pubkey from _meta (injected by CEP-16)
+        const clientPubkey = _meta?.clientPubkey;
+
+        if (!clientPubkey || typeof clientPubkey !== "string") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: Client public key not available.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Validate pubkey format
+        const validatedPubkey = validateAndDecodePubkey(clientPubkey);
+        if (!validatedPubkey) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: Invalid client public key format",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Register subscriber using TA service
+        const result = await taService.registerSubscriber(validatedPubkey);
+        return {
+          content: [],
+          structuredContent: {
+            success: result.success,
+            message: result.message,
+            subscriberPubkey: result.subscriberPubkey,
+            createdAt: result.createdAt,
+          },
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error registering TA provider: ${errorMessage}`,
             },
           ],
           isError: true,

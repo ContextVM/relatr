@@ -1,9 +1,11 @@
 import { RelayPool } from 'applesauce-relay';
+import { PrivateKeySigner } from "@contextvm/sdk";
 import { createWeightProfileManager, RelatrConfigSchema } from '../config';
 import { DatabaseManager } from '../database/DatabaseManager';
 import { MetadataRepository } from '../database/repositories/MetadataRepository';
 import { MetricsRepository } from '../database/repositories/MetricsRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
+import { TARepository } from '../database/repositories/TARepository';
 import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
 import { SocialGraphBuilder, type SocialGraphCreationResult } from '../graph/SocialGraphBuilder';
@@ -20,10 +22,11 @@ import type { RelatrServiceDependencies } from './ServiceInterfaces';
 import { RelatrService } from './RelatrService';
 import { SearchService } from './SearchService';
 import { SchedulerService } from './SchedulerService';
+import { TAService } from './TAService';
 import { dirname } from "path";
 
 export class RelatrFactory {
-    static async createRelatrService(config: RelatrConfig): Promise<RelatrService> {
+    static async createRelatrService(config: RelatrConfig): Promise<{relatrService: RelatrService; taService: TAService}> {
         if (!config) throw new RelatrError('Configuration required', 'FACTORY_CONFIG');
         
         const validationResult = RelatrConfigSchema.safeParse(config);
@@ -54,6 +57,7 @@ export class RelatrFactory {
             const metricsRepository: IMetricsRepository = new MetricsRepository(sharedConnection, validatedConfig.cacheTtlSeconds);
             const metadataRepository: IMetadataRepository = new MetadataRepository(sharedConnection);
             const settingsRepository: ISettingsRepository = new SettingsRepository(sharedConnection);
+            const taRepository = new TARepository(sharedConnection);
             
             // Step 3: Initialize network components and builders first
             const pool = new RelayPool();
@@ -112,6 +116,8 @@ export class RelatrFactory {
                 pool
             );
             
+            // Initialize task queue service
+
             const schedulerService = new SchedulerService(
                 validatedConfig,
                 metricsRepository,
@@ -122,6 +128,32 @@ export class RelatrFactory {
                 settingsRepository,
                 pool
             );
+
+            const serviceDependencies: RelatrServiceDependencies = {
+                config: validatedConfig,
+                dbManager,
+                socialGraph,
+                metricsValidator,
+                metadataRepository,
+                metricsRepository,
+                settingsRepository,
+                taRepository,
+                pubkeyMetadataFetcher,
+                trustCalculator,
+                searchService,
+                schedulerService
+            };
+
+            const relatrService = new RelatrService(serviceDependencies);
+
+            // Initialize TA service after relatrService is created
+            const taService = new TAService({
+                config: validatedConfig,
+                taRepository,
+                relatrService,
+                relayPool: pool,
+                signer: new PrivateKeySigner(validatedConfig.serverSecretKey),
+            });
             
             // Step 8: If this is the first time running, fetch initial metadata
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {
@@ -145,22 +177,11 @@ export class RelatrFactory {
             await schedulerService.start();
             logger.info('Background processes started');
 
-            const dependencies: RelatrServiceDependencies = {
-                config: validatedConfig,
-                dbManager,
-                socialGraph,
-                metricsValidator,
-                metadataRepository,
-                metricsRepository,
-                settingsRepository,
-                pubkeyMetadataFetcher,
-                trustCalculator,
-                searchService,
-                schedulerService
-            };
-
             logger.debug('Relatr factory initialization completed');
-            return new RelatrService(dependencies);
+            return {
+                relatrService,
+                taService
+            };
 
         } catch (error) {
             // Cleanup on error

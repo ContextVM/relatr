@@ -5,12 +5,12 @@
     "": {
       "name": "relatr",
       "dependencies": {
-        "@contextvm/sdk": "^0.1.39",
+        "@contextvm/sdk": "^0.1.40",
         "@duckdb/node-api": "^1.4.2-r.1",
         "applesauce-core": "^4.4.2",
         "applesauce-relay": "^4.4.2",
         "nostr-social-duck": "^0.1.24",
-        "nostr-tools": "^2.18.2",
+        "nostr-tools": "^2.19.2",
         "process-pastry": "https://github.com/hzrd149/process-pastry",
         "react": "^19.2.1",
         "react-dom": "^19.2.1",
@@ -24,7 +24,7 @@
         "eslint": "^9.39.1",
         "eslint-config-prettier": "^10.1.8",
         "prettier": "^3.7.4",
-        "typescript-eslint": "^8.48.1",
+        "typescript-eslint": "^8.49.0",
       },
       "optionalDependencies": {
         "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1",
@@ -75,7 +75,7 @@
 
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
-    "@contextvm/sdk": ["@contextvm/sdk@0.1.40", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.24.2", "applesauce-relay": "^4.4.2", "nostr-tools": "^2.18.2", "pino": "^10.1.0", "pino-pretty": "^13.1.3" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-QxwJHTXOUzl2F3FVRCgBswD3xts6En6YLqnbtPOJxHHJ9Ct8MrMz+yYsxo/eZKFxdq684qyHQKVbGiI5adWQjA=="],
+    "@contextvm/sdk": ["@contextvm/sdk@0.1.41", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.24.2", "applesauce-relay": "^4.4.2", "nostr-tools": "^2.18.2", "pino": "^10.1.0", "pino-pretty": "^13.1.3" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-c1S+aAnrW2qbu7gcBGZlUrcr6oRUnf7EHyBD5Ow9IStg1yEfII0IJjEup5PioXgtiRnGJLSfyZmAI7XfB9BhXw=="],
 
     "@duckdb/node-api": ["@duckdb/node-api@1.4.2-r.1", "", { "dependencies": { "@duckdb/node-bindings": "1.4.2-r.1" } }, "sha512-8Ef4R/Lq+rXTpcqZIJZe6ALfgMGxy88HmiPvRpWrRw1fUTy85x1U0NnGrqCklZsmWyZUdPwVYj90MQOF2MY/TA=="],
 
@@ -463,7 +463,7 @@
 
     "nostr-social-duck": ["nostr-social-duck@0.1.24", "", { "dependencies": { "@duckdb/node-api": "^1.4.2-r.1" }, "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-darwin-x64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-x64": "^1.4.2-r.1", "@duckdb/node-bindings-win32-x64": "^1.4.2-r.1" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-5sjVeAfTqeW2ghALpWDiCfpNqvwAyBLSGNBBcDRKE8b8TLgBKO1ccU45sgR5rjqqlVR/UE6j/K1GWJ0CxgX7Tw=="],
 
-    "nostr-tools": ["nostr-tools@2.19.2", "", { "dependencies": { "@noble/ciphers": "^0.5.1", "@noble/curves": "1.2.0", "@noble/hashes": "1.3.1", "@scure/base": "1.1.1", "@scure/bip32": "1.3.1", "@scure/bip39": "1.2.1", "nostr-wasm": "0.1.0" }, "peerDependencies": { "typescript": ">=5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-XRMRSZp1mFgFP43krtySOs4vEbTNULmdsUnSec8Ow1S6QKFuCj56kYcAk8cXgJER4Gh5Z7Wfo0hENWINsPZrMQ=="],
+    "nostr-tools": ["nostr-tools@2.19.3", "", { "dependencies": { "@noble/ciphers": "^0.5.1", "@noble/curves": "1.2.0", "@noble/hashes": "1.3.1", "@scure/base": "1.1.1", "@scure/bip32": "1.3.1", "@scure/bip39": "1.2.1", "nostr-wasm": "0.1.0" }, "peerDependencies": { "typescript": ">=5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-IJ1fcTYAfVVUbS8S/FtDopdPHCDh/34aHXnyppUzXDYGWlJMv2y1phomvOADZrMAQ6Z28iOIBEyGY256w1492Q=="],
 
     "nostr-wasm": ["nostr-wasm@0.1.0", "", {}, "sha512-78BTryCLcLYv96ONU8Ws3Q1JzjlAt+43pWQhIl86xZmWeegYCNLPml7yQ+gG3vR6V5h4XGj+TxO+SS5dsThQIA=="],
 
@@ -547,9 +547,9 @@
 
     "raw-body": ["raw-body@3.0.1", "", { "dependencies": { "bytes": "3.1.2", "http-errors": "2.0.0", "iconv-lite": "0.7.0", "unpipe": "1.0.0" } }, "sha512-9G8cA+tuMS75+6G/TzW8OtLzmBDMo8p1JRxN5AZ+LAp8uxGA8V8GZm4GQ4/N5QNQEnLmg6SS7wyuSmbKepiKqA=="],
 
-    "react": ["react@19.2.1", "", {}, "sha512-DGrYcCWK7tvYMnWh79yrPHt+vdx9tY+1gPZa7nJQtO/p8bLTDaHp4dzwEhQB7pZ4Xe3ok4XKuEPrVuc+wlpkmw=="],
+    "react": ["react@19.2.3", "", {}, "sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA=="],
 
-    "react-dom": ["react-dom@19.2.1", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.1" } }, "sha512-ibrK8llX2a4eOskq1mXKu/TGZj9qzomO+sNfO98M6d9zIPOEhlBkMkBUBLd1vgS0gQsLDBzA+8jJBVXDnfHmJg=="],
+    "react-dom": ["react-dom@19.2.3", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.3" } }, "sha512-yELu4WmLPw5Mr/lmeEpox5rw3RETacE++JgHqQzd2dg+YbJuat3jH4ingc+WPZhxaoFzdv9y33G+F7Nl5O0GBg=="],
 
     "read-yaml-file": ["read-yaml-file@1.1.0", "", { "dependencies": { "graceful-fs": "^4.1.5", "js-yaml": "^3.6.1", "pify": "^4.0.1", "strip-bom": "^3.0.0" } }, "sha512-VIMnQi/Z4HT2Fxuwg5KrY174U1VdUIASQVWXXyqtNRtxSr9IYkn1rsI6Tb6HsrHCmB7gVpNwX6JxPTHcH6IoTA=="],
 
