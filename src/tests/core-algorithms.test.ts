@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
-import { WeightProfileManager } from "../validators/weight-profiles";
 import type { RelatrConfig, ProfileMetrics } from "../types";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { normalizeDistance } from "@/utils/utils";
+import { DEFAULT_METRIC_WEIGHTS } from "../config";
 
 /**
  * Phase 2 Component Tests
@@ -25,18 +25,14 @@ const testConfig: RelatrConfig = {
   syncInterval: 1000,
   cleanupInterval: 1000,
   validationSyncInterval: 1000,
+  taEnabled: false,
 };
 
-// Test weights
-const testWeights = {
-  distanceWeight: 0.4,
-  validators: {
-    nip05Valid: 0.2,
-    lightningAddress: 0.15,
-    eventKind10002: 0.15,
-    reciprocity: 0.1,
-  },
-};
+/**
+ * Test weights - match canonical defaults used by TrustCalculator.
+ * Keep this in sync by importing the single source of truth.
+ */
+const testWeights = DEFAULT_METRIC_WEIGHTS;
 
 // Test data
 const testMetrics: ProfileMetrics = {
@@ -46,6 +42,7 @@ const testMetrics: ProfileMetrics = {
     lightningAddress: 1.0,
     eventKind10002: 1.0,
     reciprocity: 0.8,
+    isRootNip05: 0.5,
   },
   computedAt: Math.floor(Date.now() / 1000),
   expiresAt: Math.floor(Date.now() / 1000) + 1000,
@@ -54,20 +51,9 @@ const testMetrics: ProfileMetrics = {
 // Shared instances
 let calculator: TrustCalculator;
 let socialGraph: SocialGraph;
-let weightProfileManager: WeightProfileManager;
 
 beforeAll(async () => {
-  // Initialize weight profile manager with test weights
-  weightProfileManager = new WeightProfileManager();
-  weightProfileManager.registerProfile({
-    name: "test",
-    description: "Test profile for unit tests",
-    distanceWeight: testWeights.distanceWeight,
-    validatorWeights: new Map(Object.entries(testWeights.validators)),
-  });
-  weightProfileManager.activateProfile("test");
-
-  calculator = new TrustCalculator(testConfig, weightProfileManager);
+  calculator = new TrustCalculator(testConfig);
 
   // Initialize DuckDB connection and social graph once for all tests
   const dbManager = DatabaseManager.getInstance(":memory:");
@@ -131,17 +117,21 @@ describe("TrustCalculator - Score Calculation", () => {
     );
 
     // Verify formula: Score = Σ(wᵢ × vᵢ) / Σ(wᵢ)
+    // Compute expectation the same way as production: apply weights to all present metrics
     const normalizedDistance = Math.exp(-testConfig.decayFactor * distance);
     const weights = testWeights;
 
-    const weightedSum =
-      weights.distanceWeight * normalizedDistance +
-      weights.validators.nip05Valid * (testMetrics.metrics.nip05Valid || 0) +
-      weights.validators.lightningAddress *
-        (testMetrics.metrics.lightningAddress || 0) +
-      weights.validators.eventKind10002 *
-        (testMetrics.metrics.eventKind10002 || 0) +
-      weights.validators.reciprocity * (testMetrics.metrics.reciprocity || 0);
+    const validatorWeights = weights.validators as Record<string, number>;
+
+    let weightedSum = weights.distanceWeight * normalizedDistance;
+    for (const [metricName, metricValue] of Object.entries(
+      testMetrics.metrics,
+    )) {
+      const w = validatorWeights[metricName];
+      if (w !== undefined) {
+        weightedSum += w * (metricValue ?? 0);
+      }
+    }
 
     const totalWeight =
       weights.distanceWeight +
@@ -149,9 +139,10 @@ describe("TrustCalculator - Score Calculation", () => {
         (sum, weight) => sum + weight,
         0,
       );
+
     const expectedScore = weightedSum / totalWeight;
 
-    // Score is now rounded to 2 decimal places, so we use precision of 2
+    // Score is rounded to 2 decimal places, so we use precision of 2
     expect(result.score).toBeCloseTo(expectedScore, 2);
   });
 
@@ -225,6 +216,7 @@ describe("TrustCalculator - Score Calculation", () => {
         lightningAddress: 0,
         eventKind10002: 0,
         reciprocity: 0,
+        isRootNip05: 0,
       },
       computedAt: Math.floor(Date.now() / 1000),
       expiresAt: Math.floor(Date.now() / 1000) + 1000,
@@ -246,83 +238,8 @@ describe("TrustCalculator - Score Calculation", () => {
   });
 });
 
-describe("TrustCalculator - Weight Validation", () => {
-  test("should accept weights that sum to 1.0", () => {
-    const validWeightManager = new WeightProfileManager();
-    validWeightManager.registerProfile({
-      name: "valid",
-      distanceWeight: 0.5,
-      validatorWeights: new Map([
-        ["nip05Valid", 0.2],
-        ["lightningAddress", 0.1],
-        ["eventKind10002", 0.1],
-        ["reciprocity", 0.1],
-      ]),
-    });
-    validWeightManager.activateProfile("valid");
-
-    expect(
-      () => new TrustCalculator(testConfig, validWeightManager),
-    ).not.toThrow();
-  });
-
-  test("should accept weights within tolerance (±0.01)", () => {
-    const validWeightManager = new WeightProfileManager();
-    validWeightManager.registerProfile({
-      name: "valid_tolerance",
-      distanceWeight: 0.5,
-      validatorWeights: new Map([
-        ["nip05Valid", 0.2],
-        ["lightningAddress", 0.1],
-        ["eventKind10002", 0.1],
-        ["reciprocity", 0.105], // Sum = 1.005, within tolerance
-      ]),
-    });
-    validWeightManager.activateProfile("valid_tolerance");
-
-    expect(
-      () => new TrustCalculator(testConfig, validWeightManager),
-    ).not.toThrow();
-  });
-
-  test("should reject weights that sum too low", () => {
-    const invalidWeightManager = new WeightProfileManager();
-    expect(() =>
-      invalidWeightManager.registerProfile({
-        name: "invalid_low",
-        distanceWeight: 0.4,
-        validatorWeights: new Map([
-          ["nip05Valid", 0.2],
-          ["lightningAddress", 0.1],
-          ["eventKind10002", 0.1],
-          ["reciprocity", 0.1], // Sum = 0.9, outside tolerance
-        ]),
-      }),
-    ).toThrow(/must sum to 1.0/);
-  });
-
-  test("should validate custom weights passed to calculate()", () => {
-    const invalidCustomWeights = {
-      distanceWeight: 0.8,
-      validators: {
-        nip05Valid: 0.5, // This will make sum > 1.0 when merged
-      },
-    };
-
-    expect(() =>
-      calculator.calculate(
-        "0000000000000000000000000000000000000000000000000000000000000010",
-        "0000000000000000000000000000000000000000000000000000000000000011",
-        testMetrics,
-        1,
-        invalidCustomWeights,
-      ),
-    ).toThrow(/must sum to 1.0/);
-  });
-});
-
 describe("TrustCalculator - Score Rounding", () => {
-  test("should round score to 3 decimal places", () => {
+  test("should round score to 2 decimal places", () => {
     const result = calculator.calculate(
       "0000000000000000000000000000000000000000000000000000000000000012",
       "0000000000000000000000000000000000000000000000000000000000000013",
@@ -330,13 +247,13 @@ describe("TrustCalculator - Score Rounding", () => {
       1,
     );
 
-    // Check that score has at most 3 decimal places
+    // Check that score has at most 2 decimal places
     const scoreStr = result.score.toString();
     const decimalPart = scoreStr.split(".")[1] || "";
-    expect(decimalPart.length).toBeLessThanOrEqual(3);
+    expect(decimalPart.length).toBeLessThanOrEqual(2);
   });
 
-  test("should round component values to 3 decimal places", () => {
+  test("should round component values to 2 decimal places", () => {
     const result = calculator.calculate(
       "0000000000000000000000000000000000000000000000000000000000000014",
       "0000000000000000000000000000000000000000000000000000000000000015",
@@ -348,7 +265,7 @@ describe("TrustCalculator - Score Rounding", () => {
     const checkDecimalPlaces = (value: number) => {
       const valueStr = value.toString();
       const decimalPart = valueStr.split(".")[1] || "";
-      expect(decimalPart.length).toBeLessThanOrEqual(3);
+      expect(decimalPart.length).toBeLessThanOrEqual(2);
     };
 
     checkDecimalPlaces(result.components.distanceWeight);

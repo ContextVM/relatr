@@ -2,10 +2,6 @@ import { queryProfile } from "nostr-tools/nip05";
 import type { NostrProfile } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import { withTimeout } from "@/utils/utils";
-import {
-  WeightProfileManager,
-  type CoverageValidationResult,
-} from "./weight-profiles";
 import type { RelayPool } from "applesauce-relay";
 import type { NostrEvent } from "nostr-tools";
 import { logger } from "../utils/Logger";
@@ -36,11 +32,6 @@ export interface ValidationPlugin {
  */
 export class ValidationRegistry {
   private plugins = new Map<string, ValidationPlugin>();
-  private weightProfile: WeightProfileManager;
-
-  constructor(weightProfile: WeightProfileManager) {
-    this.weightProfile = weightProfile;
-  }
 
   register(plugin: ValidationPlugin): void {
     this.plugins.set(plugin.name, plugin);
@@ -58,10 +49,6 @@ export class ValidationRegistry {
     return Array.from(this.plugins.values());
   }
 
-  getWeights(): Record<string, number> {
-    return this.weightProfile.getAllWeights().validators;
-  }
-
   async executeAll(
     context: ValidationContext,
   ): Promise<Record<string, number>> {
@@ -77,23 +64,6 @@ export class ValidationRegistry {
     }
 
     return results;
-  }
-
-  /**
-   * Get the weight profile manager
-   * @returns WeightProfileManager instance
-   */
-  getWeightProfileManager(): WeightProfileManager {
-    return this.weightProfile;
-  }
-
-  /**
-   * Validate coverage between registered plugins and active profile weights
-   * @returns Coverage validation result
-   */
-  validateCoverage(): CoverageValidationResult {
-    const pluginNames = Array.from(this.plugins.keys());
-    return this.weightProfile.validateCoverage(pluginNames);
   }
 }
 

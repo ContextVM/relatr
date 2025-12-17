@@ -6,8 +6,8 @@ import type {
   ScoreComponents,
 } from "../types";
 import { SocialGraphError, ValidationError } from "../types";
-import { WeightProfileManager } from "../validators/weight-profiles";
 import { normalizeDistance } from "../utils/utils";
+import { DEFAULT_METRIC_WEIGHTS } from "../config";
 
 /**
  * Trust score calculation using distance normalization and weighted metrics
@@ -15,35 +15,18 @@ import { normalizeDistance } from "../utils/utils";
  */
 export class TrustCalculator {
   private config: RelatrConfig;
-  private weightProfileManager: WeightProfileManager;
   private static readonly WEIGHT_SUM_TOLERANCE = 0.01;
-
-  // Cache for weight profiles to avoid object creation on every calculation
-  private cachedWeights: MetricWeights | null = null;
-  private cachedProfileName: string | null = null;
 
   /**
    * Create a new TrustCalculator instance
    * @param config - Relatr configuration
-   * @param weightProfileManager - Weight profile manager for dynamic weights (required)
    */
-  constructor(
-    config: RelatrConfig,
-    weightProfileManager: WeightProfileManager,
-  ) {
+  constructor(config: RelatrConfig) {
     if (!config) {
       throw new SocialGraphError("Config is required", "CONSTRUCTOR");
     }
 
-    if (!weightProfileManager) {
-      throw new SocialGraphError(
-        "WeightProfileManager is required",
-        "CONSTRUCTOR",
-      );
-    }
-
     this.config = config;
-    this.weightProfileManager = weightProfileManager;
   }
 
   /**
@@ -86,11 +69,8 @@ export class TrustCalculator {
       );
     }
 
-    // Get current weights from profile manager
-    const currentWeights = this.getCachedWeights();
-
     // Merge and validate weights
-    const finalWeights = this.mergeWeights(currentWeights, weights);
+    const finalWeights = this.mergeWeights(DEFAULT_METRIC_WEIGHTS, weights);
     this.validateWeights(finalWeights);
 
     // Normalize distance
@@ -263,43 +243,5 @@ export class TrustCalculator {
    */
   updateConfig(newConfig: Partial<RelatrConfig>): void {
     this.config = { ...this.config, ...newConfig };
-    // Clear cache when config changes as weights might be affected
-    this.clearCache();
-  }
-
-  /**
-   * Get weights with caching to avoid object creation on every calculation
-   * @private
-   */
-  private getCachedWeights(): MetricWeights {
-    const currentProfile = this.weightProfileManager.getActiveProfile();
-    const currentProfileName = currentProfile?.name || "default";
-
-    // Return cached weights if profile hasn't changed
-    if (this.cachedWeights && this.cachedProfileName === currentProfileName) {
-      return this.cachedWeights;
-    }
-
-    // Update cache with new weights
-    this.cachedWeights = this.weightProfileManager.getAllWeights();
-    this.cachedProfileName = currentProfileName;
-    return this.cachedWeights;
-  }
-
-  /**
-   * Clear the weight cache
-   * @private
-   */
-  private clearCache(): void {
-    this.cachedWeights = null;
-    this.cachedProfileName = null;
-  }
-
-  /**
-   * Get the weight profile manager
-   * @returns WeightProfileManager instance
-   */
-  getWeightProfileManager(): WeightProfileManager {
-    return this.weightProfileManager;
   }
 }

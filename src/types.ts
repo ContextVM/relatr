@@ -56,7 +56,6 @@ export interface ScoreComponents {
 export interface CalculateTrustScoreParams {
   sourcePubkey?: string;
   targetPubkey: string;
-  weightingScheme?: "default" | "social" | "validation" | "strict";
 }
 
 export interface StatsResult {
@@ -85,7 +84,6 @@ export interface SearchProfilesParams {
   limit?: number;
   sourcePubkey?: string;
   extendToNostr?: boolean;
-  weightingScheme?: WeightingScheme;
 }
 
 export interface SearchProfileResult {
@@ -167,9 +165,6 @@ export class SocialGraphError extends RelatrError {
     this.name = "SocialGraphError";
   }
 }
-
-// Weighting scheme type
-export type WeightingScheme = "default" | "social" | "validation" | "strict";
 
 // TA-related types
 export interface TASubscriber {

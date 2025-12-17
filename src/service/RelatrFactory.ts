@@ -1,6 +1,6 @@
 import { RelayPool } from 'applesauce-relay';
 import { PrivateKeySigner } from "@contextvm/sdk";
-import { createWeightProfileManager, RelatrConfigSchema } from '../config';
+import { RelatrConfigSchema } from '../config';
 import { DatabaseManager } from '../database/DatabaseManager';
 import { MetadataRepository } from '../database/repositories/MetadataRepository';
 import { MetricsRepository } from '../database/repositories/MetricsRepository';
@@ -105,9 +105,17 @@ export class RelatrFactory {
             logger.info('Social graph stats', graphStats);
             
             // Step 6: Initialize trust calculation components
-            const weightProfileManager = createWeightProfileManager();
-            const trustCalculator = new TrustCalculator(validatedConfig, weightProfileManager);
-            const metricsValidator = new MetricsValidator(pool, validatedConfig.nostrRelays, socialGraph, metricsRepository, metadataRepository, validatedConfig.cacheTtlSeconds, ALL_PLUGINS, weightProfileManager);
+            // TrustCalculator uses the canonical default weighting scheme internally.
+            const trustCalculator = new TrustCalculator(validatedConfig);
+            const metricsValidator = new MetricsValidator(
+                pool,
+                validatedConfig.nostrRelays,
+                socialGraph,
+                metricsRepository,
+                metadataRepository,
+                validatedConfig.cacheTtlSeconds,
+                ALL_PLUGINS,
+            );
             
             // Step 7: Initialize specialized services
             const searchService = new SearchService(
