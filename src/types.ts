@@ -17,6 +17,12 @@ export interface RelatrConfig {
   syncInterval: number;
   cleanupInterval: number;
   validationSyncInterval: number;
+
+  /**
+   * Optional feature flag: enable Trusted Assertions
+   * (NIP-85 kind 30382) publishing. Controlled by the operator.
+   */
+  taEnabled: boolean;
 }
 export interface MetricWeights {
   distanceWeight: number;
@@ -173,13 +179,6 @@ export interface TASubscriber {
   createdAt: number;
   updatedAt: number;
   isActive: boolean;
-}
-
-export interface TARegistrationResult {
-  success: boolean;
-  message: string;
-  subscriberPubkey: string;
-  createdAt: number;
 }
 
 export interface TARankUpdateResult {

@@ -26,7 +26,7 @@ import { TAService } from './TAService';
 import { dirname } from "path";
 
 export class RelatrFactory {
-    static async createRelatrService(config: RelatrConfig): Promise<{relatrService: RelatrService; taService: TAService}> {
+    static async createRelatrService(config: RelatrConfig): Promise<{relatrService: RelatrService; taService: TAService | null}> {
         if (!config) throw new RelatrError('Configuration required', 'FACTORY_CONFIG');
         
         const validationResult = RelatrConfigSchema.safeParse(config);
@@ -57,7 +57,9 @@ export class RelatrFactory {
             const metricsRepository: IMetricsRepository = new MetricsRepository(sharedConnection, validatedConfig.cacheTtlSeconds);
             const metadataRepository: IMetadataRepository = new MetadataRepository(sharedConnection);
             const settingsRepository: ISettingsRepository = new SettingsRepository(sharedConnection);
-            const taRepository = new TARepository(sharedConnection);
+
+            // TA is optional and operator-controlled
+            const taRepository = validatedConfig.taEnabled ? new TARepository(sharedConnection) : undefined;
             
             // Step 3: Initialize network components and builders first
             const pool = new RelayPool();
@@ -78,6 +80,7 @@ export class RelatrFactory {
                 const row = rows[0] as unknown[];
                 graphExists = Boolean(row[0]);
             } catch (error) {
+                logger.warn('Failed to check if social graph exists (expected during first-time setup):', error instanceof Error ? error.message : String(error));
                 graphExists = false;
             }
             
@@ -146,14 +149,16 @@ export class RelatrFactory {
 
             const relatrService = new RelatrService(serviceDependencies);
 
-            // Initialize TA service after relatrService is created
-            const taService = new TAService({
-                config: validatedConfig,
-                taRepository,
-                relatrService,
-                relayPool: pool,
-                signer: new PrivateKeySigner(validatedConfig.serverSecretKey),
-            });
+            // Initialize TA service after relatrService is created (optional)
+            const taService = validatedConfig.taEnabled
+              ? new TAService({
+                  config: validatedConfig,
+                  taRepository: taRepository!,
+                  relatrService,
+                  relayPool: pool,
+                  signer: new PrivateKeySigner(validatedConfig.serverSecretKey),
+                })
+              : null;
             
             // Step 8: If this is the first time running, fetch initial metadata
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {

@@ -15,6 +15,7 @@ Relatr measures relative trust between Nostr public keys by analyzing social gra
 - **Configurable Scoring**: Flexible weighting schemes for different trust factors
 - **Unified Data Store**: High-performance DuckDB database for both social graph and metadata
 - **MCP Server Interface**: Model Context Protocol API for integration
+- **Trusted Assertions (TA)**: Optional NIP-85 Trusted Assertion Provider for publishing trust ranks (see [TA.md](TA.md))
 
 ## Getting Started
 
@@ -96,6 +97,7 @@ SERVER_SECRET_KEY=your_generated_hex_key_here
 - `DECAY_FACTOR` - Alpha parameter in distance formula (default: 0.1)
 - `NUMBER_OF_HOPS` - Social graph traversal depth (default: 1)
 - `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
+- `TA_ENABLED` - Enable Trusted Assertions provider (default: false)
 
 See `.env.example` for a complete configuration template with all available options.
 

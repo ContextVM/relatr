@@ -2,24 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { TARepository } from "../database/repositories/TARepository";
 import { unlink } from "fs/promises";
-import { join } from "path";
+import type { DuckDBConnection } from "@duckdb/node-api";
 
 describe("TARepository", () => {
-  const testDbPath = join(process.cwd(), "test-data", "ta-test.db");
   let dbManager: DatabaseManager;
   let taRepository: TARepository;
-  let connection: any;
+  let connection: DuckDBConnection;
 
   beforeEach(async () => {
-    // Clean up any existing test database
-    try {
-      await unlink(testDbPath);
-    } catch {
-      // File might not exist, that's ok
-    }
-
     // Initialize fresh database
-    dbManager = DatabaseManager.getInstance(testDbPath);
+    dbManager = DatabaseManager.getInstance(":memory:");
     await dbManager.initialize();
     connection = dbManager.getConnection();
     taRepository = new TARepository(connection);
@@ -28,11 +20,6 @@ describe("TARepository", () => {
   afterEach(async () => {
     if (dbManager) {
       await dbManager.close();
-    }
-    try {
-      await unlink(testDbPath);
-    } catch {
-      // File might not exist, that's ok
     }
   });
 
@@ -47,14 +34,6 @@ describe("TARepository", () => {
       expect(subscriber.isActive).toBe(true);
       expect(subscriber.createdAt).toBeGreaterThan(0);
       expect(subscriber.updatedAt).toBeGreaterThan(0);
-    });
-
-    it("should throw error for duplicate subscriber", async () => {
-      const pubkey =
-        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      await taRepository.addSubscriber(pubkey);
-
-      await expect(taRepository.addSubscriber(pubkey)).rejects.toThrow();
     });
   });
 
@@ -128,7 +107,10 @@ describe("TARepository", () => {
     it("should not throw error for non-existent subscriber", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      await expect(taRepository.deactivateSubscriber(pubkey)).rejects.toThrow();
+
+      expect(taRepository.deactivateSubscriber(pubkey)).resolves.toBe(
+        undefined,
+      );
     });
   });
 

@@ -6,6 +6,12 @@ import { logger } from "../../utils/Logger";
 export class TARepository {
   private connection: DuckDBConnection;
 
+  /**
+   * NOTE: DuckDB returns rows by index; keep SELECT projections explicit and in sync with mapRowToSubscriber.
+   */
+  private static readonly SUBSCRIBER_SELECT_COLUMNS =
+    "id, subscriber_pubkey, latest_rank, created_at, updated_at, is_active";
+
   constructor(connection: DuckDBConnection) {
     this.connection = connection;
   }
@@ -22,14 +28,19 @@ export class TARepository {
         const now = Math.floor(Date.now() / 1000);
 
         await this.connection.run(
-          `INSERT INTO ta_subscribers (subscriber_pubkey, created_at, updated_at)
-           VALUES ($1, $2, $3)`,
+          `INSERT INTO ta_subscribers (subscriber_pubkey, created_at, updated_at, is_active)
+           VALUES ($1, $2, $3, TRUE)
+           ON CONFLICT (subscriber_pubkey) DO UPDATE SET
+             is_active = TRUE,
+             updated_at = $3`,
           { 1: subscriberPubkey, 2: now, 3: now },
         );
 
-        // Retrieve the created record
+        // Retrieve the created/updated record (explicit projection to match mapping)
         const result = await this.connection.run(
-          "SELECT * FROM ta_subscribers WHERE subscriber_pubkey = $1",
+          `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
+           FROM ta_subscribers
+           WHERE subscriber_pubkey = $1`,
           { 1: subscriberPubkey },
         );
 
@@ -74,7 +85,10 @@ export class TARepository {
         `Failed to check TA subscription for ${subscriberPubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
-      return false;
+      throw new DatabaseError(
+        `Failed to check TA subscription: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_SUBSCRIPTION_CHECK",
+      );
     }
   }
 
@@ -100,29 +114,29 @@ export class TARepository {
         "Failed to get active TA subscribers after retries:",
         error instanceof Error ? error.message : String(error),
       );
-      return [];
+      throw new DatabaseError(
+        `Failed to get active TA subscribers: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_ACTIVE_SUBSCRIBERS_GET",
+      );
     }
   }
 
   /**
-   * Deactivate a subscriber (soft delete)
+   * Deactivate a subscriber (soft delete).
+   *
+   * This method is intentionally idempotent:
+   * - If the subscriber does not exist, or is already inactive, it does nothing and succeeds.
+   * - If the subscriber is active, it marks it inactive and updates updated_at.
+   *
    * @param subscriberPubkey Hex-encoded public key to deactivate
    */
   async deactivateSubscriber(subscriberPubkey: string): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        // Check if subscriber exists first
-        const subscriber = await this.getSubscriber(subscriberPubkey);
-        if (!subscriber) {
-          throw new DatabaseError(
-            `Subscriber not found: ${subscriberPubkey}`,
-            "TA_SUBSCRIBER_NOT_FOUND",
-          );
-        }
-
         const now = Math.floor(Date.now() / 1000);
+
         await this.connection.run(
-          "UPDATE ta_subscribers SET is_active = FALSE, updated_at = $1 WHERE subscriber_pubkey = $2",
+          "UPDATE ta_subscribers SET is_active = FALSE, updated_at = $1 WHERE subscriber_pubkey = $2 AND is_active = TRUE",
           { 1: now, 2: subscriberPubkey },
         );
       });
@@ -147,7 +161,9 @@ export class TARepository {
     try {
       return await executeWithRetry(async () => {
         const result = await this.connection.run(
-          "SELECT * FROM ta_subscribers WHERE subscriber_pubkey = $1",
+          `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
+           FROM ta_subscribers
+           WHERE subscriber_pubkey = $1`,
           { 1: subscriberPubkey },
         );
 
@@ -163,7 +179,10 @@ export class TARepository {
         `Failed to get TA subscriber ${subscriberPubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
-      return null;
+      throw new DatabaseError(
+        `Failed to get TA subscriber: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_SUBSCRIBER_GET",
+      );
     }
   }
 
@@ -180,9 +199,13 @@ export class TARepository {
   ): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        // Check if subscriber exists first
-        const subscriber = await this.getSubscriber(subscriberPubkey);
-        if (!subscriber) {
+        // Verify existence explicitly; DuckDB UPDATE row counts are not reliable.
+        const existsResult = await this.connection.run(
+          "SELECT 1 FROM ta_subscribers WHERE subscriber_pubkey = $1 LIMIT 1",
+          { 1: subscriberPubkey },
+        );
+        const existsRows = await existsResult.getRows();
+        if (existsRows.length === 0) {
           throw new DatabaseError(
             `Subscriber not found: ${subscriberPubkey}`,
             "TA_SUBSCRIBER_NOT_FOUND",
@@ -236,7 +259,10 @@ export class TARepository {
         "Failed to get TA stats after retries:",
         error instanceof Error ? error.message : String(error),
       );
-      return { total: 0, active: 0 };
+      throw new DatabaseError(
+        `Failed to get TA stats: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_STATS_GET",
+      );
     }
   }
 

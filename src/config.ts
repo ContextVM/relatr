@@ -42,6 +42,12 @@ export const RelatrConfigSchema = z.object({
     .number()
     .positive()
     .default(60 * 60 * 1000 * 3),
+
+  // Optional features
+  taEnabled: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
+    .default(false),
 });
 
 /**
@@ -80,6 +86,8 @@ export function loadConfig(): RelatrConfig {
     validationSyncInterval: process.env.VALIDATION_SYNC_INTERVAL
       ? parseInt(process.env.VALIDATION_SYNC_INTERVAL, 10)
       : undefined,
+
+    taEnabled: process.env.TA_ENABLED,
   };
 
   const result = RelatrConfigSchema.safeParse(configData);

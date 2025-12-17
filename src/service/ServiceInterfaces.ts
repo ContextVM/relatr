@@ -71,7 +71,12 @@ export interface RelatrServiceDependencies {
   metadataRepository: MetadataRepository;
   metricsRepository: MetricsRepository;
   settingsRepository: SettingsRepository;
-  taRepository: TARepository;
+
+  /**
+   * Optional TA repository. TA is an operator-controlled feature and may be disabled.
+   */
+  taRepository?: TARepository;
+
   pubkeyMetadataFetcher: PubkeyMetadataFetcher;
   trustCalculator: TrustCalculator;
   searchService: ISearchService;

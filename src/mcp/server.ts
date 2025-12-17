@@ -41,7 +41,9 @@ export async function startMCPServer(): Promise<void> {
     registerCalculateTrustScoreTool(server, relatrService);
     registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
-    registerRegisterTAProviderTool(server, relatrService, taService);
+    if (taService) {
+      registerManageTAProviderTool(server, taService);
+    }
 
     // Setup graceful shutdown
     setupGracefulShutdown(relatrService);
@@ -350,49 +352,51 @@ function registerSearchProfilesTool(
 }
 
 /**
- * Register the register_ta_provider tool
+ * Register the manage_ta_provider tool
  */
-function registerRegisterTAProviderTool(
+function registerManageTAProviderTool(
   server: McpServer,
-  relatrService: RelatrService,
-  taService: TAService | null,
+  taService: TAService,
 ): void {
-  // Input schema (empty - client pubkey comes from _meta)
-  const inputSchema = z.object({});
+  // Input schema with action parameter
+  const inputSchema = z.object({
+    action: z
+      .enum(["get", "subscribe", "unsubscribe"])
+      .describe(
+        "Action to perform: 'get' to check status, 'subscribe' to activate, 'unsubscribe' to deactivate",
+      ),
+  });
 
-  // Output schema
+  // Output schema - unified response from manageTASub
   const outputSchema = z.object({
     success: z.boolean(),
     message: z.string(),
     subscriberPubkey: z.string(),
-    createdAt: z.number(),
+    isActive: z.boolean(),
+    createdAt: z.number().nullable(),
+    updatedAt: z.number().nullable(),
+    rank: z
+      .object({
+        published: z.boolean(),
+        rank: z.number(),
+        previousRank: z.number().nullable(),
+      })
+      .optional(),
   });
 
   server.registerTool(
-    "register_ta_provider",
+    "manage_ta_provider",
     {
-      title: "Register as TA Provider",
+      title: "Manage TA Provider",
       description:
-        "Register this Relatr server as your Trusted Assertions provider. The server will publish Kind 30382 events with trust rankings for pubkeys.",
+        "Manage your Trusted Assertions provider subscription. Check status, subscribe, or unsubscribe from TA services.",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
-    async (_, { _meta }) => {
+    async (params, { _meta }) => {
       try {
-        // Check if TA service is available
-        if (!taService) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: TA service not available.",
-              },
-            ],
-            isError: true,
-          };
-        }
-
         // Extract client pubkey from _meta (injected by CEP-16)
+        // NOTE: This is always hex when using NostrServerTransport with injectClientPubkey=true.
         const clientPubkey = _meta?.clientPubkey;
 
         if (!clientPubkey || typeof clientPubkey !== "string") {
@@ -407,29 +411,21 @@ function registerRegisterTAProviderTool(
           };
         }
 
-        // Validate pubkey format
-        const validatedPubkey = validateAndDecodePubkey(clientPubkey);
-        if (!validatedPubkey) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: Invalid client public key format",
-              },
-            ],
-            isError: true,
-          };
-        }
+        // Validate input
+        const action = params.action;
 
-        // Register subscriber using TA service
-        const result = await taService.registerSubscriber(validatedPubkey);
+        const result = await taService.manageTASub(action, clientPubkey);
+
         return {
           content: [],
           structuredContent: {
             success: result.success,
             message: result.message,
             subscriberPubkey: result.subscriberPubkey,
+            isActive: result.isActive,
             createdAt: result.createdAt,
+            updatedAt: result.updatedAt,
+            rank: result.rank,
           },
         };
       } catch (error) {
@@ -440,7 +436,7 @@ function registerRegisterTAProviderTool(
           content: [
             {
               type: "text",
-              text: `Error registering TA provider: ${errorMessage}`,
+              text: `Error managing TA provider: ${errorMessage}`,
             },
           ],
           isError: true,
