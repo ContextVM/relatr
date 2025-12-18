@@ -129,23 +129,31 @@ export class MetricsRepository {
             }
 
             // Bulk insert all new metrics in one multi-row statement
-            const rows: Array<{ pubkey: string; metricKey: string; metricValue: number }> =
-              [];
+            const rows: Array<{
+              pubkey: string;
+              metricKey: string;
+              metricValue: number;
+            }> = [];
 
             for (const m of metricsArray) {
               const metricEntries = m.metrics || {};
-              for (const [metricKey, metricValue] of Object.entries(metricEntries)) {
+              for (const [metricKey, metricValue] of Object.entries(
+                metricEntries,
+              )) {
                 if (typeof metricValue === "number") {
                   rows.push({ pubkey: m.pubkey, metricKey, metricValue });
                 }
               }
             }
 
-            if (rows.length > 0) {
-              const valuesClause = rows
+            // Chunk large inserts to avoid huge VALUES statements
+            const CHUNK_SIZE = 5000;
+            for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+              const chunk = rows.slice(i, i + CHUNK_SIZE);
+              const valuesClause = chunk
                 .map(
-                  (_, i) =>
-                    `($${i * 5 + 1}, $${i * 5 + 2}, $${i * 5 + 3}, $${i * 5 + 4}, $${i * 5 + 5})`,
+                  (_, j) =>
+                    `($${j * 5 + 1}, $${j * 5 + 2}, $${j * 5 + 3}, $${j * 5 + 4}, $${j * 5 + 5})`,
                 )
                 .join(", ");
 
@@ -155,8 +163,8 @@ export class MetricsRepository {
               `;
 
               const params: Record<string, string | number> = {};
-              rows.forEach((row, i) => {
-                const base = i * 5;
+              chunk.forEach((row, j) => {
+                const base = j * 5;
                 params[base + 1] = row.pubkey;
                 params[base + 2] = row.metricKey;
                 params[base + 3] = row.metricValue;

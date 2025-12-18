@@ -48,14 +48,20 @@ describe("DuckDB concurrency regression", () => {
     // - multiple save calls (also BEGIN/COMMIT)
     // If writes are not serialized, this commonly triggers nested transaction errors.
     const batch1 = pubkeys.slice(0, 10).map((pk, i) => makeMetrics(pk, i));
-    const batch2 = pubkeys.slice(5, 15).map((pk, i) => makeMetrics(pk, i + 100));
-    const batch3 = pubkeys.slice(10, 20).map((pk, i) => makeMetrics(pk, i + 200));
+    const batch2 = pubkeys
+      .slice(5, 15)
+      .map((pk, i) => makeMetrics(pk, i + 100));
+    const batch3 = pubkeys
+      .slice(10, 20)
+      .map((pk, i) => makeMetrics(pk, i + 200));
 
     const overlapping = [
       metricsRepository.saveBatch(batch1),
       metricsRepository.saveBatch(batch2),
       metricsRepository.saveBatch(batch3),
-      ...pubkeys.map((pk, i) => metricsRepository.save(pk, makeMetrics(pk, i + 300))),
+      ...pubkeys.map((pk, i) =>
+        metricsRepository.save(pk, makeMetrics(pk, i + 300)),
+      ),
     ];
 
     // We only care that nothing throws.

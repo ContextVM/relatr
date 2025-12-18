@@ -30,45 +30,66 @@ export class MetadataRepository {
         return await dbWriteQueue.runExclusive(async () => {
           const now = Math.floor(Date.now() / 1000);
 
-          // Extract pubkeys for deletion
-          const pubkeys = profiles.map((p) => p.pubkey);
+          // Start transaction
+          await this.connection.run("BEGIN TRANSACTION");
 
-          // Delete existing records in batch
-          if (pubkeys.length > 0) {
-            const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
-            await this.connection.run(
-              `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
-              Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
-            );
+          try {
+            // Extract pubkeys for deletion
+            const pubkeys = profiles.map((p) => p.pubkey);
+
+            // Delete existing records in batch
+            if (pubkeys.length > 0) {
+              const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+              await this.connection.run(
+                `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
+                Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
+              );
+            }
+
+            // Insert new records in batch using VALUES clause
+            const valuesClause = profiles
+              .map(
+                (_, i) =>
+                  `($${i * 7 + 1}, $${i * 7 + 2}, $${i * 7 + 3}, $${i * 7 + 4}, $${i * 7 + 5}, $${i * 7 + 6}, $${i * 7 + 7})`,
+              )
+              .join(", ");
+
+            const insertQuery = `
+              INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
+              VALUES ${valuesClause}
+            `;
+
+            // Build parameters object with proper type handling
+            const params: Record<string, string | null | number> = {};
+            profiles.forEach((profile, i) => {
+              const baseIndex = i * 7;
+              params[baseIndex + 1] = profile.pubkey;
+              params[baseIndex + 2] = profile.name || null;
+              params[baseIndex + 3] = profile.display_name || null;
+              params[baseIndex + 4] = profile.nip05 || null;
+              params[baseIndex + 5] = profile.lud16 || null;
+              params[baseIndex + 6] = profile.about || null;
+              params[baseIndex + 7] = now;
+            });
+
+            await this.connection.run(insertQuery, params);
+
+            // Commit transaction
+            await this.connection.run("COMMIT");
+          } catch (error) {
+            // Rollback on error
+            try {
+              await this.connection.run("ROLLBACK");
+            } catch (rollbackError) {
+              logger.error(
+                "Failed to rollback metadata transaction:",
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
+              );
+            }
+            throw error;
           }
-
-          // Insert new records in batch using VALUES clause
-          const valuesClause = profiles
-            .map(
-              (_, i) =>
-                `($${i * 7 + 1}, $${i * 7 + 2}, $${i * 7 + 3}, $${i * 7 + 4}, $${i * 7 + 5}, $${i * 7 + 6}, $${i * 7 + 7})`,
-            )
-            .join(", ");
-
-          const insertQuery = `
-            INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
-            VALUES ${valuesClause}
-          `;
-
-          // Build parameters object with proper type handling
-          const params: Record<string, string | null | number> = {};
-          profiles.forEach((profile, i) => {
-            const baseIndex = i * 7;
-            params[baseIndex + 1] = profile.pubkey;
-            params[baseIndex + 2] = profile.name || null;
-            params[baseIndex + 3] = profile.display_name || null;
-            params[baseIndex + 4] = profile.nip05 || null;
-            params[baseIndex + 5] = profile.lud16 || null;
-            params[baseIndex + 6] = profile.about || null;
-            params[baseIndex + 7] = now;
-          });
-
-          await this.connection.run(insertQuery, params);
         });
       });
     } catch (error) {

@@ -71,12 +71,33 @@ export class DatabaseManager {
       const schemaPath = join(__dirname, "duckdb-schema.sql");
       const schema = readFileSync(schemaPath, "utf-8");
 
-      // Execute schema in chunks
-      const statements = schema.split(";").filter((stmt) => stmt.trim());
-      for (const statement of statements) {
-        if (statement.trim()) {
-          await this.connection.run(statement);
+      // Start transaction for schema load
+      await this.connection.run("BEGIN TRANSACTION");
+
+      try {
+        // Execute schema in chunks
+        const statements = schema.split(";").filter((stmt) => stmt.trim());
+        for (const statement of statements) {
+          if (statement.trim()) {
+            await this.connection.run(statement);
+          }
         }
+
+        // Commit transaction
+        await this.connection.run("COMMIT");
+      } catch (error) {
+        // Rollback on error
+        try {
+          await this.connection.run("ROLLBACK");
+        } catch (rollbackError) {
+          logger.error(
+            "Failed to rollback schema transaction:",
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+          );
+        }
+        throw error;
       }
     } catch (error) {
       throw new DatabaseError(

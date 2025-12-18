@@ -174,11 +174,7 @@ function registerCalculateTrustScoresTool(
 ): void {
   const inputSchema = z.object({
     targetPubkeys: z
-      .array(
-        z
-          .string()
-          .min(1, "Target pubkey cannot be empty"),
-      )
+      .array(z.string().min(1, "Target pubkey cannot be empty"))
       .min(1, "targetPubkeys must contain at least one pubkey"),
   });
 
