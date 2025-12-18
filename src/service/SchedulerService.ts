@@ -39,7 +39,12 @@ export class SchedulerService implements ISchedulerService {
       this._isRunning = true;
       this.startBackgroundCleanup();
       this.startPeriodicSync();
-      this.startPeriodicValidationSync();
+
+      // IMPORTANT: run initial validation sync before we consider the service "started".
+      // This prevents client requests from racing with the first big write workload
+      // (metrics batch writes) on the shared DuckDB connection.
+      await this.startPeriodicValidationSync();
+
       logger.info("🔧 SchedulerService background processes started");
     } finally {
       this._isStarting = false;
@@ -282,26 +287,19 @@ export class SchedulerService implements ISchedulerService {
 
       // Fetch contact events for queued pubkeys with streaming to avoid memory accumulation
       let totalContactEvents = 0;
-      await fetchEventsForPubkeys(
-        pubkeysToProcess,
-        3, // kind 3 = contact lists
-        undefined,
-        this.pool,
-        undefined,
-        {
-          onBatch: async (events, batchIndex, totalBatches) => {
-            totalContactEvents += events.length;
+      await fetchEventsForPubkeys(pubkeysToProcess, 3, undefined, this.pool, {
+        onBatch: async (events, batchIndex, totalBatches) => {
+          totalContactEvents += events.length;
 
-            // Process contact events immediately to integrate into graph
-            if (events.length > 0 && this.socialGraph) {
-              await this.socialGraph.processContactEvents(events);
-              logger.debug(
-                `✅ Integrated batch ${batchIndex}/${totalBatches} with ${events.length} contact events into social graph`,
-              );
-            }
-          },
+          // Process contact events immediately to integrate into graph
+          if (events.length > 0 && this.socialGraph) {
+            await this.socialGraph.processContactEvents(events);
+            logger.debug(
+              `✅ Integrated batch ${batchIndex}/${totalBatches} with ${events.length} contact events into social graph`,
+            );
+          }
         },
-      );
+      });
 
       logger.info(
         `📥 Fetched ${totalContactEvents} contact events for ${pubkeysToProcess.length} pubkeys`,
@@ -401,11 +399,15 @@ export class SchedulerService implements ISchedulerService {
    * Start periodic validation sync
    * @private
    */
-  private startPeriodicValidationSync(): void {
+  private async startPeriodicValidationSync(): Promise<void> {
     if (this.validationInterval) {
       clearInterval(this.validationInterval);
+      this.validationInterval = null;
     }
-    this.syncValidations();
+
+    // Await the initial run (gates readiness).
+    await this.syncValidations();
+
     this.validationInterval = setInterval(async () => {
       try {
         if (this.isRunning()) {

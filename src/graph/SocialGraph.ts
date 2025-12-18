@@ -3,6 +3,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { SocialGraphError } from "../types";
 import type { NostrEvent } from "nostr-tools";
 import { logger } from "../utils/Logger";
+import { dbWriteQueue } from "@/database/DbWriteQueue";
 
 /**
  * Social graph operations wrapper for Relatr v2
@@ -413,7 +414,11 @@ export class SocialGraph {
    */
   async processContactEvents(contactEvents: NostrEvent[]): Promise<void> {
     this.ensureInitialized();
-    await this.graph!.ingestEvents(contactEvents);
+    // NOTE: ingestEvents mutates DuckDB tables. We use a shared DuckDB connection across the
+    // process, so we serialize all writes to avoid transaction-context conflicts.
+    await dbWriteQueue.runExclusive(async () => {
+      await this.graph!.ingestEvents(contactEvents);
+    });
   }
 
   /**

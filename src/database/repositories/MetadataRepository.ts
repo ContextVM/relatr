@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type NostrProfile } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
+import { dbWriteQueue } from "../DbWriteQueue";
 
 export interface SearchResult {
   pubkey: string;
@@ -26,22 +27,22 @@ export class MetadataRepository {
 
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
 
-        // Extract pubkeys for deletion
-        const pubkeys = profiles.map((p) => p.pubkey);
+          // Extract pubkeys for deletion
+          const pubkeys = profiles.map((p) => p.pubkey);
 
-        // Delete existing records in batch
-        if (pubkeys.length > 0) {
-          const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
-          await this.connection.run(
-            `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
-            Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
-          );
-        }
+          // Delete existing records in batch
+          if (pubkeys.length > 0) {
+            const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+            await this.connection.run(
+              `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
+              Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
+            );
+          }
 
-        // Insert new records in batch using VALUES clause
-        if (profiles.length > 0) {
+          // Insert new records in batch using VALUES clause
           const valuesClause = profiles
             .map(
               (_, i) =>
@@ -68,7 +69,7 @@ export class MetadataRepository {
           });
 
           await this.connection.run(insertQuery, params);
-        }
+        });
       });
     } catch (error) {
       logger.warn(

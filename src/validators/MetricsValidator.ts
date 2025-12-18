@@ -68,7 +68,9 @@ export class MetricsValidator {
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
     this.metricsRepository = metricsRepository;
-    this.cacheTtlSeconds = cacheTtlSeconds || 60 * 60 * 1000 * 48;
+    // cacheTtlSeconds is expressed in SECONDS (used with unix epoch seconds throughout the code).
+    // Keep it in seconds to avoid accidentally producing multi-year TTLs.
+    this.cacheTtlSeconds = cacheTtlSeconds ?? 60 * 60 * 48;
     this.metadataRepository = metadataRepository;
 
     // Create registry

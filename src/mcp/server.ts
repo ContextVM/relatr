@@ -177,11 +177,7 @@ function registerCalculateTrustScoresTool(
       .array(
         z
           .string()
-          .min(1, "Target pubkey cannot be empty")
-          .refine(
-            (value) => validateAndDecodePubkey(value) !== null,
-            "Target pubkey must be a valid hex, npub, or nprofile format",
-          ),
+          .min(1, "Target pubkey cannot be empty"),
       )
       .min(1, "targetPubkeys must contain at least one pubkey"),
   });

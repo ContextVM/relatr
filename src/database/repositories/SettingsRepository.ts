@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
+import { dbWriteQueue } from "../DbWriteQueue";
 
 export class SettingsRepository {
   private connection: DuckDBConnection;
@@ -36,11 +37,13 @@ export class SettingsRepository {
   async set(key: string, value: string): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
-        await this.connection.run(
-          "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)",
-          { 1: key, 2: value, 3: now },
-        );
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
+          await this.connection.run(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)",
+            { 1: key, 2: value, 3: now },
+          );
+        });
       });
     } catch (error) {
       logger.warn(

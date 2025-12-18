@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type TASubscriber } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
+import { dbWriteQueue } from "../DbWriteQueue";
 
 export class TARepository {
   private connection: DuckDBConnection;
@@ -25,31 +26,33 @@ export class TARepository {
   async addSubscriber(subscriberPubkey: string): Promise<TASubscriber> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
 
-        await this.connection.run(
-          `INSERT INTO ta_subscribers (subscriber_pubkey, created_at, updated_at, is_active)
-           VALUES ($1, $2, $3, TRUE)
-           ON CONFLICT (subscriber_pubkey) DO UPDATE SET
-             is_active = TRUE,
-             updated_at = $3`,
-          { 1: subscriberPubkey, 2: now, 3: now },
-        );
+          await this.connection.run(
+            `INSERT INTO ta_subscribers (subscriber_pubkey, created_at, updated_at, is_active)
+             VALUES ($1, $2, $3, TRUE)
+             ON CONFLICT (subscriber_pubkey) DO UPDATE SET
+               is_active = TRUE,
+               updated_at = $3`,
+            { 1: subscriberPubkey, 2: now, 3: now },
+          );
 
-        // Retrieve the created/updated record (explicit projection to match mapping)
-        const result = await this.connection.run(
-          `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
-           FROM ta_subscribers
-           WHERE subscriber_pubkey = $1`,
-          { 1: subscriberPubkey },
-        );
+          // Retrieve the created/updated record (explicit projection to match mapping)
+          const result = await this.connection.run(
+            `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
+             FROM ta_subscribers
+             WHERE subscriber_pubkey = $1`,
+            { 1: subscriberPubkey },
+          );
 
-        const rows = await result.getRows();
-        if (rows.length === 0) {
-          throw new Error("Failed to retrieve created subscriber");
-        }
+          const rows = await result.getRows();
+          if (rows.length === 0) {
+            throw new Error("Failed to retrieve created subscriber");
+          }
 
-        return this.mapRowToSubscriber(rows[0]);
+          return this.mapRowToSubscriber(rows[0]);
+        });
       });
     } catch (error) {
       logger.warn(
@@ -133,12 +136,14 @@ export class TARepository {
   async deactivateSubscriber(subscriberPubkey: string): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
 
-        await this.connection.run(
-          "UPDATE ta_subscribers SET is_active = FALSE, updated_at = $1 WHERE subscriber_pubkey = $2 AND is_active = TRUE",
-          { 1: now, 2: subscriberPubkey },
-        );
+          await this.connection.run(
+            "UPDATE ta_subscribers SET is_active = FALSE, updated_at = $1 WHERE subscriber_pubkey = $2 AND is_active = TRUE",
+            { 1: now, 2: subscriberPubkey },
+          );
+        });
       });
     } catch (error) {
       logger.warn(
@@ -199,23 +204,25 @@ export class TARepository {
   ): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        // Verify existence explicitly; DuckDB UPDATE row counts are not reliable.
-        const existsResult = await this.connection.run(
-          "SELECT 1 FROM ta_subscribers WHERE subscriber_pubkey = $1 LIMIT 1",
-          { 1: subscriberPubkey },
-        );
-        const existsRows = await existsResult.getRows();
-        if (existsRows.length === 0) {
-          throw new DatabaseError(
-            `Subscriber not found: ${subscriberPubkey}`,
-            "TA_SUBSCRIBER_NOT_FOUND",
+        return await dbWriteQueue.runExclusive(async () => {
+          // Verify existence explicitly; DuckDB UPDATE row counts are not reliable.
+          const existsResult = await this.connection.run(
+            "SELECT 1 FROM ta_subscribers WHERE subscriber_pubkey = $1 LIMIT 1",
+            { 1: subscriberPubkey },
           );
-        }
+          const existsRows = await existsResult.getRows();
+          if (existsRows.length === 0) {
+            throw new DatabaseError(
+              `Subscriber not found: ${subscriberPubkey}`,
+              "TA_SUBSCRIBER_NOT_FOUND",
+            );
+          }
 
-        await this.connection.run(
-          "UPDATE ta_subscribers SET latest_rank = $1, updated_at = $2 WHERE subscriber_pubkey = $3",
-          { 1: rank, 2: computedAt, 3: subscriberPubkey },
-        );
+          await this.connection.run(
+            "UPDATE ta_subscribers SET latest_rank = $1, updated_at = $2 WHERE subscriber_pubkey = $3",
+            { 1: rank, 2: computedAt, 3: subscriberPubkey },
+          );
+        });
       });
     } catch (error) {
       logger.warn(

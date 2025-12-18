@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type ProfileMetrics } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
+import { dbWriteQueue } from "../DbWriteQueue";
 
 export class MetricsRepository {
   private connection: DuckDBConnection;
@@ -15,55 +16,69 @@ export class MetricsRepository {
   async save(pubkey: string, metrics: ProfileMetrics): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
-        const expiresAt = now + this.ttlSeconds;
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const expiresAt = now + this.ttlSeconds;
 
-        // Start transaction
-        await this.connection.run("BEGIN TRANSACTION");
+          // Start transaction
+          await this.connection.run("BEGIN TRANSACTION");
 
-        try {
-          // Delete existing metrics for this pubkey
-          await this.connection.run(
-            "DELETE FROM profile_metrics WHERE pubkey = $1",
-            { 1: pubkey },
-          );
+          try {
+            // Delete existing metrics for this pubkey
+            await this.connection.run(
+              "DELETE FROM profile_metrics WHERE pubkey = $1",
+              { 1: pubkey },
+            );
 
-          // Insert new metrics
-          const metricEntries = metrics.metrics || {};
-          for (const [metricKey, metricValue] of Object.entries(
-            metricEntries,
-          )) {
-            if (typeof metricValue === "number") {
-              await this.connection.run(
-                `INSERT INTO profile_metrics (pubkey, metric_key, metric_value, computed_at, expires_at)
-               VALUES ($1, $2, $3, $4, $5)`,
-                {
-                  1: pubkey,
-                  2: metricKey,
-                  3: metricValue,
-                  4: now,
-                  5: expiresAt,
-                },
+            // Insert new metrics in a single multi-row statement (DuckDB prefers bulk ops)
+            const metricEntries = metrics.metrics || {};
+            const rows = Object.entries(metricEntries).filter(
+              (e): e is [string, number] => typeof e[1] === "number",
+            );
+
+            if (rows.length > 0) {
+              const valuesClause = rows
+                .map(
+                  (_, i) =>
+                    `($${i * 5 + 1}, $${i * 5 + 2}, $${i * 5 + 3}, $${i * 5 + 4}, $${i * 5 + 5})`,
+                )
+                .join(", ");
+
+              const insertQuery = `
+                INSERT INTO profile_metrics (pubkey, metric_key, metric_value, computed_at, expires_at)
+                VALUES ${valuesClause}
+              `;
+
+              const params: Record<string, string | number> = {};
+              rows.forEach(([metricKey, metricValue], i) => {
+                const base = i * 5;
+                params[base + 1] = pubkey;
+                params[base + 2] = metricKey;
+                params[base + 3] = metricValue;
+                params[base + 4] = now;
+                params[base + 5] = expiresAt;
+              });
+
+              await this.connection.run(insertQuery, params);
+            }
+
+            // Commit transaction
+            await this.connection.run("COMMIT");
+          } catch (error) {
+            // Rollback on error
+            try {
+              await this.connection.run("ROLLBACK");
+            } catch (rollbackError) {
+              logger.error(
+                "Failed to rollback transaction:",
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
               );
             }
+            throw error;
           }
-
-          // Commit transaction
-          await this.connection.run("COMMIT");
-        } catch (error) {
-          // Rollback on error
-          try {
-            await this.connection.run("ROLLBACK");
-          } catch (rollbackError) {
-            logger.error(
-              "Failed to rollback transaction:",
-              rollbackError instanceof Error
-                ? rollbackError.message
-                : String(rollbackError),
-            );
-          }
-          throw error;
-        }
+        });
       });
     } catch (error) {
       logger.warn(
@@ -88,69 +103,87 @@ export class MetricsRepository {
 
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const expiresAt = now + this.ttlSeconds;
 
-        // Start transaction
-        await this.connection.run("BEGIN TRANSACTION");
+          // Start transaction
+          await this.connection.run("BEGIN TRANSACTION");
 
-        try {
-          // Extract unique pubkeys from the batch
-          const pubkeys = [...new Set(metricsArray.map((m) => m.pubkey))];
+          try {
+            // Extract unique pubkeys from the batch
+            const pubkeys = [...new Set(metricsArray.map((m) => m.pubkey))];
 
-          // Delete existing metrics for all pubkeys in the batch
-          if (pubkeys.length > 0) {
-            const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
-            const params: Record<string, string> = {};
-            pubkeys.forEach((pubkey, i) => {
-              params[(i + 1).toString()] = pubkey;
-            });
+            // Delete existing metrics for all pubkeys in the batch
+            if (pubkeys.length > 0) {
+              const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+              const params: Record<string, string> = {};
+              pubkeys.forEach((pubkey, i) => {
+                params[(i + 1).toString()] = pubkey;
+              });
 
-            await this.connection.run(
-              `DELETE FROM profile_metrics WHERE pubkey IN (${placeholders})`,
-              params,
-            );
-          }
+              await this.connection.run(
+                `DELETE FROM profile_metrics WHERE pubkey IN (${placeholders})`,
+                params,
+              );
+            }
 
-          // Insert all new metrics in batch
-          for (const metrics of metricsArray) {
-            const expiresAt = now + this.ttlSeconds;
-            const metricEntries = metrics.metrics || {};
+            // Bulk insert all new metrics in one multi-row statement
+            const rows: Array<{ pubkey: string; metricKey: string; metricValue: number }> =
+              [];
 
-            for (const [metricKey, metricValue] of Object.entries(
-              metricEntries,
-            )) {
-              if (typeof metricValue === "number") {
-                await this.connection.run(
-                  `INSERT INTO profile_metrics (pubkey, metric_key, metric_value, computed_at, expires_at)
-                   VALUES ($1, $2, $3, $4, $5)`,
-                  {
-                    1: metrics.pubkey,
-                    2: metricKey,
-                    3: metricValue,
-                    4: now,
-                    5: expiresAt,
-                  },
-                );
+            for (const m of metricsArray) {
+              const metricEntries = m.metrics || {};
+              for (const [metricKey, metricValue] of Object.entries(metricEntries)) {
+                if (typeof metricValue === "number") {
+                  rows.push({ pubkey: m.pubkey, metricKey, metricValue });
+                }
               }
             }
-          }
 
-          // Commit transaction
-          await this.connection.run("COMMIT");
-        } catch (error) {
-          // Rollback on error
-          try {
-            await this.connection.run("ROLLBACK");
-          } catch (rollbackError) {
-            logger.error(
-              "Failed to rollback transaction:",
-              rollbackError instanceof Error
-                ? rollbackError.message
-                : String(rollbackError),
-            );
+            if (rows.length > 0) {
+              const valuesClause = rows
+                .map(
+                  (_, i) =>
+                    `($${i * 5 + 1}, $${i * 5 + 2}, $${i * 5 + 3}, $${i * 5 + 4}, $${i * 5 + 5})`,
+                )
+                .join(", ");
+
+              const insertQuery = `
+                INSERT INTO profile_metrics (pubkey, metric_key, metric_value, computed_at, expires_at)
+                VALUES ${valuesClause}
+              `;
+
+              const params: Record<string, string | number> = {};
+              rows.forEach((row, i) => {
+                const base = i * 5;
+                params[base + 1] = row.pubkey;
+                params[base + 2] = row.metricKey;
+                params[base + 3] = row.metricValue;
+                params[base + 4] = now;
+                params[base + 5] = expiresAt;
+              });
+
+              await this.connection.run(insertQuery, params);
+            }
+
+            // Commit transaction
+            await this.connection.run("COMMIT");
+          } catch (error) {
+            // Rollback on error
+            try {
+              await this.connection.run("ROLLBACK");
+            } catch (rollbackError) {
+              logger.error(
+                "Failed to rollback transaction:",
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
+              );
+            }
+            throw error;
           }
-          throw error;
-        }
+        });
       });
     } catch (error) {
       logger.warn(
