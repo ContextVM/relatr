@@ -17,6 +17,12 @@ export interface RelatrConfig {
   syncInterval: number;
   cleanupInterval: number;
   validationSyncInterval: number;
+
+  /**
+   * Optional feature flag: enable Trusted Assertions
+   * (NIP-85 kind 30382) publishing. Controlled by the operator.
+   */
+  taEnabled: boolean;
 }
 export interface MetricWeights {
   distanceWeight: number;
@@ -50,7 +56,6 @@ export interface ScoreComponents {
 export interface CalculateTrustScoreParams {
   sourcePubkey?: string;
   targetPubkey: string;
-  weightingScheme?: "default" | "social" | "validation" | "strict";
 }
 
 export interface StatsResult {
@@ -79,7 +84,6 @@ export interface SearchProfilesParams {
   limit?: number;
   sourcePubkey?: string;
   extendToNostr?: boolean;
-  weightingScheme?: WeightingScheme;
 }
 
 export interface SearchProfileResult {
@@ -162,5 +166,18 @@ export class SocialGraphError extends RelatrError {
   }
 }
 
-// Weighting scheme type
-export type WeightingScheme = "default" | "social" | "validation" | "strict";
+// TA-related types
+export interface TASubscriber {
+  id: number;
+  subscriberPubkey: string;
+  latestRank: number | null;
+  createdAt: number;
+  updatedAt: number;
+  isActive: boolean;
+}
+
+export interface TARankUpdateResult {
+  published: boolean;
+  rank: number;
+  previousRank: number | null;
+}

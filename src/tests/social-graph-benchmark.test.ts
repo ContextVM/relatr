@@ -18,7 +18,7 @@ describe("SocialGraph - Benchmark Tests", () => {
     // Initialize DuckDB connection and social graph with temporary database
     const dbManager = DatabaseManager.getInstance(":memory:");
     await dbManager.initialize();
-    const db = dbManager.getConnection();
+    const db = dbManager.getWriteConnection();
 
     // Initialize social graph with shared connection
     socialGraph = new SocialGraph(db);

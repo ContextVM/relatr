@@ -5,7 +5,6 @@ import type {
   RelatrConfig,
   SearchProfilesParams,
   SearchProfilesResult,
-  WeightingScheme,
 } from "../types";
 import type { MetadataRepository } from "../database/repositories/MetadataRepository";
 import type { SocialGraph } from "../graph/SocialGraph";
@@ -39,13 +38,7 @@ export class SearchService implements ISearchService {
   async searchProfiles(
     params: SearchProfilesParams,
   ): Promise<SearchProfilesResult> {
-    const {
-      query,
-      limit = 5,
-      sourcePubkey,
-      weightingScheme,
-      extendToNostr,
-    } = params;
+    const { query, limit = 5, sourcePubkey, extendToNostr } = params;
 
     if (!query || typeof query !== "string") {
       throw new ValidationError("Invalid search query", "query");
@@ -88,7 +81,6 @@ export class SearchService implements ISearchService {
       [...profilesForScoring, ...nostrProfiles],
       nostrProfiles,
       effectiveSourcePubkey,
-      weightingScheme,
       limit,
       startTime,
     );
@@ -197,14 +189,12 @@ export class SearchService implements ISearchService {
       isExactMatch: boolean;
     }[],
     effectiveSourcePubkey: string,
-    weightingScheme: WeightingScheme | undefined,
     limit: number,
     startTime: number,
   ): Promise<SearchProfilesResult> {
     const profilesWithScores = await this.calculateProfileScores(
       finalProfiles,
       effectiveSourcePubkey,
-      weightingScheme,
     );
 
     // Sort by trust score and return top results
@@ -234,7 +224,6 @@ export class SearchService implements ISearchService {
       isExactMatch: boolean;
     }[],
     effectiveSourcePubkey: string,
-    weightingScheme?: WeightingScheme,
   ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]> {
     if (profiles.length === 0) {
       return [];
@@ -252,13 +241,6 @@ export class SearchService implements ISearchService {
           effectiveSourcePubkey,
         ),
       ]);
-
-      // Apply weighting scheme if specified
-      if (weightingScheme) {
-        const weightProfileManager =
-          this.metricsValidator.getWeightProfileManager();
-        weightProfileManager.activateProfile(weightingScheme);
-      }
 
       // Calculate trust scores with pre-fetched data
       const results = profiles.map(
@@ -322,12 +304,7 @@ export class SearchService implements ISearchService {
         `Batch scoring failed, falling back to individual scoring:`,
         error instanceof Error ? error.message : String(error),
       );
-      // Fall back to the original sequential method if batch fails
-      return this.calculateProfileScores(
-        profiles,
-        effectiveSourcePubkey,
-        weightingScheme,
-      );
+      return this.calculateProfileScores(profiles, effectiveSourcePubkey);
     }
   }
 
@@ -354,8 +331,11 @@ export class SearchService implements ISearchService {
           relevanceScore += weight * 0.85;
         } else if (valueLower.includes(queryLower)) {
           relevanceScore += weight * 0.55;
-        } else if (new RegExp(`\\b${queryLower}\\b`, "i").test(fieldValue)) {
-          relevanceScore += weight * 0.35;
+        } else {
+          const wordBoundaryRegex = new RegExp(`\\b${queryLower}\\b`, "i");
+          if (wordBoundaryRegex.test(fieldValue)) {
+            relevanceScore += weight * 0.35;
+          }
         }
       }
     }
@@ -366,7 +346,7 @@ export class SearchService implements ISearchService {
       1.0 + normalizedRelevanceScore * (maxMultiplier - 1.0);
 
     return {
-      multiplier: relevanceMultiplier,
+      multiplier: Number(relevanceMultiplier.toFixed(3)), // Avoid floating point precision issues
       isExactMatch,
     };
   }

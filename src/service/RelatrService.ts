@@ -10,6 +10,7 @@ import type {
 import { ValidationError, RelatrError } from '../types';
 import type { RelatrServiceDependencies, IRelatrService } from './ServiceInterfaces';
 import { logger } from '../utils/Logger';
+import { isHexKey } from 'applesauce-core/helpers';
 
 export class RelatrService implements IRelatrService {
     private initialized = false;
@@ -35,18 +36,60 @@ export class RelatrService implements IRelatrService {
     }
 
     async calculateTrustScore(params: CalculateTrustScoreParams): Promise<TrustScore> {
-        if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
-        
-        const { sourcePubkey, targetPubkey, weightingScheme } = params;
-
-        if (!targetPubkey || typeof targetPubkey !== 'string') {
-            throw new ValidationError('Invalid target pubkey', 'targetPubkey');
-        }
-
-        // Decode target pubkey from any supported format (hex, npub, nprofile)
-        const decodedTargetPubkey = validateAndDecodePubkey(targetPubkey);
+        // Validate and decode target pubkey once
+        const decodedTargetPubkey = validateAndDecodePubkey(params.targetPubkey);
         if (!decodedTargetPubkey) {
             throw new ValidationError('Invalid target pubkey format. Must be hex, npub, or nprofile', 'targetPubkey');
+        }
+
+        const results = await this.calculateTrustScoresBatch({
+            sourcePubkey: params.sourcePubkey,
+            targetPubkeys: [decodedTargetPubkey] // Pass already-decoded hex to avoid re-validation
+        });
+
+        const trustScore = results.get(decodedTargetPubkey);
+        if (!trustScore) {
+            throw new RelatrError('Trust calculation failed: missing trust score result', 'CALCULATE_TRUST');
+        }
+
+        return trustScore;
+    }
+
+    /**
+     * Calculate trust scores for multiple target pubkeys in a single batch.
+     *
+     * Notes:
+     * - Inputs may be hex, npub, or nprofile; all are decoded to hex internally.
+     */
+    async calculateTrustScoresBatch(params: {
+        sourcePubkey?: string;
+        targetPubkeys: string[];
+    }): Promise<Map<string, TrustScore>> {
+        if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
+
+        const { sourcePubkey, targetPubkeys } = params;
+
+        if (!targetPubkeys || !Array.isArray(targetPubkeys) || targetPubkeys.length === 0) {
+            throw new ValidationError('Invalid target pubkeys', 'targetPubkeys');
+        }
+
+        // Validate targets - assume they're already decoded hex from callers
+        const decodedTargetPubkeys: string[] = [];
+        for (const targetPubkey of targetPubkeys) {
+            if (!targetPubkey || typeof targetPubkey !== 'string') {
+                throw new ValidationError('Invalid target pubkey', 'targetPubkeys');
+            }
+            // Skip re-decoding if it's already hex (64 char hex string)
+            if (isHexKey(targetPubkey)) {
+                decodedTargetPubkeys.push(targetPubkey);
+            } else {
+                // Fallback: decode if caller passed non-hex format
+                const decoded = validateAndDecodePubkey(targetPubkey);
+                if (!decoded) {
+                    throw new ValidationError('Invalid target pubkey format. Must be hex, npub, or nprofile', 'targetPubkeys');
+                }
+                decodedTargetPubkeys.push(decoded);
+            }
         }
 
         const effectiveSourcePubkey = sourcePubkey || this.config.defaultSourcePubkey;
@@ -54,26 +97,40 @@ export class RelatrService implements IRelatrService {
             throw new ValidationError('Invalid source pubkey', 'sourcePubkey');
         }
 
-        // Decode source pubkey from any supported format (hex, npub, nprofile)
         const decodedSourcePubkey = validateAndDecodePubkey(effectiveSourcePubkey);
         if (!decodedSourcePubkey) {
             throw new ValidationError('Invalid source pubkey format. Must be hex, npub, or nprofile', 'sourcePubkey');
         }
 
         try {
-            const distance = await this.socialGraph.getDistance(decodedTargetPubkey);
+            // Pre-fetch distances + metrics in parallel
+            const [distances, metricsMap] = await Promise.all([
+                this.socialGraph.getDistancesBatch(decodedTargetPubkeys),
+                this.metricsValidator.validateAllBatch(decodedTargetPubkeys, decodedSourcePubkey),
+            ]);
 
-            const metrics = await this.metricsValidator.validateAll(decodedTargetPubkey, decodedSourcePubkey);
-            if (weightingScheme) {
-                const weightProfileManager = this.metricsValidator.getWeightProfileManager();
-                weightProfileManager.activateProfile(weightingScheme);
+            const trustScores = new Map<string, TrustScore>();
+
+            for (const targetHex of decodedTargetPubkeys) {
+                const distance = distances.get(targetHex) ?? 1000;
+                const metrics = metricsMap.get(targetHex);
+
+                if (!metrics) {
+                    // validateAllBatch should return a metrics object for each pubkey, but keep safe behavior.
+                    continue;
+                }
+
+                const trustScore = this.trustCalculator.calculate(
+                    decodedSourcePubkey,
+                    targetHex,
+                    metrics,
+                    distance ?? 1000,
+                );
+
+                trustScores.set(targetHex, trustScore);
             }
 
-            const trustScore = this.trustCalculator.calculate(
-                decodedSourcePubkey, decodedTargetPubkey, metrics, distance
-            );
-            return trustScore;
-
+            return trustScores;
         } catch (error) {
             if (error instanceof RelatrError || error instanceof ValidationError) {
                 throw error;

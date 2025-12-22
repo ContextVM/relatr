@@ -44,13 +44,36 @@ export class Logger {
 
     if (args.length > 0) {
       return `${baseMessage} ${args
-        .map((arg) =>
-          typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg),
-        )
+        .map((arg) => this.serializeArg(arg))
         .join(" ")}`;
     }
 
     return baseMessage;
+  }
+
+  private serializeArg(arg: unknown): string {
+    if (arg instanceof Error) {
+      const errorObj: Record<string, unknown> = {
+        name: arg.name,
+        message: arg.message,
+        stack: arg.stack,
+      };
+      if (arg.cause) {
+        errorObj.cause = this.serializeArg(arg.cause);
+      }
+      return JSON.stringify(errorObj, null, 2);
+    }
+
+    if (typeof arg === "object" && arg !== null) {
+      try {
+        return JSON.stringify(arg, null, 2);
+      } catch {
+        // If JSON.stringify fails (e.g., circular references), fall back to String
+        return String(arg);
+      }
+    }
+
+    return String(arg);
   }
 
   debug(message: string, ...args: unknown[]): void {

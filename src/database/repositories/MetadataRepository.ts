@@ -2,6 +2,7 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError, type NostrProfile } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
+import { dbWriteQueue } from "../DbWriteQueue";
 
 export interface SearchResult {
   pubkey: string;
@@ -11,10 +12,15 @@ export interface SearchResult {
 }
 
 export class MetadataRepository {
-  private connection: DuckDBConnection;
+  private readConnection: DuckDBConnection;
+  private writeConnection: DuckDBConnection;
 
-  constructor(connection: DuckDBConnection) {
-    this.connection = connection;
+  constructor(
+    readConnection: DuckDBConnection,
+    writeConnection: DuckDBConnection,
+  ) {
+    this.readConnection = readConnection;
+    this.writeConnection = writeConnection;
   }
 
   async save(profile: NostrProfile): Promise<void> {
@@ -26,49 +32,70 @@ export class MetadataRepository {
 
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
 
-        // Extract pubkeys for deletion
-        const pubkeys = profiles.map((p) => p.pubkey);
+          // Start transaction
+          await this.writeConnection.run("BEGIN TRANSACTION");
 
-        // Delete existing records in batch
-        if (pubkeys.length > 0) {
-          const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
-          await this.connection.run(
-            `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
-            Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
-          );
-        }
+          try {
+            // Extract pubkeys for deletion
+            const pubkeys = profiles.map((p) => p.pubkey);
 
-        // Insert new records in batch using VALUES clause
-        if (profiles.length > 0) {
-          const valuesClause = profiles
-            .map(
-              (_, i) =>
-                `($${i * 7 + 1}, $${i * 7 + 2}, $${i * 7 + 3}, $${i * 7 + 4}, $${i * 7 + 5}, $${i * 7 + 6}, $${i * 7 + 7})`,
-            )
-            .join(", ");
+            // Delete existing records in batch
+            if (pubkeys.length > 0) {
+              const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
+              await this.writeConnection.run(
+                `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
+                Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
+              );
+            }
 
-          const insertQuery = `
-            INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
-            VALUES ${valuesClause}
-          `;
+            // Insert new records in batch using VALUES clause
+            const valuesClause = profiles
+              .map(
+                (_, i) =>
+                  `($${i * 7 + 1}, $${i * 7 + 2}, $${i * 7 + 3}, $${i * 7 + 4}, $${i * 7 + 5}, $${i * 7 + 6}, $${i * 7 + 7})`,
+              )
+              .join(", ");
 
-          // Build parameters object with proper type handling
-          const params: Record<string, string | null | number> = {};
-          profiles.forEach((profile, i) => {
-            const baseIndex = i * 7;
-            params[baseIndex + 1] = profile.pubkey;
-            params[baseIndex + 2] = profile.name || null;
-            params[baseIndex + 3] = profile.display_name || null;
-            params[baseIndex + 4] = profile.nip05 || null;
-            params[baseIndex + 5] = profile.lud16 || null;
-            params[baseIndex + 6] = profile.about || null;
-            params[baseIndex + 7] = now;
-          });
+            const insertQuery = `
+              INSERT INTO pubkey_metadata (pubkey, name, display_name, nip05, lud16, about, created_at)
+              VALUES ${valuesClause}
+            `;
 
-          await this.connection.run(insertQuery, params);
-        }
+            // Build parameters object with proper type handling
+            const params: Record<string, string | null | number> = {};
+            profiles.forEach((profile, i) => {
+              const baseIndex = i * 7;
+              params[baseIndex + 1] = profile.pubkey;
+              params[baseIndex + 2] = profile.name || null;
+              params[baseIndex + 3] = profile.display_name || null;
+              params[baseIndex + 4] = profile.nip05 || null;
+              params[baseIndex + 5] = profile.lud16 || null;
+              params[baseIndex + 6] = profile.about || null;
+              params[baseIndex + 7] = now;
+            });
+
+            await this.writeConnection.run(insertQuery, params);
+
+            // Commit transaction
+            await this.writeConnection.run("COMMIT");
+          } catch (error) {
+            // Rollback on error
+            try {
+              await this.writeConnection.run("ROLLBACK");
+            } catch (rollbackError) {
+              logger.error(
+                "Failed to rollback metadata transaction:",
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
+              );
+            }
+            throw error;
+          }
+        });
       });
     } catch (error) {
       logger.warn(
@@ -85,7 +112,7 @@ export class MetadataRepository {
   async get(pubkey: string): Promise<NostrProfile | null> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT pubkey, name, display_name, nip05, lud16, about
            FROM pubkey_metadata
            WHERE pubkey = $1`,
@@ -133,7 +160,7 @@ export class MetadataRepository {
           params[(i + 1).toString()] = pubkey;
         });
 
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT pubkey, name, display_name, nip05, lud16, about
            FROM pubkey_metadata
            WHERE pubkey IN (${placeholders})`,
@@ -191,7 +218,7 @@ export class MetadataRepository {
         // but not so many that we process thousands of profiles
         const candidateLimit = Math.max(limit * 20, 100);
 
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `
         WITH ranked_matches AS (
           SELECT
@@ -333,7 +360,7 @@ export class MetadataRepository {
   async getStats(): Promise<{ totalEntries: number }> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           "SELECT COUNT(*) as count FROM pubkey_metadata",
         );
         const rows = await result.getRows();

@@ -19,6 +19,7 @@ import type { PubkeyMetadataFetcher } from "../graph/PubkeyMetadataFetcher";
 import type { MetricsRepository } from "../database/repositories/MetricsRepository";
 import type { MetadataRepository } from "../database/repositories/MetadataRepository";
 import type { SettingsRepository } from "../database/repositories/SettingsRepository";
+import type { TARepository } from "../database/repositories/TARepository";
 import type { TrustCalculator } from "../trust/TrustCalculator";
 
 export interface ISearchService {
@@ -30,7 +31,6 @@ export interface ISearchService {
       isExactMatch: boolean;
     }[],
     sourcePubkey: string,
-    weightingScheme?: string,
   ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]>;
   calculateRelevanceMultiplier(
     profile: NostrProfile,
@@ -70,6 +70,12 @@ export interface RelatrServiceDependencies {
   metadataRepository: MetadataRepository;
   metricsRepository: MetricsRepository;
   settingsRepository: SettingsRepository;
+
+  /**
+   * Optional TA repository. TA is an operator-controlled feature and may be disabled.
+   */
+  taRepository?: TARepository;
+
   pubkeyMetadataFetcher: PubkeyMetadataFetcher;
   trustCalculator: TrustCalculator;
   searchService: ISearchService;

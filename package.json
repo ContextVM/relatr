@@ -17,24 +17,24 @@
     "@types/bun": "latest",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "eslint": "^9.39.1",
+    "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.7.4",
-    "typescript-eslint": "^8.49.0"
+    "typescript-eslint": "^8.50.0"
   },
   "peerDependencies": {
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.1.40",
+    "@contextvm/sdk": "^0.1.46",
     "@duckdb/node-api": "^1.4.2-r.1",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
     "nostr-social-duck": "^0.1.24",
-    "nostr-tools": "^2.19.2",
+    "nostr-tools": "^2.19.4",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {

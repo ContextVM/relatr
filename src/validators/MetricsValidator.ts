@@ -1,10 +1,6 @@
-import type { ProfileMetrics, MetricWeights, NostrProfile } from "../types";
+import type { ProfileMetrics, NostrProfile } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import {
-  WeightProfileManager,
-  type CoverageValidationResult,
-} from "./weight-profiles";
 import {
   ValidationRegistry,
   type ValidationContext,
@@ -14,8 +10,8 @@ import {
 import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { RelayPool } from "applesauce-relay";
 import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
-import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 import { logger } from "@/utils/Logger";
+import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -29,7 +25,6 @@ export class MetricsValidator {
   private timeoutMs: number = 10000;
   private cacheTtlSeconds: number = 3600;
   private registry: ValidationRegistry;
-  private weightProfileManager: WeightProfileManager;
   private metadataRepository: MetadataRepository;
 
   /**
@@ -39,7 +34,6 @@ export class MetricsValidator {
    * @param graphManager - SocialGraph instance for reciprocity checks
    * @param metricsRepository - Repository for storing profile metrics
    * @param plugins - Array of validation plugins to register (defaults to all available plugins)
-   * @param weightProfileManager - Optional weight profile manager
    */
   constructor(
     pool: RelayPool,
@@ -49,7 +43,6 @@ export class MetricsValidator {
     metadataRepository: MetadataRepository,
     cacheTtlSeconds?: number,
     plugins: ValidationPlugin[] = ALL_PLUGINS,
-    weightProfileManager?: WeightProfileManager,
   ) {
     if (!pool) {
       throw new ValidationError("RelayPool instance is required");
@@ -75,14 +68,13 @@ export class MetricsValidator {
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
     this.metricsRepository = metricsRepository;
-    this.cacheTtlSeconds = cacheTtlSeconds || 60 * 60 * 1000 * 48;
+    // cacheTtlSeconds is expressed in SECONDS (used with unix epoch seconds throughout the code).
+    // Keep it in seconds to avoid accidentally producing multi-year TTLs.
+    this.cacheTtlSeconds = cacheTtlSeconds ?? 60 * 60 * 48;
     this.metadataRepository = metadataRepository;
-    // Initialize weight profile manager
-    this.weightProfileManager =
-      weightProfileManager || new WeightProfileManager();
 
-    // Create registry with weight profile manager
-    this.registry = new ValidationRegistry(this.weightProfileManager);
+    // Create registry
+    this.registry = new ValidationRegistry();
 
     // Register provided plugins
     for (const plugin of plugins) {
@@ -373,46 +365,6 @@ export class MetricsValidator {
    */
   getRegisteredPlugins(): ValidationPlugin[] {
     return this.registry.getAll();
-  }
-
-  /**
-   * Get weights for all registered validation plugins
-   * @returns Record of plugin weights
-   */
-  getPluginWeights(): Record<string, number> {
-    return this.registry.getWeights();
-  }
-
-  /**
-   * Get the weight profile manager
-   * @returns WeightProfileManager instance
-   */
-  getWeightProfileManager(): WeightProfileManager {
-    return this.weightProfileManager;
-  }
-
-  /**
-   * Activate a weight profile by name
-   * @param profileName - Name of the profile to activate
-   */
-  activateWeightProfile(profileName: string): void {
-    this.weightProfileManager.activateProfile(profileName);
-  }
-
-  /**
-   * Get all weights from the active profile
-   * @returns MetricWeights object with all current weights
-   */
-  getWeights(): MetricWeights {
-    return this.weightProfileManager.getAllWeights();
-  }
-
-  /**
-   * Validate coverage between registered plugins and active profile weights
-   * @returns Coverage validation result
-   */
-  validateCoverage(): CoverageValidationResult {
-    return this.registry.validateCoverage();
   }
 
   /**

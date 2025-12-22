@@ -1,7 +1,21 @@
 import { normalizeToPubkey } from "applesauce-core/helpers";
-import type { RelatrConfig } from "./types";
-import { WeightProfileManager } from "./validators/weight-profiles";
+import type { MetricWeights, RelatrConfig } from "./types";
 import { z } from "zod";
+
+/**
+ * Canonical default metric weighting scheme used by trust scoring.
+ * Keep this as the single source of truth (tests + runtime).
+ */
+export const DEFAULT_METRIC_WEIGHTS: MetricWeights = {
+  distanceWeight: 0.5,
+  validators: {
+    nip05Valid: 0.15,
+    lightningAddress: 0.1,
+    eventKind10002: 0.1,
+    reciprocity: 0.1,
+    isRootNip05: 0.05,
+  },
+};
 
 const GIGI_PUBKEY =
   "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93";
@@ -42,6 +56,12 @@ export const RelatrConfigSchema = z.object({
     .number()
     .positive()
     .default(60 * 60 * 1000 * 3),
+
+  // Optional features
+  taEnabled: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
+    .default(false),
 });
 
 /**
@@ -80,6 +100,8 @@ export function loadConfig(): RelatrConfig {
     validationSyncInterval: process.env.VALIDATION_SYNC_INTERVAL
       ? parseInt(process.env.VALIDATION_SYNC_INTERVAL, 10)
       : undefined,
+
+    taEnabled: process.env.TA_ENABLED,
   };
 
   const result = RelatrConfigSchema.safeParse(configData);
@@ -92,74 +114,4 @@ export function loadConfig(): RelatrConfig {
   }
 
   return result.data;
-}
-
-/**
- * Create a WeightProfileManager with all preset profiles registered
- * @returns WeightProfileManager instance with all presets
- */
-export function createWeightProfileManager(): WeightProfileManager {
-  const manager = new WeightProfileManager();
-
-  // Register all preset profiles
-  manager.registerProfile({
-    name: "default",
-    description:
-      "Balanced approach favoring social graph (50%) with moderate profile validation",
-    distanceWeight: 0.5,
-    validatorWeights: new Map([
-      ["nip05Valid", 0.15],
-      ["lightningAddress", 0.1],
-      ["eventKind10002", 0.1],
-      ["reciprocity", 0.1],
-      ["isRootNip05", 0.05],
-    ]),
-  });
-
-  manager.registerProfile({
-    name: "social",
-    description:
-      "Heavy emphasis on social graph proximity (70%), trusts the network",
-    distanceWeight: 0.7,
-    validatorWeights: new Map([
-      ["nip05Valid", 0.1],
-      ["lightningAddress", 0.05],
-      ["eventKind10002", 0.05],
-      ["reciprocity", 0.1],
-      ["isRootNip05", 0.0],
-    ]),
-  });
-
-  manager.registerProfile({
-    name: "validation",
-    description:
-      "Heavy emphasis on profile validations (60%), trusts verified identities",
-    distanceWeight: 0.25,
-    validatorWeights: new Map([
-      ["nip05Valid", 0.25],
-      ["lightningAddress", 0.2],
-      ["eventKind10002", 0.15],
-      ["reciprocity", 0.15],
-      ["isRootNip05", 0.1],
-    ]),
-  });
-
-  manager.registerProfile({
-    name: "strict",
-    description:
-      "Balanced but demanding - requires both strong connections AND strong validations",
-    distanceWeight: 0.4,
-    validatorWeights: new Map([
-      ["nip05Valid", 0.25],
-      ["lightningAddress", 0.15],
-      ["eventKind10002", 0.1],
-      ["reciprocity", 0.1],
-      ["isRootNip05", 0.05],
-    ]),
-  });
-
-  // Activate default profile
-  manager.activateProfile("default");
-
-  return manager;
 }

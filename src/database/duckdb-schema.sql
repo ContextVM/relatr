@@ -39,3 +39,25 @@ CREATE TABLE IF NOT EXISTS settings (
     value VARCHAR NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+-- Create sequence for ta_subscribers id
+CREATE SEQUENCE IF NOT EXISTS seq_ta_subscribers_id;
+
+-- Table 4: Trusted Assertions Subscribers
+CREATE TABLE IF NOT EXISTS ta_subscribers (
+    id INTEGER PRIMARY KEY DEFAULT nextval('seq_ta_subscribers_id'),
+    subscriber_pubkey VARCHAR(64) NOT NULL,
+    latest_rank INTEGER, -- Latest computed rank (0-100)
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    UNIQUE(subscriber_pubkey)
+);
+
+-- Indexes for TA subscribers table
+CREATE INDEX IF NOT EXISTS idx_ta_subscribers_pubkey
+    ON ta_subscribers(subscriber_pubkey);
+CREATE INDEX IF NOT EXISTS idx_ta_subscribers_active
+    ON ta_subscribers(is_active);
+CREATE INDEX IF NOT EXISTS idx_ta_subscribers_created
+    ON ta_subscribers(created_at);

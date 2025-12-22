@@ -9,6 +9,7 @@ import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
+import { TAService } from "../service/TAService.js";
 import type { SearchProfileResult } from "../types.js";
 import { logger } from "../utils/Logger.js";
 
@@ -20,12 +21,15 @@ import { logger } from "../utils/Logger.js";
  */
 export async function startMCPServer(): Promise<void> {
   let relatrService: RelatrService | null = null;
+  let taService: TAService | null = null;
   let server: McpServer | null = null;
 
   try {
     // Load configuration and initialize RelatrService using factory
     const config = loadConfig();
-    relatrService = await RelatrFactory.createRelatrService(config);
+    const services = await RelatrFactory.createRelatrService(config);
+    relatrService = services.relatrService;
+    taService = services.taService;
 
     // Create MCP server
     server = new McpServer({
@@ -35,8 +39,12 @@ export async function startMCPServer(): Promise<void> {
 
     // Register tools
     registerCalculateTrustScoreTool(server, relatrService);
+    registerCalculateTrustScoresTool(server, relatrService);
     registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
+    if (taService) {
+      registerManageTAProviderTool(server, taService);
+    }
 
     // Setup graceful shutdown
     setupGracefulShutdown(relatrService);
@@ -46,6 +54,7 @@ export async function startMCPServer(): Promise<void> {
     const transport = new NostrServerTransport({
       signer: new PrivateKeySigner(config.serverSecretKey),
       relayHandler: new ApplesauceRelayPool(config.serverRelays),
+      injectClientPubkey: true,
     });
     await server.connect(transport);
 
@@ -84,12 +93,6 @@ function registerCalculateTrustScoreTool(
         (value) => validateAndDecodePubkey(value) !== null,
         "Target pubkey must be a valid hex, npub, or nprofile format",
       ),
-    weightingScheme: z
-      .enum(["default", "social", "validation", "strict"])
-      .optional()
-      .describe(
-        "Weighting scheme: 'default' (balanced), 'conservative' (higher profile validation), 'progressive' (higher social distance), 'balanced'",
-      ),
   });
 
   // Output schema
@@ -122,12 +125,8 @@ function registerCalculateTrustScoreTool(
       const startTime = Date.now();
 
       try {
-        // Validate input
-        const validatedParams = inputSchema.parse(params);
-
         // Calculate trust score
-        const trustScore =
-          await relatrService.calculateTrustScore(validatedParams);
+        const trustScore = await relatrService.calculateTrustScore(params);
         const computationTimeMs = Date.now() - startTime;
 
         return {
@@ -157,6 +156,126 @@ function registerCalculateTrustScoreTool(
             {
               type: "text",
               text: `Error calculating trust score: ${errorMessage}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Register the calculate_trust_scores tool (batch)
+ */
+function registerCalculateTrustScoresTool(
+  server: McpServer,
+  relatrService: RelatrService,
+): void {
+  const inputSchema = z.object({
+    targetPubkeys: z
+      .array(z.string().min(1, "Target pubkey cannot be empty"))
+      .min(1, "targetPubkeys must contain at least one pubkey"),
+  });
+
+  const trustScoreSchema = z.object({
+    sourcePubkey: z.string(),
+    targetPubkey: z.string(),
+    score: z.number().min(0).max(1),
+    components: z.object({
+      distanceWeight: z.number(),
+      validators: z.record(z.string(), z.number()),
+      socialDistance: z.number(),
+      normalizedDistance: z.number(),
+    }),
+    computedAt: z.number(),
+  });
+
+  const outputSchema = z.object({
+    trustScores: z.array(trustScoreSchema),
+    computationTimeMs: z.number(),
+  });
+
+  server.registerTool(
+    "calculate_trust_scores",
+    {
+      title: "Calculate Trust Scores (Batch)",
+      description:
+        "Compute trust scores for a list of Nostr pubkeys in one batch using social graph analysis and profile validation.",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params) => {
+      const startTime = Date.now();
+
+      try {
+        // Deduplicate while preserving first-appearance order.
+        // Decode once per input and use decoded hex as canonical identity.
+        const seen = new Set<string>();
+        const uniqueDecoded: string[] = [];
+
+        for (let i = 0; i < params.targetPubkeys.length; i++) {
+          const decoded = validateAndDecodePubkey(params.targetPubkeys[i]!);
+          if (!decoded) continue;
+          if (seen.has(decoded)) continue;
+
+          seen.add(decoded);
+          uniqueDecoded.push(decoded);
+        }
+
+        if (uniqueDecoded.length === 0) {
+          return {
+            content: [],
+            structuredContent: {
+              trustScores: [],
+              computationTimeMs: Date.now() - startTime,
+            },
+          };
+        }
+
+        const trustScoresMap = await relatrService.calculateTrustScoresBatch({
+          targetPubkeys: uniqueDecoded,
+        });
+
+        const computationTimeMs = Date.now() - startTime;
+
+        // Build results in the same order as uniqueDecoded
+        const trustScores = [];
+        for (let i = 0; i < uniqueDecoded.length; i++) {
+          const decodedHex = uniqueDecoded[i]!;
+          const ts = trustScoresMap.get(decodedHex);
+          if (ts) {
+            trustScores.push({
+              sourcePubkey: ts.sourcePubkey,
+              targetPubkey: ts.targetPubkey,
+              score: ts.score,
+              components: {
+                distanceWeight: ts.components.distanceWeight,
+                validators: ts.components.validators,
+                socialDistance: ts.components.socialDistance,
+                normalizedDistance: ts.components.normalizedDistance,
+              },
+              computedAt: ts.computedAt,
+            });
+          }
+        }
+
+        return {
+          content: [],
+          structuredContent: {
+            trustScores,
+            computationTimeMs,
+          },
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error calculating trust scores: ${errorMessage}`,
             },
           ],
           isError: true,
@@ -264,12 +383,6 @@ function registerSearchProfilesTool(
       .optional()
       .default(7)
       .describe("Maximum number of results to return (default: 20)"),
-    weightingScheme: z
-      .enum(["default", "social", "validation", "strict"])
-      .optional()
-      .describe(
-        "Weighting scheme: 'default' (balanced), 'social' (higher social distance), 'validation' (higher profile validation), 'strict' (highest requirements)",
-      ),
     extendToNostr: z
       .boolean()
       .optional()
@@ -304,12 +417,8 @@ function registerSearchProfilesTool(
     },
     async (params) => {
       try {
-        // Validate input
-        const validatedParams = inputSchema.parse(params);
-
         // Search profiles - pass through the extendToNostr flag (if provided)
-        const searchResult =
-          await relatrService.searchProfiles(validatedParams);
+        const searchResult = await relatrService.searchProfiles(params);
         const result = {
           results: searchResult.results.map((result: SearchProfileResult) => ({
             pubkey: result.pubkey,
@@ -334,6 +443,101 @@ function registerSearchProfilesTool(
             {
               type: "text",
               text: `Error searching profiles: ${errorMessage}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+/**
+ * Register the manage_ta_provider tool
+ */
+function registerManageTAProviderTool(
+  server: McpServer,
+  taService: TAService,
+): void {
+  // Input schema with action parameter
+  const inputSchema = z.object({
+    action: z
+      .enum(["get", "subscribe", "unsubscribe"])
+      .describe(
+        "Action to perform: 'get' to check status, 'subscribe' to activate, 'unsubscribe' to deactivate",
+      ),
+  });
+
+  // Output schema - unified response from manageTASub
+  const outputSchema = z.object({
+    success: z.boolean(),
+    message: z.string(),
+    subscriberPubkey: z.string(),
+    isActive: z.boolean(),
+    createdAt: z.number().nullable(),
+    updatedAt: z.number().nullable(),
+    rank: z
+      .object({
+        published: z.boolean(),
+        rank: z.number(),
+        previousRank: z.number().nullable(),
+      })
+      .optional(),
+  });
+
+  server.registerTool(
+    "manage_ta_provider",
+    {
+      title: "Manage TA Provider",
+      description:
+        "Manage your Trusted Assertions provider subscription. Check status, subscribe, or unsubscribe from TA services.",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      try {
+        // Extract client pubkey from _meta (injected by CEP-16)
+        // NOTE: This is always hex when using NostrServerTransport with injectClientPubkey=true.
+        const clientPubkey = _meta?.clientPubkey;
+
+        if (!clientPubkey || typeof clientPubkey !== "string") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: Client public key not available.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Validate input
+        const action = params.action;
+
+        const result = await taService.manageTASub(action, clientPubkey);
+
+        return {
+          content: [],
+          structuredContent: {
+            success: result.success,
+            message: result.message,
+            subscriberPubkey: result.subscriberPubkey,
+            isActive: result.isActive,
+            createdAt: result.createdAt,
+            updatedAt: result.updatedAt,
+            rank: result.rank,
+          },
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error managing TA provider: ${errorMessage}`,
             },
           ],
           isError: true,

@@ -2,18 +2,24 @@ import { DuckDBConnection } from "@duckdb/node-api";
 import { DatabaseError } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
+import { dbWriteQueue } from "../DbWriteQueue";
 
 export class SettingsRepository {
-  private connection: DuckDBConnection;
+  private readConnection: DuckDBConnection;
+  private writeConnection: DuckDBConnection;
 
-  constructor(connection: DuckDBConnection) {
-    this.connection = connection;
+  constructor(
+    readConnection: DuckDBConnection,
+    writeConnection: DuckDBConnection,
+  ) {
+    this.readConnection = readConnection;
+    this.writeConnection = writeConnection;
   }
 
   async get(key: string): Promise<string | null> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           "SELECT value FROM settings WHERE key = $1",
           { 1: key },
         );
@@ -36,11 +42,13 @@ export class SettingsRepository {
   async set(key: string, value: string): Promise<void> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
-        await this.connection.run(
-          "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)",
-          { 1: key, 2: value, 3: now },
-        );
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
+          await this.writeConnection.run(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)",
+            { 1: key, 2: value, 3: now },
+          );
+        });
       });
     } catch (error) {
       logger.warn(
