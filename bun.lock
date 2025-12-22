@@ -5,7 +5,7 @@
     "": {
       "name": "relatr",
       "dependencies": {
-        "@contextvm/sdk": "^0.1.44",
+        "@contextvm/sdk": "^0.1.45",
         "@duckdb/node-api": "^1.4.2-r.1",
         "applesauce-core": "^4.4.2",
         "applesauce-relay": "^4.4.2",
@@ -75,7 +75,7 @@
 
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
-    "@contextvm/sdk": ["@contextvm/sdk@0.1.45", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.25.1", "applesauce-relay": "^4.4.2", "nostr-tools": "^2.19.4", "pino": "^10.1.0", "pino-pretty": "^13.1.3" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-U2sIVllw5aWivP0F3SPh9emYNIl4Z0mPxmgXcSYNJRF65unAS6uj/2xgG3zOeD63ArVKIveeBwNHbDYG+fToOw=="],
+    "@contextvm/sdk": ["@contextvm/sdk@0.1.46", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.25.1", "applesauce-relay": "^4.4.2", "nostr-tools": "^2.19.4", "pino": "^10.1.0", "pino-pretty": "^13.1.3" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-fynwY0WsBhqsJox1H7IKXLrFUAL7lnO2e7j+MVZ0WqMTjuI/CYSF9RXSsKI75l3X3ANoJuoLj1gixoa/6hRh8A=="],
 
     "@duckdb/node-api": ["@duckdb/node-api@1.4.2-r.1", "", { "dependencies": { "@duckdb/node-bindings": "1.4.2-r.1" } }, "sha512-8Ef4R/Lq+rXTpcqZIJZe6ALfgMGxy88HmiPvRpWrRw1fUTy85x1U0NnGrqCklZsmWyZUdPwVYj90MQOF2MY/TA=="],
 
