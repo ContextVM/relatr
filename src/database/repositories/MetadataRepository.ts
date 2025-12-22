@@ -12,10 +12,15 @@ export interface SearchResult {
 }
 
 export class MetadataRepository {
-  private connection: DuckDBConnection;
+  private readConnection: DuckDBConnection;
+  private writeConnection: DuckDBConnection;
 
-  constructor(connection: DuckDBConnection) {
-    this.connection = connection;
+  constructor(
+    readConnection: DuckDBConnection,
+    writeConnection: DuckDBConnection,
+  ) {
+    this.readConnection = readConnection;
+    this.writeConnection = writeConnection;
   }
 
   async save(profile: NostrProfile): Promise<void> {
@@ -31,7 +36,7 @@ export class MetadataRepository {
           const now = Math.floor(Date.now() / 1000);
 
           // Start transaction
-          await this.connection.run("BEGIN TRANSACTION");
+          await this.writeConnection.run("BEGIN TRANSACTION");
 
           try {
             // Extract pubkeys for deletion
@@ -40,7 +45,7 @@ export class MetadataRepository {
             // Delete existing records in batch
             if (pubkeys.length > 0) {
               const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
-              await this.connection.run(
+              await this.writeConnection.run(
                 `DELETE FROM pubkey_metadata WHERE pubkey IN (${placeholders})`,
                 Object.fromEntries(pubkeys.map((pk, i) => [i + 1, pk])),
               );
@@ -72,14 +77,14 @@ export class MetadataRepository {
               params[baseIndex + 7] = now;
             });
 
-            await this.connection.run(insertQuery, params);
+            await this.writeConnection.run(insertQuery, params);
 
             // Commit transaction
-            await this.connection.run("COMMIT");
+            await this.writeConnection.run("COMMIT");
           } catch (error) {
             // Rollback on error
             try {
-              await this.connection.run("ROLLBACK");
+              await this.writeConnection.run("ROLLBACK");
             } catch (rollbackError) {
               logger.error(
                 "Failed to rollback metadata transaction:",
@@ -107,7 +112,7 @@ export class MetadataRepository {
   async get(pubkey: string): Promise<NostrProfile | null> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT pubkey, name, display_name, nip05, lud16, about
            FROM pubkey_metadata
            WHERE pubkey = $1`,
@@ -155,7 +160,7 @@ export class MetadataRepository {
           params[(i + 1).toString()] = pubkey;
         });
 
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT pubkey, name, display_name, nip05, lud16, about
            FROM pubkey_metadata
            WHERE pubkey IN (${placeholders})`,
@@ -213,7 +218,7 @@ export class MetadataRepository {
         // but not so many that we process thousands of profiles
         const candidateLimit = Math.max(limit * 20, 100);
 
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `
         WITH ranked_matches AS (
           SELECT
@@ -355,7 +360,7 @@ export class MetadataRepository {
   async getStats(): Promise<{ totalEntries: number }> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           "SELECT COUNT(*) as count FROM pubkey_metadata",
         );
         const rows = await result.getRows();

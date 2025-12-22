@@ -1,20 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { TARepository } from "../database/repositories/TARepository";
-import { unlink } from "fs/promises";
-import type { DuckDBConnection } from "@duckdb/node-api";
 
 describe("TARepository", () => {
   let dbManager: DatabaseManager;
   let taRepository: TARepository;
-  let connection: DuckDBConnection;
 
   beforeEach(async () => {
     // Initialize fresh database
     dbManager = DatabaseManager.getInstance(":memory:");
     await dbManager.initialize();
-    connection = dbManager.getConnection();
-    taRepository = new TARepository(connection);
+    const writeConnection = dbManager.getWriteConnection();
+    const readConnection = dbManager.getReadConnection();
+    taRepository = new TARepository(readConnection, writeConnection);
   });
 
   afterEach(async () => {

@@ -10,6 +10,11 @@
  *
  * This queue provides a tiny "mutex" by chaining promises (FIFO).
  * It is intentionally process-local (not cross-process).
+ *
+ * With dual-connection architecture:
+ * - Write operations use this queue on the write connection
+ * - Read operations use the read connection without queueing
+ * - This maintains correctness while improving read concurrency
  */
 export class DbWriteQueue {
   private tail: Promise<void> = Promise.resolve();

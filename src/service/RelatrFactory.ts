@@ -50,26 +50,27 @@ export class RelatrFactory {
             const dbManager = DatabaseManager.getInstance(validatedConfig.databasePath);
             await dbManager.initialize();
             
-            // Use a single shared connection for all components to reduce transaction conflicts
-            const sharedConnection = dbManager.getConnection();
+            // Step 2: Initialize dual connections (write and read)
+            const writeConnection = dbManager.getWriteConnection();
+            const readConnection = dbManager.getReadConnection();
             
-            // Step 2: Initialize Repositories
-            const metricsRepository: IMetricsRepository = new MetricsRepository(sharedConnection, validatedConfig.cacheTtlSeconds);
-            const metadataRepository: IMetadataRepository = new MetadataRepository(sharedConnection);
-            const settingsRepository: ISettingsRepository = new SettingsRepository(sharedConnection);
+            // Step 3: Initialize Repositories (use dual connections: read for reads, write for writes)
+            const metricsRepository: IMetricsRepository = new MetricsRepository(readConnection, writeConnection, validatedConfig.cacheTtlSeconds);
+            const metadataRepository: IMetadataRepository = new MetadataRepository(readConnection, writeConnection);
+            const settingsRepository: ISettingsRepository = new SettingsRepository(readConnection, writeConnection);
 
             // TA is optional and operator-controlled
-            const taRepository = validatedConfig.taEnabled ? new TARepository(sharedConnection) : undefined;
+            const taRepository = validatedConfig.taEnabled ? new TARepository(readConnection, writeConnection) : undefined;
             
-            // Step 3: Initialize network components and builders first
+            // Step 4: Initialize network components and builders first
             const pool = new RelayPool();
             const socialGraphBuilder = new SocialGraphBuilder(pool);
             const pubkeyMetadataFetcher = new PubkeyMetadataFetcher(pool, metadataRepository);
 
-            // Step 4: Check if social graph exists and handle first-time setup
+            // Step 5: Check if social graph exists and handle first-time setup
             let graphExists = false;
             try {
-                const result = await sharedConnection.run(`
+                const result = await readConnection.run(`
                     SELECT EXISTS (
                         SELECT 1 FROM INFORMATION_SCHEMA.TABLES
                         WHERE TABLE_SCHEMA = 'main'
@@ -92,19 +93,19 @@ export class RelatrFactory {
                 creationResult = await socialGraphBuilder.createGraph({
                     sourcePubkey: validatedConfig.defaultSourcePubkey,
                     hops: validatedConfig.numberOfHops,
-                    connection: sharedConnection
+                    connection: writeConnection
                 });
                 logger.info('Social graph created successfully.');
             }
             
-            // Step 5: Initialize the social graph with the shared connection
-            const socialGraph = new RelatrSocialGraph(sharedConnection, creationResult?.socialGraph);
+            // Step 6: Initialize the social graph with the write connection
+            const socialGraph = new RelatrSocialGraph(writeConnection, creationResult?.socialGraph);
             await socialGraph.initialize(validatedConfig.defaultSourcePubkey);
             
             const graphStats = await socialGraph.getStats();
             logger.info('Social graph stats', graphStats);
             
-            // Step 6: Initialize trust calculation components
+            // Step 7: Initialize trust calculation components
             // TrustCalculator uses the canonical default weighting scheme internally.
             const trustCalculator = new TrustCalculator(validatedConfig);
             const metricsValidator = new MetricsValidator(
@@ -117,7 +118,7 @@ export class RelatrFactory {
                 ALL_PLUGINS,
             );
             
-            // Step 7: Initialize specialized services
+            // Step 8: Initialize specialized services
             const searchService = new SearchService(
                 validatedConfig,
                 metadataRepository,
@@ -128,7 +129,6 @@ export class RelatrFactory {
             );
             
             // Initialize task queue service
-
             const schedulerService = new SchedulerService(
                 validatedConfig,
                 metricsRepository,
@@ -168,7 +168,7 @@ export class RelatrFactory {
                 })
               : null;
             
-            // Step 8: If this is the first time running, fetch initial metadata
+            // Step 9: If this is the first time running, fetch initial metadata
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {
                 logger.info('Fetching initial profile metadata...');
                 try {
@@ -186,11 +186,11 @@ export class RelatrFactory {
                 }
             }
             
-            // Step 9: Start background processes
+            // Step 10: Start background processes
             await schedulerService.start();
             logger.info('Background processes started');
 
-            logger.debug('Relatr factory initialization completed');
+            logger.debug('Relatr factory initialization completed with dual-connection architecture');
             return {
                 relatrService,
                 taService

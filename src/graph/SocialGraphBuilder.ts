@@ -3,6 +3,7 @@ import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
 import { DuckDBConnection } from "@duckdb/node-api";
 import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import { logger } from "../utils/Logger";
+import { dbWriteQueue } from "@/database/DbWriteQueue";
 
 /**
  * Parameters for social graph creation
@@ -159,7 +160,10 @@ export class SocialGraphBuilder {
 
           // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
           if (socialGraph && events.length > 0) {
-            await socialGraph.ingestEvents(events);
+            // Serialize ingestion to avoid transaction conflicts on the shared connection
+            await dbWriteQueue.runExclusive(async () => {
+              await socialGraph.ingestEvents(events);
+            });
           }
 
           // Extract new pubkeys for next hop on the fly to avoid storing all events

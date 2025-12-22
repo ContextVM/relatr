@@ -58,7 +58,7 @@ beforeAll(async () => {
   // Initialize DuckDB connection and social graph once for all tests
   const dbManager = DatabaseManager.getInstance(":memory:");
   await dbManager.initialize();
-  const duckDb = dbManager.getConnection();
+  const duckDb = dbManager.getWriteConnection();
 
   socialGraph = new SocialGraph(duckDb);
   await socialGraph.initialize(
@@ -369,7 +369,7 @@ describe("SocialGraph - Basic Operations", () => {
   test("should throw errors when not initialized", async () => {
     const dbManager = DatabaseManager.getInstance(":memory:test");
     await dbManager.initialize();
-    const duckDb = dbManager.getConnection();
+    const duckDb = dbManager.getWriteConnection();
     const uninitializedGraph = new SocialGraph(duckDb);
 
     expect(() => uninitializedGraph.getCurrentRoot()).toThrow();

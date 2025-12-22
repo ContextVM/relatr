@@ -5,7 +5,8 @@ import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
 
 export class TARepository {
-  private connection: DuckDBConnection;
+  private readConnection: DuckDBConnection;
+  private writeConnection: DuckDBConnection;
 
   /**
    * NOTE: DuckDB returns rows by index; keep SELECT projections explicit and in sync with mapRowToSubscriber.
@@ -13,8 +14,12 @@ export class TARepository {
   private static readonly SUBSCRIBER_SELECT_COLUMNS =
     "id, subscriber_pubkey, latest_rank, created_at, updated_at, is_active";
 
-  constructor(connection: DuckDBConnection) {
-    this.connection = connection;
+  constructor(
+    readConnection: DuckDBConnection,
+    writeConnection: DuckDBConnection,
+  ) {
+    this.readConnection = readConnection;
+    this.writeConnection = writeConnection;
   }
 
   /**
@@ -29,7 +34,7 @@ export class TARepository {
         return await dbWriteQueue.runExclusive(async () => {
           const now = Math.floor(Date.now() / 1000);
 
-          await this.connection.run(
+          await this.writeConnection.run(
             `INSERT INTO ta_subscribers (subscriber_pubkey, created_at, updated_at, is_active)
              VALUES ($1, $2, $3, TRUE)
              ON CONFLICT (subscriber_pubkey) DO UPDATE SET
@@ -39,7 +44,7 @@ export class TARepository {
           );
 
           // Retrieve the created/updated record (explicit projection to match mapping)
-          const result = await this.connection.run(
+          const result = await this.readConnection.run(
             `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
              FROM ta_subscribers
              WHERE subscriber_pubkey = $1`,
@@ -74,7 +79,7 @@ export class TARepository {
   async isSubscribed(subscriberPubkey: string): Promise<boolean> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           "SELECT COUNT(*) as count FROM ta_subscribers WHERE subscriber_pubkey = $1 AND is_active = TRUE",
           { 1: subscriberPubkey },
         );
@@ -102,7 +107,7 @@ export class TARepository {
   async getActiveSubscribers(): Promise<string[]> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           "SELECT subscriber_pubkey FROM ta_subscribers WHERE is_active = TRUE",
         );
 
@@ -139,7 +144,7 @@ export class TARepository {
         return await dbWriteQueue.runExclusive(async () => {
           const now = Math.floor(Date.now() / 1000);
 
-          await this.connection.run(
+          await this.writeConnection.run(
             "UPDATE ta_subscribers SET is_active = FALSE, updated_at = $1 WHERE subscriber_pubkey = $2 AND is_active = TRUE",
             { 1: now, 2: subscriberPubkey },
           );
@@ -165,7 +170,7 @@ export class TARepository {
   async getSubscriber(subscriberPubkey: string): Promise<TASubscriber | null> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
            FROM ta_subscribers
            WHERE subscriber_pubkey = $1`,
@@ -206,7 +211,7 @@ export class TARepository {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
           // Verify existence explicitly; DuckDB UPDATE row counts are not reliable.
-          const existsResult = await this.connection.run(
+          const existsResult = await this.readConnection.run(
             "SELECT 1 FROM ta_subscribers WHERE subscriber_pubkey = $1 LIMIT 1",
             { 1: subscriberPubkey },
           );
@@ -218,7 +223,7 @@ export class TARepository {
             );
           }
 
-          await this.connection.run(
+          await this.writeConnection.run(
             "UPDATE ta_subscribers SET latest_rank = $1, updated_at = $2 WHERE subscriber_pubkey = $3",
             { 1: rank, 2: computedAt, 3: subscriberPubkey },
           );
@@ -243,10 +248,10 @@ export class TARepository {
   async getStats(): Promise<{ total: number; active: number }> {
     try {
       return await executeWithRetry(async () => {
-        const totalResult = await this.connection.run(
+        const totalResult = await this.readConnection.run(
           "SELECT COUNT(*) as count FROM ta_subscribers",
         );
-        const activeResult = await this.connection.run(
+        const activeResult = await this.readConnection.run(
           "SELECT COUNT(*) as count FROM ta_subscribers WHERE is_active = TRUE",
         );
 

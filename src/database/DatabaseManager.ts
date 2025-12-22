@@ -5,13 +5,15 @@ import { join, resolve } from "path";
 import { logger } from "../utils/Logger";
 
 /**
- * Manages the DuckDB database instance and connection.
+ * Manages the DuckDB database instance and connections.
+ * Implements dual-connection architecture for read/write separation.
  * Handles initialization, schema loading, and graceful shutdown.
  */
 export class DatabaseManager {
   private static instance: DatabaseManager;
   private duckDB: DuckDBInstance | null = null;
-  private connection: DuckDBConnection | null = null;
+  private writeConnection: DuckDBConnection | null = null;
+  private readConnection: DuckDBConnection | null = null;
   private dbPath: string;
 
   private constructor(dbPath: string) {
@@ -33,7 +35,7 @@ export class DatabaseManager {
   }
 
   /**
-   * Initialize the database connection and schema
+   * Initialize the database with dual connections (write and read)
    */
   public async initialize(): Promise<void> {
     if (this.duckDB) return;
@@ -45,13 +47,16 @@ export class DatabaseManager {
       // Create instance
       this.duckDB = await DuckDBInstance.create(resolvedPath);
 
-      // Create primary connection
-      this.connection = await this.duckDB.connect();
+      // Create write connection (for all write operations)
+      this.writeConnection = await this.duckDB.connect();
 
-      // Load schema
+      // Create read connection (for read-only operations)
+      this.readConnection = await this.duckDB.connect();
+
+      // Load schema on write connection only
       await this.loadSchema();
 
-      logger.info(`Initialized DuckDB at ${this.dbPath}`);
+      logger.info(`Initialized DuckDB at ${this.dbPath} with dual connections`);
     } catch (error) {
       throw new DatabaseError(
         `Failed to initialize database: ${error instanceof Error ? error.message : String(error)}`,
@@ -64,31 +69,31 @@ export class DatabaseManager {
    * Load and execute the database schema
    */
   private async loadSchema(): Promise<void> {
-    if (!this.connection)
-      throw new DatabaseError("Database not connected", "SCHEMA_LOAD");
+    if (!this.writeConnection)
+      throw new DatabaseError("Write connection not available", "SCHEMA_LOAD");
 
     try {
       const schemaPath = join(__dirname, "duckdb-schema.sql");
       const schema = readFileSync(schemaPath, "utf-8");
 
       // Start transaction for schema load
-      await this.connection.run("BEGIN TRANSACTION");
+      await this.writeConnection.run("BEGIN TRANSACTION");
 
       try {
         // Execute schema in chunks
         const statements = schema.split(";").filter((stmt) => stmt.trim());
         for (const statement of statements) {
           if (statement.trim()) {
-            await this.connection.run(statement);
+            await this.writeConnection.run(statement);
           }
         }
 
         // Commit transaction
-        await this.connection.run("COMMIT");
+        await this.writeConnection.run("COMMIT");
       } catch (error) {
         // Rollback on error
         try {
-          await this.connection.run("ROLLBACK");
+          await this.writeConnection.run("ROLLBACK");
         } catch (rollbackError) {
           logger.error(
             "Failed to rollback schema transaction:",
@@ -108,25 +113,52 @@ export class DatabaseManager {
   }
 
   /**
-   * Get the shared DuckDB connection
+   * Get the write connection (for all write operations)
+   * Write operations should still use DbWriteQueue for serialization
    */
-  public getConnection(): DuckDBConnection {
-    if (!this.connection) {
-      throw new DatabaseError("Database not initialized", "GET_CONNECTION");
+  public getWriteConnection(): DuckDBConnection {
+    if (!this.writeConnection) {
+      throw new DatabaseError(
+        "Write connection not initialized",
+        "GET_WRITE_CONNECTION",
+      );
     }
-    return this.connection;
+    return this.writeConnection;
   }
+
   /**
-   * Close the database connection and all tracked connections
+   * Get the read connection (for read-only operations)
+   * Read operations can run concurrently without queueing
+   */
+  public getReadConnection(): DuckDBConnection {
+    if (!this.readConnection) {
+      throw new DatabaseError(
+        "Read connection not initialized",
+        "GET_READ_CONNECTION",
+      );
+    }
+    return this.readConnection;
+  }
+
+  /**
+   * Close the database connections and instance
    */
   public async close(): Promise<void> {
     try {
-      if (this.connection) {
+      // Checkpoint and close write connection first
+      if (this.writeConnection) {
         logger.info("Checkpointing database...");
-        await this.connection.run("CHECKPOINT");
-        this.connection.closeSync();
+        await this.writeConnection.run("CHECKPOINT");
+        this.writeConnection.closeSync();
+        this.writeConnection = null;
       }
-      this.connection = null;
+
+      // Close read connection
+      if (this.readConnection) {
+        this.readConnection.closeSync();
+        this.readConnection = null;
+      }
+
       this.duckDB = null;
       logger.info("Database connections closed");
     } catch (error) {

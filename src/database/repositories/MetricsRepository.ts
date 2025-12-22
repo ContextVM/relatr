@@ -5,11 +5,17 @@ import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
 
 export class MetricsRepository {
-  private connection: DuckDBConnection;
+  private readConnection: DuckDBConnection;
+  private writeConnection: DuckDBConnection;
   private ttlSeconds: number;
 
-  constructor(connection: DuckDBConnection, ttlSeconds: number = 604800) {
-    this.connection = connection;
+  constructor(
+    readConnection: DuckDBConnection,
+    writeConnection: DuckDBConnection,
+    ttlSeconds: number = 604800,
+  ) {
+    this.readConnection = readConnection;
+    this.writeConnection = writeConnection;
     this.ttlSeconds = ttlSeconds;
   }
 
@@ -21,11 +27,11 @@ export class MetricsRepository {
           const expiresAt = now + this.ttlSeconds;
 
           // Start transaction
-          await this.connection.run("BEGIN TRANSACTION");
+          await this.writeConnection.run("BEGIN TRANSACTION");
 
           try {
             // Delete existing metrics for this pubkey
-            await this.connection.run(
+            await this.writeConnection.run(
               "DELETE FROM profile_metrics WHERE pubkey = $1",
               { 1: pubkey },
             );
@@ -59,15 +65,15 @@ export class MetricsRepository {
                 params[base + 5] = expiresAt;
               });
 
-              await this.connection.run(insertQuery, params);
+              await this.writeConnection.run(insertQuery, params);
             }
 
             // Commit transaction
-            await this.connection.run("COMMIT");
+            await this.writeConnection.run("COMMIT");
           } catch (error) {
             // Rollback on error
             try {
-              await this.connection.run("ROLLBACK");
+              await this.writeConnection.run("ROLLBACK");
             } catch (rollbackError) {
               logger.error(
                 "Failed to rollback transaction:",
@@ -108,7 +114,7 @@ export class MetricsRepository {
           const expiresAt = now + this.ttlSeconds;
 
           // Start transaction
-          await this.connection.run("BEGIN TRANSACTION");
+          await this.writeConnection.run("BEGIN TRANSACTION");
 
           try {
             // Extract unique pubkeys from the batch
@@ -122,7 +128,7 @@ export class MetricsRepository {
                 params[(i + 1).toString()] = pubkey;
               });
 
-              await this.connection.run(
+              await this.writeConnection.run(
                 `DELETE FROM profile_metrics WHERE pubkey IN (${placeholders})`,
                 params,
               );
@@ -172,15 +178,15 @@ export class MetricsRepository {
                 params[base + 5] = expiresAt;
               });
 
-              await this.connection.run(insertQuery, params);
+              await this.writeConnection.run(insertQuery, params);
             }
 
             // Commit transaction
-            await this.connection.run("COMMIT");
+            await this.writeConnection.run("COMMIT");
           } catch (error) {
             // Rollback on error
             try {
-              await this.connection.run("ROLLBACK");
+              await this.writeConnection.run("ROLLBACK");
             } catch (rollbackError) {
               logger.error(
                 "Failed to rollback transaction:",
@@ -209,7 +215,7 @@ export class MetricsRepository {
     try {
       return await executeWithRetry(async () => {
         const now = Math.floor(Date.now() / 1000);
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT metric_key, metric_value, computed_at, expires_at
            FROM profile_metrics
            WHERE pubkey = $1 AND expires_at > $2`,
@@ -282,7 +288,7 @@ export class MetricsRepository {
         });
         params[(pubkeys.length + 1).toString()] = now;
 
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT pubkey, metric_key, metric_value, computed_at, expires_at
            FROM profile_metrics
            WHERE pubkey IN (${placeholders}) AND expires_at > $${pubkeys.length + 1}
@@ -384,7 +390,7 @@ export class MetricsRepository {
       return await executeWithRetry(async () => {
         const now = Math.floor(Date.now() / 1000);
 
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           `SELECT DISTINCT pubkey
            FROM profile_metrics
            WHERE expires_at > $1`,
@@ -408,13 +414,15 @@ export class MetricsRepository {
   async cleanup(): Promise<number> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
-        const result = await this.connection.run(
-          "DELETE FROM profile_metrics WHERE expires_at <= $1",
-          { 1: now },
-        );
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const result = await this.writeConnection.run(
+            "DELETE FROM profile_metrics WHERE expires_at <= $1",
+            { 1: now },
+          );
 
-        return result.rowCount;
+          return result.rowCount;
+        });
       });
     } catch (error) {
       logger.warn(
@@ -428,7 +436,7 @@ export class MetricsRepository {
   async getStats(): Promise<{ totalEntries: number }> {
     try {
       return await executeWithRetry(async () => {
-        const result = await this.connection.run(
+        const result = await this.readConnection.run(
           "SELECT COUNT(*) as count FROM profile_metrics",
         );
         const rows = await result.getRows();

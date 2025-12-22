@@ -1,4 +1,4 @@
-import type { ProfileMetrics, MetricWeights, NostrProfile } from "../types";
+import type { ProfileMetrics, NostrProfile } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import {
