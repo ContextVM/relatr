@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS profile_metrics (
     metric_key VARCHAR NOT NULL,
     metric_value DOUBLE NOT NULL,
     computed_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    meta TEXT -- Flexible metadata storage (JSON)
 );
 
 -- Indexes for optimized querying

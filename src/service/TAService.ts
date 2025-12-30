@@ -4,12 +4,17 @@ import type { PrivateKeySigner } from "@contextvm/sdk";
 import type { RelatrConfig, TARankUpdateResult } from "../types";
 import { RelatrError } from "../types";
 import type { TARepository } from "../database/repositories/TARepository";
+import type { MetricsRepository } from "../database/repositories/MetricsRepository";
 import type { RelatrService } from "./RelatrService";
 import { logger } from "../utils/Logger";
+import { fetchUserRelayList } from "../utils/utils.nostr";
+import { relaySet } from "applesauce-core/helpers";
+import { EventPlugin } from "@/validators/plugins";
 
 export interface TAServiceDependencies {
   config: RelatrConfig;
   taRepository: TARepository;
+  metricsRepository: MetricsRepository;
   relatrService: RelatrService;
   relayPool: RelayPool;
   signer: PrivateKeySigner;
@@ -44,6 +49,7 @@ export interface ManageTASubResult {
 export class TAService {
   private config: RelatrConfig;
   private taRepository: TARepository;
+  private metricsRepository: MetricsRepository;
   private relatrService: RelatrService;
   private relayPool: RelayPool;
   private signer: PrivateKeySigner;
@@ -51,6 +57,7 @@ export class TAService {
   constructor(dependencies: TAServiceDependencies) {
     this.config = dependencies.config;
     this.taRepository = dependencies.taRepository;
+    this.metricsRepository = dependencies.metricsRepository;
     this.relatrService = dependencies.relatrService;
     this.relayPool = dependencies.relayPool;
     this.signer = dependencies.signer;
@@ -133,13 +140,56 @@ export class TAService {
 
   /**
    * Publish Kind 30382 TA event for a subscriber
-   * @param subscriberPubkey Subscriber's public key
    * @param targetPubkey Target pubkey to rank
    * @param rank Computed rank value (0-100)
    * @returns Event ID of published event
    */
   async publishTAEvent(targetPubkey: string, rank: number): Promise<string> {
     try {
+      // Try to get cached relay list from metrics repository
+      let userRelays: string[] = [];
+      const cachedMeta = await this.metricsRepository.getMeta(
+        targetPubkey,
+        EventPlugin.name,
+      );
+
+      if (cachedMeta && Array.isArray(cachedMeta.relay_list)) {
+        userRelays = cachedMeta.relay_list;
+        logger.debug(
+          `Using cached relay list for ${targetPubkey}: ${userRelays.length} relays`,
+        );
+      } else {
+        // Fetch relay list from relays
+        const fetchedRelays = await fetchUserRelayList(
+          targetPubkey,
+          this.relayPool,
+          this.config.serverRelays,
+        );
+
+        if (fetchedRelays && fetchedRelays.length > 0) {
+          userRelays = fetchedRelays;
+          logger.debug(
+            `Fetched relay list for ${targetPubkey}: ${userRelays.length} relays`,
+          );
+
+          // Cache the relay list with the specific metric key
+          await this.metricsRepository.saveMeta(
+            targetPubkey,
+            EventPlugin.name,
+            {
+              relay_list: userRelays,
+            },
+          );
+        } else {
+          logger.debug(
+            `No relay list found for ${targetPubkey}, using server relays only`,
+          );
+        }
+      }
+
+      // Combine user's relays with server relays (deduplicated)
+      const allRelays = relaySet([...userRelays, ...this.config.serverRelays]);
+
       // Create Kind 30382 event following NIP-85
       const unsignedEvent: UnsignedEvent = {
         kind: 30382,
@@ -155,10 +205,12 @@ export class TAService {
       // Sign the event
       const signedEvent = await this.signer.signEvent(unsignedEvent);
 
-      // Publish to configured relays
-      await this.relayPool.publish(this.config.serverRelays, signedEvent);
+      // Publish to combined relay list
+      await this.relayPool.publish(allRelays, signedEvent);
 
-      logger.info(`Published TA event for ${targetPubkey}, rank ${rank}`);
+      logger.info(
+        `Published TA event for ${targetPubkey}, rank ${rank} to ${allRelays.length} relays`,
+      );
 
       return signedEvent.id;
     } catch (error) {

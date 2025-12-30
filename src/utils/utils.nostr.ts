@@ -3,8 +3,9 @@ import type { NostrEvent } from "nostr-tools";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "../types";
 import type { RelayPool } from "applesauce-relay";
-import { decode, npubEncode, nprofileEncode } from "nostr-tools/nip19";
+import { decode } from "nostr-tools/nip19";
 import { logger } from "./Logger";
+import { isHexKey } from "applesauce-core/helpers";
 
 /**
  * Default batch size for fetching events from relays
@@ -81,13 +82,6 @@ export async function negSyncFromRelays(
   }
 }
 
-/**
- * Fetch events for a list of pubkeys from relays
- * @param pubkeys List of pubkeys to fetch events for
- * @param kind The event kind to fetch
- * @param relays Relays to query (optional)
- * @returns Array of Nostr events
- */
 /**
  * Fetch events for a list of pubkeys from relays with streaming support to avoid memory accumulation.
  * Note: This function clears the EventStore for the fetched authors after each batch to free memory.
@@ -171,16 +165,6 @@ export async function fetchEventsForPubkeys(
 }
 
 /**
- * Validates if a string is a valid hex key (32 bytes = 64 hex characters)
- * @param value The string to validate
- * @returns True if valid hex key, false otherwise
- */
-export function isHexKey(value: string): boolean {
-  if (!value || typeof value !== "string") return false;
-  return /^[0-9a-fA-F]{64}$/.test(value);
-}
-
-/**
  * Validates and decodes a nostr identifier (hex pubkey, npub, or nprofile)
  * @param identifier The identifier to validate and decode
  * @returns The hex pubkey if valid, null otherwise
@@ -216,53 +200,65 @@ export function validateAndDecodePubkey(identifier: string): string | null {
 }
 
 /**
- * Encodes a hex pubkey to npub format
- * @param hexPubkey The hex pubkey to encode
- * @returns The npub encoded string
+ * Fetch a user's relay list (kind 10002) from relays
+ * @param pubkey User's public key
+ * @param pool Relay pool
+ * @param relays Relays to query
+ * @param timeoutMs Timeout in milliseconds (default: 10000)
+ * @returns Array of relay URLs or null if not found
  */
-export function encodeNpub(hexPubkey: string): string {
-  return npubEncode(hexPubkey);
-}
+export async function fetchUserRelayList(
+  pubkey: string,
+  pool: RelayPool,
+  relays: string[],
+  timeoutMs: number = 10000,
+): Promise<string[] | null> {
+  try {
+    const event = await new Promise<NostrEvent | null>((resolve, reject) => {
+      const subscription = pool
+        .request(
+          relays,
+          {
+            kinds: [10002],
+            authors: [pubkey],
+            limit: 1,
+          },
+          {
+            retries: 1,
+          },
+        )
+        .subscribe({
+          next: (event) => {
+            resolve(event);
+            subscription.unsubscribe();
+          },
+          error: (error) => {
+            reject(error);
+          },
+        });
 
-/**
- * Encodes a hex pubkey and optional relays to nprofile format
- * @param hexPubkey The hex pubkey to encode
- * @param relays Optional array of relay URLs
- * @returns The nprofile encoded string
- */
-export function encodeNprofile(hexPubkey: string, relays?: string[]): string {
-  return nprofileEncode({ pubkey: hexPubkey, relays: relays || [] });
-}
+      // Auto-unsubscribe after timeout
+      setTimeout(() => {
+        subscription.unsubscribe();
+        resolve(null);
+      }, timeoutMs);
+    });
 
-/**
- * Type guard functions for nostr identifiers
- */
-export const NostrIdentifierTypeGuard = {
-  isNpub: (value: string): boolean => {
-    if (!value) return false;
-    try {
-      const { type } = decode(value);
-      return type === "npub";
-    } catch {
-      return false;
+    if (!event) {
+      return null;
     }
-  },
 
-  isNprofile: (value: string): boolean => {
-    if (!value) return false;
-    try {
-      const { type } = decode(value);
-      return type === "nprofile";
-    } catch {
-      return false;
-    }
-  },
+    // Extract relay URLs from event tags
+    const relayUrls = event.tags
+      .filter((tag) => tag[0] === "r" && tag[1])
+      .map((tag) => tag[1] as string);
 
-  isHexPubkey: (value: string): boolean => {
-    return isHexKey(value);
-  },
-
-  isValidPubkeyIdentifier: (value: string): boolean => {
-    return validateAndDecodePubkey(value) !== null;
-  },
-};
+    return relayUrls.length > 0 ? relayUrls : null;
+  } catch (error) {
+    logger.warn(
+      `Failed to fetch relay list for ${pubkey}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
