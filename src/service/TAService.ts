@@ -1,5 +1,5 @@
 import { type UnsignedEvent } from "nostr-tools/pure";
-import type { RelayPool } from "applesauce-relay";
+import type { RelayPool, PublishResponse } from "applesauce-relay";
 import type { PrivateKeySigner } from "@contextvm/sdk";
 import type { RelatrConfig, TARankUpdateResult } from "../types";
 import { RelatrError } from "../types";
@@ -10,6 +10,7 @@ import { logger } from "../utils/Logger";
 import { fetchUserRelayList } from "../utils/utils.nostr";
 import { relaySet } from "applesauce-core/helpers";
 import { EventPlugin } from "@/validators/plugins";
+import { COMMON_RELAYS, TA_USER_KIND } from "@/constants/nostr";
 
 export interface TAServiceDependencies {
   config: RelatrConfig;
@@ -24,7 +25,6 @@ export type ManageTASubAction = "get" | "subscribe" | "unsubscribe";
 
 export interface ManageTASubResult {
   success: boolean;
-  message: string;
   subscriberPubkey: string;
 
   /**
@@ -73,6 +73,7 @@ export class TAService {
   async manageTASub(
     action: ManageTASubAction,
     subscriberPubkey: string,
+    customRelays?: string[],
   ): Promise<ManageTASubResult> {
     try {
       if (action === "get") {
@@ -81,9 +82,6 @@ export class TAService {
 
         return {
           success: true,
-          message: subscriber?.isActive
-            ? "TA subscription is active"
-            : "TA subscription is inactive",
           subscriberPubkey,
           isActive: Boolean(subscriber?.isActive),
           createdAt: subscriber?.createdAt ?? null,
@@ -97,11 +95,13 @@ export class TAService {
           await this.taRepository.addSubscriber(subscriberPubkey);
 
         // Publish a replaceable TA event on every subscribe call
-        const rank = await this.computeAndPublishRank(subscriberPubkey);
+        const rank = await this.computeAndPublishRank(
+          subscriberPubkey,
+          customRelays,
+        );
 
         return {
           success: true,
-          message: "TA subscription activated",
           subscriberPubkey,
           isActive: true,
           createdAt: subscriber.createdAt,
@@ -119,7 +119,6 @@ export class TAService {
 
       return {
         success: true,
-        message: "TA subscription deactivated",
         subscriberPubkey,
         isActive: false,
         createdAt: subscriber?.createdAt ?? null,
@@ -142,9 +141,14 @@ export class TAService {
    * Publish Kind 30382 TA event for a subscriber
    * @param targetPubkey Target pubkey to rank
    * @param rank Computed rank value (0-100)
-   * @returns Event ID of published event
+   * @param customRelays Optional list of custom relay URLs to publish to
+   * @returns Event ID of published event and relay results
    */
-  async publishTAEvent(targetPubkey: string, rank: number): Promise<string> {
+  async publishTAEvent(
+    targetPubkey: string,
+    rank: number,
+    customRelays?: string[],
+  ): Promise<PublishResponse[]> {
     try {
       // Try to get cached relay list from metrics repository
       let userRelays: string[] = [];
@@ -163,7 +167,7 @@ export class TAService {
         const fetchedRelays = await fetchUserRelayList(
           targetPubkey,
           this.relayPool,
-          this.config.serverRelays,
+          COMMON_RELAYS,
         );
 
         if (fetchedRelays && fetchedRelays.length > 0) {
@@ -187,12 +191,15 @@ export class TAService {
         }
       }
 
-      // Combine user's relays with server relays (deduplicated)
-      const allRelays = relaySet([...userRelays, ...this.config.serverRelays]);
-
+      // Combine user's relays with server relays and custom relays (deduplicated)
+      const allRelays = relaySet([
+        ...userRelays,
+        ...this.config.serverRelays,
+        ...(customRelays || []),
+      ]);
       // Create Kind 30382 event following NIP-85
       const unsignedEvent: UnsignedEvent = {
-        kind: 30382,
+        kind: TA_USER_KIND,
         created_at: Math.floor(Date.now() / 1000),
         tags: [
           ["d", targetPubkey], // d-tag points to the subject
@@ -206,13 +213,29 @@ export class TAService {
       const signedEvent = await this.signer.signEvent(unsignedEvent);
 
       // Publish to combined relay list
-      await this.relayPool.publish(allRelays, signedEvent);
+      const relayResults = await this.relayPool.publish(allRelays, signedEvent);
+
+      // Check if at least one relay accepted the event
+      const atLeastOneSuccess = relayResults.some((result) => result.ok);
+
+      if (!atLeastOneSuccess) {
+        const failedRelays = relayResults
+          .map(
+            (result) => `${result.from}: ${result.message || "Unknown error"}`,
+          )
+          .join(", ");
+
+        throw new RelatrError(
+          `Failed to publish TA event to any relay. Attempted: ${failedRelays}`,
+          "TA_PUBLISH_FAILED",
+        );
+      }
 
       logger.info(
-        `Published TA event for ${targetPubkey}, rank ${rank} to ${allRelays.length} relays`,
+        `Published TA event for ${targetPubkey}, rank ${rank} to ${allRelays.length} relays. Results: ${JSON.stringify(relayResults)}`,
       );
 
-      return signedEvent.id;
+      return relayResults;
     } catch (error) {
       logger.error(
         `Failed to publish TA event for ${targetPubkey}:`,
@@ -233,6 +256,7 @@ export class TAService {
    */
   async computeAndPublishRank(
     subscriberPubkey: string,
+    customRelays?: string[],
   ): Promise<TARankUpdateResult> {
     try {
       // Get current subscriber data
@@ -256,13 +280,19 @@ export class TAService {
       // Check if rank has changed
       const previousRank = subscriber.latestRank;
       // Publish TA event
-      await this.publishTAEvent(subscriberPubkey, newRank);
+      const relayResults = await this.publishTAEvent(
+        subscriberPubkey,
+        newRank,
+        customRelays,
+      );
+
       if (previousRank !== null && previousRank === newRank) {
         logger.debug(`TA rank unchanged for ${subscriberPubkey}: ${newRank}`);
         return {
           published: true,
           rank: newRank,
           previousRank,
+          relayResults,
         };
       } else {
         // Update stored rank
@@ -281,6 +311,7 @@ export class TAService {
         published: true,
         rank: newRank,
         previousRank,
+        relayResults,
       };
     } catch (error) {
       logger.error(

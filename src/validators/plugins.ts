@@ -3,9 +3,7 @@ import type { NostrProfile } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import { withTimeout } from "@/utils/utils";
 import type { RelayPool } from "applesauce-relay";
-import type { NostrEvent } from "nostr-tools";
 import { logger } from "../utils/Logger";
-import { RelayList } from "nostr-tools/kinds";
 import { fetchUserRelayList } from "../utils/utils.nostr";
 
 /**

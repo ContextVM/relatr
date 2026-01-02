@@ -466,12 +466,17 @@ function registerManageTAProviderTool(
       .describe(
         "Action to perform: 'get' to check status, 'subscribe' to activate, 'unsubscribe' to deactivate",
       ),
+    customRelays: z
+      .string()
+      .optional()
+      .describe(
+        "Optional comma-separated list of custom relay URLs to publish TA events to (only used for subscribe action)",
+      ),
   });
 
   // Output schema - unified response from manageTASub
   const outputSchema = z.object({
     success: z.boolean(),
-    message: z.string(),
     subscriberPubkey: z.string(),
     isActive: z.boolean(),
     createdAt: z.number().nullable(),
@@ -481,6 +486,15 @@ function registerManageTAProviderTool(
         published: z.boolean(),
         rank: z.number(),
         previousRank: z.number().nullable(),
+        relayResults: z
+          .array(
+            z.object({
+              ok: z.boolean(),
+              message: z.string().optional(),
+              from: z.string(),
+            }),
+          )
+          .optional(),
       })
       .optional(),
   });
@@ -514,14 +528,20 @@ function registerManageTAProviderTool(
 
         // Validate input
         const action = params.action;
+        const customRelays = params.customRelays
+          ? params.customRelays.split(",").map((url) => url.trim())
+          : undefined;
 
-        const result = await taService.manageTASub(action, clientPubkey);
+        const result = await taService.manageTASub(
+          action,
+          clientPubkey,
+          customRelays,
+        );
 
         return {
           content: [],
           structuredContent: {
             success: result.success,
-            message: result.message,
             subscriberPubkey: result.subscriberPubkey,
             isActive: result.isActive,
             createdAt: result.createdAt,

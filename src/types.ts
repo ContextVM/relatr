@@ -1,3 +1,5 @@
+import type { PublishResponse } from "applesauce-relay";
+
 export type { NostrEvent } from "nostr-tools";
 
 /**
@@ -180,4 +182,5 @@ export interface TARankUpdateResult {
   published: boolean;
   rank: number;
   previousRank: number | null;
+  relayResults?: PublishResponse[];
 }

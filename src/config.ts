@@ -1,6 +1,7 @@
 import { normalizeToPubkey } from "applesauce-core/helpers";
 import type { MetricWeights, RelatrConfig } from "./types";
 import { z } from "zod";
+import { COMMON_RELAYS, CVM_RELAY } from "./constants/nostr";
 
 /**
  * Canonical default metric weighting scheme used by trust scoring.
@@ -31,13 +32,9 @@ export const RelatrConfigSchema = z.object({
   nostrRelays: z
     .array(z.string())
     .min(1, "At least one NOSTR_RELAY is required")
-    .default([
-      "wss://relay.damus.io",
-      "wss://relay.nostr.band",
-      "wss://relay.snort.social",
-    ]),
+    .default(COMMON_RELAYS),
   serverSecretKey: z.string().min(1, "SERVER_SECRET_KEY is required"),
-  serverRelays: z.array(z.string()).default(["wss://relay.contextvm.org"]),
+  serverRelays: z.array(z.string()).default(CVM_RELAY),
   decayFactor: z.number().min(0).default(0.1),
   cacheTtlSeconds: z
     .number()

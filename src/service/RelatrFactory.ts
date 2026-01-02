@@ -165,6 +165,7 @@ export class RelatrFactory {
                   relatrService,
                   relayPool: pool,
                   signer: new PrivateKeySigner(validatedConfig.serverSecretKey),
+                  metricsRepository: metricsRepository!,
                 })
               : null;
             

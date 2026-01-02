@@ -6,6 +6,8 @@ import type { RelayPool } from "applesauce-relay";
 import { decode } from "nostr-tools/nip19";
 import { logger } from "./Logger";
 import { isHexKey } from "applesauce-core/helpers";
+import { RelayList } from "nostr-tools/kinds";
+import { NEG_RELAYS } from "@/constants/nostr";
 
 /**
  * Default batch size for fetching events from relays
@@ -97,11 +99,7 @@ export async function negSyncFromRelays(
 export async function fetchEventsForPubkeys(
   pubkeys: string[],
   kind: number,
-  relays: string[] = [
-    "wss://relay.damus.io",
-    "wss://profiles.nostr1.com/",
-    "wss://wot.grapevine.network/",
-  ],
+  relays: string[] = NEG_RELAYS,
   pool: RelayPool,
   options?: {
     onBatch?: (
@@ -219,7 +217,7 @@ export async function fetchUserRelayList(
         .request(
           relays,
           {
-            kinds: [10002],
+            kinds: [RelayList],
             authors: [pubkey],
             limit: 1,
           },
