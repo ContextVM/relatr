@@ -4,18 +4,18 @@ import type { PrivateKeySigner } from "@contextvm/sdk";
 import type { RelatrConfig, TARankUpdateResult } from "../types";
 import { RelatrError } from "../types";
 import type { TARepository } from "../database/repositories/TARepository";
-import type { MetricsRepository } from "../database/repositories/MetricsRepository";
+import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
 import type { RelatrService } from "./RelatrService";
 import { logger } from "../utils/Logger";
 import { fetchUserRelayList } from "../utils/utils.nostr";
 import { relaySet } from "applesauce-core/helpers";
-import { EventPlugin } from "@/validators/plugins";
 import { COMMON_RELAYS, TA_USER_KIND } from "@/constants/nostr";
+import { PUBKEY_KV_KEYS, type RelayListValueV1 } from "@/constants/pubkeyKv";
 
 export interface TAServiceDependencies {
   config: RelatrConfig;
   taRepository: TARepository;
-  metricsRepository: MetricsRepository;
+  pubkeyKvRepository: PubkeyKvRepository;
   relatrService: RelatrService;
   relayPool: RelayPool;
   signer: PrivateKeySigner;
@@ -50,7 +50,7 @@ export interface ManageTASubResult {
 export class TAService {
   private config: RelatrConfig;
   private taRepository: TARepository;
-  private metricsRepository: MetricsRepository;
+  private pubkeyKvRepository: PubkeyKvRepository;
   private relatrService: RelatrService;
   private relayPool: RelayPool;
   private signer: PrivateKeySigner;
@@ -58,7 +58,7 @@ export class TAService {
   constructor(dependencies: TAServiceDependencies) {
     this.config = dependencies.config;
     this.taRepository = dependencies.taRepository;
-    this.metricsRepository = dependencies.metricsRepository;
+    this.pubkeyKvRepository = dependencies.pubkeyKvRepository;
     this.relatrService = dependencies.relatrService;
     this.relayPool = dependencies.relayPool;
     this.signer = dependencies.signer;
@@ -156,15 +156,16 @@ export class TAService {
     customRelays?: string[],
   ): Promise<PublishResponse[]> {
     try {
-      // Try to get cached relay list from metrics repository
+      // Try to get cached relay list from pubkey_kv store
       let userRelays: string[] = [];
-      const cachedMeta = await this.metricsRepository.getMeta(
-        targetPubkey,
-        EventPlugin.name,
-      );
+      const cachedRelayList =
+        await this.pubkeyKvRepository.getJSON<RelayListValueV1>(
+          targetPubkey,
+          PUBKEY_KV_KEYS.relay_list,
+        );
 
-      if (cachedMeta && Array.isArray(cachedMeta.relay_list)) {
-        userRelays = cachedMeta.relay_list;
+      if (cachedRelayList && Array.isArray(cachedRelayList.relays)) {
+        userRelays = cachedRelayList.relays;
         logger.debug(
           `Using cached relay list for ${targetPubkey}: ${userRelays.length} relays`,
         );
@@ -194,6 +195,22 @@ export class TAService {
         ...this.config.serverRelays,
         ...(customRelays || []),
       ]);
+
+      // Persist combined relay list to pubkey_kv for future use
+      if (allRelays.length > 0) {
+        const relayListValue: RelayListValueV1 = {
+          version: 1,
+          relays: Array.from(allRelays),
+        };
+        await this.pubkeyKvRepository.setJSON(
+          targetPubkey,
+          PUBKEY_KV_KEYS.relay_list,
+          relayListValue,
+        );
+        logger.debug(
+          `Cached relay list for ${targetPubkey}: ${allRelays.length} relays`,
+        );
+      }
 
       // Create Kind 30382 event following NIP-85
       const unsignedEvent: UnsignedEvent = {

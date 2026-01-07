@@ -66,3 +66,19 @@ CREATE INDEX IF NOT EXISTS idx_ta_subscribers_active
     ON ta_subscribers(is_active);
 CREATE INDEX IF NOT EXISTS idx_ta_subscribers_created
     ON ta_subscribers(created_at);
+
+-- Table 5: Pubkey Key-Value Store
+CREATE TABLE IF NOT EXISTS pubkey_kv (
+    pubkey VARCHAR(64) NOT NULL,
+    key VARCHAR NOT NULL,
+    value TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(pubkey, key)
+);
+
+-- Indexes for pubkey_kv table
+CREATE INDEX IF NOT EXISTS idx_pubkey_kv_pubkey
+    ON pubkey_kv(pubkey);
+CREATE INDEX IF NOT EXISTS idx_pubkey_kv_key
+    ON pubkey_kv(key);

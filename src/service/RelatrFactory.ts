@@ -6,6 +6,7 @@ import { MetadataRepository } from '../database/repositories/MetadataRepository'
 import { MetricsRepository } from '../database/repositories/MetricsRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
 import { TARepository } from '../database/repositories/TARepository';
+import { PubkeyKvRepository } from '../database/repositories/PubkeyKvRepository';
 import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
 import { SocialGraphBuilder, type SocialGraphCreationResult } from '../graph/SocialGraphBuilder';
@@ -58,6 +59,7 @@ export class RelatrFactory {
             const metricsRepository: IMetricsRepository = new MetricsRepository(readConnection, writeConnection, validatedConfig.cacheTtlSeconds);
             const metadataRepository: IMetadataRepository = new MetadataRepository(readConnection, writeConnection);
             const settingsRepository: ISettingsRepository = new SettingsRepository(readConnection, writeConnection);
+            const pubkeyKvRepository = new PubkeyKvRepository(readConnection, writeConnection);
 
             // TA is optional and operator-controlled
             const taRepository = validatedConfig.taEnabled ? new TARepository(readConnection, writeConnection) : undefined;
@@ -165,7 +167,7 @@ export class RelatrFactory {
                   relatrService,
                   relayPool: pool,
                   signer: new PrivateKeySigner(validatedConfig.serverSecretKey),
-                  metricsRepository: metricsRepository!,
+                  pubkeyKvRepository,
                 })
               : null;
             
