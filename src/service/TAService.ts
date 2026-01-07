@@ -25,6 +25,7 @@ export type ManageTASubAction = "get" | "subscribe" | "unsubscribe";
 
 export interface ManageTASubResult {
   success: boolean;
+  message?: string;
   subscriberPubkey: string;
 
   /**
@@ -75,66 +76,71 @@ export class TAService {
     subscriberPubkey: string,
     customRelays?: string[],
   ): Promise<ManageTASubResult> {
-    try {
-      if (action === "get") {
-        const subscriber =
-          await this.taRepository.getSubscriber(subscriberPubkey);
-
-        return {
-          success: true,
-          subscriberPubkey,
-          isActive: Boolean(subscriber?.isActive),
-          createdAt: subscriber?.createdAt ?? null,
-          updatedAt: subscriber?.updatedAt ?? null,
-        };
-      }
-
-      if (action === "subscribe") {
-        // Upsert & activate (idempotent)
-        const subscriber =
-          await this.taRepository.addSubscriber(subscriberPubkey);
-
-        // Publish a replaceable TA event on every subscribe call
-        const rank = await this.computeAndPublishRank(
-          subscriberPubkey,
-          customRelays,
-        );
-
-        return {
-          success: true,
-          subscriberPubkey,
-          isActive: true,
-          createdAt: subscriber.createdAt,
-          updatedAt: subscriber.updatedAt,
-          rank,
-        };
-      }
-
-      // action === "unsubscribe"
-      await this.taRepository.deactivateSubscriber(subscriberPubkey);
-
+    if (action === "get") {
       const subscriber =
         await this.taRepository.getSubscriber(subscriberPubkey);
-      const now = Math.floor(Date.now() / 1000);
+
+      const result: ManageTASubResult = {
+        success: true,
+        subscriberPubkey,
+        isActive: Boolean(subscriber?.isActive),
+        createdAt: subscriber?.createdAt ?? null,
+        updatedAt: subscriber?.updatedAt ?? null,
+      };
+
+      // Include rank if subscriber exists and has a latestRank
+      if (subscriber && subscriber.latestRank !== null) {
+        result.rank = {
+          published: subscriber.isActive,
+          rank: subscriber.latestRank,
+          previousRank: subscriber.latestRank,
+        };
+      }
+
+      return result;
+    }
+
+    if (action === "subscribe") {
+      // First compute and publish (atomic - no DB changes yet)
+      const rank = await this.computeAndPublishRank(
+        subscriberPubkey,
+        customRelays,
+      );
+
+      // Only if publishing succeeds, add to DB
+      const subscriber =
+        await this.taRepository.addSubscriber(subscriberPubkey);
+
+      // Persist the computed rank immediately
+      await this.taRepository.updateLatestRank(
+        subscriberPubkey,
+        rank.rank,
+        Math.floor(Date.now() / 1000),
+      );
 
       return {
         success: true,
         subscriberPubkey,
-        isActive: false,
-        createdAt: subscriber?.createdAt ?? null,
-        updatedAt: subscriber?.updatedAt ?? now,
+        isActive: true,
+        createdAt: subscriber.createdAt,
+        updatedAt: subscriber.updatedAt,
+        rank,
       };
-    } catch (error) {
-      logger.error(
-        `Failed to manage TA subscription (action=${action}) for ${subscriberPubkey}:`,
-        error instanceof Error ? error.message : String(error),
-      );
-
-      throw new RelatrError(
-        `TA subscription management failed: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_SUBSCRIPTION_MANAGEMENT_FAILED",
-      );
     }
+
+    // action === "unsubscribe"
+    await this.taRepository.deactivateSubscriber(subscriberPubkey);
+
+    const subscriber = await this.taRepository.getSubscriber(subscriberPubkey);
+    const now = Math.floor(Date.now() / 1000);
+
+    return {
+      success: true,
+      subscriberPubkey,
+      isActive: false,
+      createdAt: subscriber?.createdAt ?? null,
+      updatedAt: subscriber?.updatedAt ?? now,
+    };
   }
 
   /**
@@ -175,15 +181,6 @@ export class TAService {
           logger.debug(
             `Fetched relay list for ${targetPubkey}: ${userRelays.length} relays`,
           );
-
-          // Cache the relay list with the specific metric key
-          await this.metricsRepository.saveMeta(
-            targetPubkey,
-            EventPlugin.name,
-            {
-              relay_list: userRelays,
-            },
-          );
         } else {
           logger.debug(
             `No relay list found for ${targetPubkey}, using server relays only`,
@@ -197,6 +194,7 @@ export class TAService {
         ...this.config.serverRelays,
         ...(customRelays || []),
       ]);
+
       // Create Kind 30382 event following NIP-85
       const unsignedEvent: UnsignedEvent = {
         kind: TA_USER_KIND,
@@ -237,14 +235,17 @@ export class TAService {
 
       return relayResults;
     } catch (error) {
+      // Preserve RelatrError to avoid double-wrapping
+      if (error instanceof RelatrError) {
+        throw error;
+      }
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       logger.error(
         `Failed to publish TA event for ${targetPubkey}:`,
-        error instanceof Error ? error.message : String(error),
+        errorMessage,
       );
-      throw new RelatrError(
-        `TA event publishing failed: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_PUBLISH_FAILED",
-      );
+      throw new RelatrError(errorMessage, "TA_PUBLISH_FAILED");
     }
   }
 
@@ -258,71 +259,47 @@ export class TAService {
     subscriberPubkey: string,
     customRelays?: string[],
   ): Promise<TARankUpdateResult> {
-    try {
-      // Get current subscriber data
-      const subscriber =
-        await this.taRepository.getSubscriber(subscriberPubkey);
-      if (!subscriber) {
-        throw new RelatrError(
-          "Subscriber not found",
-          "TA_SUBSCRIBER_NOT_FOUND",
-        );
-      }
+    // Get current subscriber data (if exists)
+    const subscriber = await this.taRepository.getSubscriber(subscriberPubkey);
 
-      // Compute new rank using existing trust calculation
-      const trustScore = await this.relatrService.calculateTrustScore({
-        targetPubkey: subscriberPubkey,
-      });
+    // Compute new rank using existing trust calculation
+    const trustScore = await this.relatrService.calculateTrustScore({
+      targetPubkey: subscriberPubkey,
+    });
 
-      // Convert trust score (0-1) to rank (0-100)
-      const newRank = Math.round(trustScore.score * 100);
+    // Convert trust score (0-1) to rank (0-100)
+    const newRank = Math.round(trustScore.score * 100);
 
-      // Check if rank has changed
-      const previousRank = subscriber.latestRank;
-      // Publish TA event
-      const relayResults = await this.publishTAEvent(
+    // Check if rank has changed (null for new subscribers)
+    const previousRank = subscriber?.latestRank ?? null;
+
+    // Publish TA event (let errors propagate)
+    const relayResults = await this.publishTAEvent(
+      subscriberPubkey,
+      newRank,
+      customRelays,
+    );
+
+    // Only update DB if subscriber exists and rank changed
+    if (subscriber && previousRank !== newRank) {
+      await this.taRepository.updateLatestRank(
         subscriberPubkey,
         newRank,
-        customRelays,
+        Math.floor(Date.now() / 1000),
       );
-
-      if (previousRank !== null && previousRank === newRank) {
-        logger.debug(`TA rank unchanged for ${subscriberPubkey}: ${newRank}`);
-        return {
-          published: true,
-          rank: newRank,
-          previousRank,
-          relayResults,
-        };
-      } else {
-        // Update stored rank
-        await this.taRepository.updateLatestRank(
-          subscriberPubkey,
-          newRank,
-          Math.floor(Date.now() / 1000),
-        );
-      }
-
       logger.info(
         `TA rank updated for ${subscriberPubkey}: ${previousRank} → ${newRank}`,
       );
-
-      return {
-        published: true,
-        rank: newRank,
-        previousRank,
-        relayResults,
-      };
-    } catch (error) {
-      logger.error(
-        `Failed to compute and publish TA rank for ${subscriberPubkey}:`,
-        error instanceof Error ? error.message : String(error),
-      );
-      throw new RelatrError(
-        `TA rank computation failed: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_RANK_COMPUTATION_FAILED",
-      );
+    } else if (previousRank === newRank) {
+      logger.debug(`TA rank unchanged for ${subscriberPubkey}: ${newRank}`);
     }
+
+    return {
+      published: true,
+      rank: newRank,
+      previousRank,
+      relayResults,
+    };
   }
 
   /**

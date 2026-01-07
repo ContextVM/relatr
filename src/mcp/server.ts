@@ -12,6 +12,7 @@ import { RelatrService } from "../service/RelatrService.js";
 import { TAService } from "../service/TAService.js";
 import type { SearchProfileResult } from "../types.js";
 import { logger } from "../utils/Logger.js";
+import { relaySet } from "applesauce-core/helpers";
 
 /**
  * Start the MCP server for Relatr
@@ -43,7 +44,7 @@ export async function startMCPServer(): Promise<void> {
     registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
     if (taService) {
-      registerManageTAProviderTool(server, taService);
+      registerManageTASubscriptionTool(server, taService);
     }
 
     // Setup graceful shutdown
@@ -453,9 +454,9 @@ function registerSearchProfilesTool(
 }
 
 /**
- * Register the manage_ta_provider tool
+ * Register the manage_ta_subscription tool
  */
-function registerManageTAProviderTool(
+function registerManageTASubscriptionTool(
   server: McpServer,
   taService: TAService,
 ): void {
@@ -477,6 +478,7 @@ function registerManageTAProviderTool(
   // Output schema - unified response from manageTASub
   const outputSchema = z.object({
     success: z.boolean(),
+    message: z.string().optional(),
     subscriberPubkey: z.string(),
     isActive: z.boolean(),
     createdAt: z.number().nullable(),
@@ -500,36 +502,39 @@ function registerManageTAProviderTool(
   });
 
   server.registerTool(
-    "manage_ta_provider",
+    "manage_ta_subscription",
     {
-      title: "Manage TA Provider",
+      title: "Manage TA Subscription",
       description:
-        "Manage your Trusted Assertions provider subscription. Check status, subscribe, or unsubscribe from TA services.",
+        "Manage your Trusted Assertions subscription. Check status, subscribe, or unsubscribe from TA services.",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
     async (params, { _meta }) => {
+      // Extract client pubkey from _meta (injected by CEP-16)
+      // NOTE: This is always hex when using NostrServerTransport with injectClientPubkey=true.
+      const clientPubkey = _meta?.clientPubkey;
+
+      if (!clientPubkey || typeof clientPubkey !== "string") {
+        return {
+          content: [],
+          structuredContent: {
+            success: false,
+            message: "Client public key not available",
+            subscriberPubkey: "",
+            isActive: false,
+            createdAt: null,
+            updatedAt: null,
+          },
+          isError: true,
+        };
+      }
+
       try {
-        // Extract client pubkey from _meta (injected by CEP-16)
-        // NOTE: This is always hex when using NostrServerTransport with injectClientPubkey=true.
-        const clientPubkey = _meta?.clientPubkey;
-
-        if (!clientPubkey || typeof clientPubkey !== "string") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: Client public key not available.",
-              },
-            ],
-            isError: true,
-          };
-        }
-
         // Validate input
         const action = params.action;
         const customRelays = params.customRelays
-          ? params.customRelays.split(",").map((url) => url.trim())
+          ? relaySet(params.customRelays.split(",").map((url) => url.trim()))
           : undefined;
 
         const result = await taService.manageTASub(
@@ -542,6 +547,7 @@ function registerManageTAProviderTool(
           content: [],
           structuredContent: {
             success: result.success,
+            message: result.message,
             subscriberPubkey: result.subscriberPubkey,
             isActive: result.isActive,
             createdAt: result.createdAt,
@@ -554,12 +560,15 @@ function registerManageTAProviderTool(
           error instanceof Error ? error.message : "Unknown error";
 
         return {
-          content: [
-            {
-              type: "text",
-              text: `Error managing TA provider: ${errorMessage}`,
-            },
-          ],
+          content: [],
+          structuredContent: {
+            success: false,
+            message: errorMessage,
+            subscriberPubkey: clientPubkey,
+            isActive: false,
+            createdAt: null,
+            updatedAt: null,
+          },
           isError: true,
         };
       }
