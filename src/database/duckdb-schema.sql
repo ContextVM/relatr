@@ -12,12 +12,7 @@ CREATE TABLE IF NOT EXISTS profile_metrics (
     metric_value DOUBLE NOT NULL,
     computed_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    meta TEXT -- Flexible metadata storage (JSON)
 );
-
--- Migration: Add meta column if it doesn't exist (for existing databases)
--- This is safe to run on new databases as well
-ALTER TABLE profile_metrics ADD COLUMN IF NOT EXISTS meta TEXT;
 
 -- Indexes for optimized querying
 CREATE INDEX IF NOT EXISTS idx_profile_metrics_pubkey ON profile_metrics(pubkey);

@@ -12,6 +12,7 @@ import type { RelayPool } from "applesauce-relay";
 import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
 import { logger } from "@/utils/Logger";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
+import type { PubkeyKvRepository } from "@/database/repositories/PubkeyKvRepository";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -26,6 +27,7 @@ export class MetricsValidator {
   private cacheTtlSeconds: number = 3600;
   private registry: ValidationRegistry;
   private metadataRepository: MetadataRepository;
+  private pubkeyKvRepository: PubkeyKvRepository;
 
   /**
    * Create a new MetricsValidator instance
@@ -33,6 +35,9 @@ export class MetricsValidator {
    * @param nostrRelays - Array of Nostr relay URLs
    * @param graphManager - SocialGraph instance for reciprocity checks
    * @param metricsRepository - Repository for storing profile metrics
+   * @param metadataRepository - Repository for storing profile metadata
+   * @param pubkeyKvRepository - Repository for storing pubkey key-value data
+   * @param cacheTtlSeconds - Cache time-to-live in seconds
    * @param plugins - Array of validation plugins to register (defaults to all available plugins)
    */
   constructor(
@@ -41,6 +46,7 @@ export class MetricsValidator {
     graphManager: SocialGraph,
     metricsRepository: MetricsRepository,
     metadataRepository: MetadataRepository,
+    pubkeyKvRepository: PubkeyKvRepository,
     cacheTtlSeconds?: number,
     plugins: ValidationPlugin[] = ALL_PLUGINS,
   ) {
@@ -64,6 +70,10 @@ export class MetricsValidator {
       throw new ValidationError("MetadataRepository instance is required");
     }
 
+    if (!pubkeyKvRepository) {
+      throw new ValidationError("PubkeyKvRepository instance is required");
+    }
+
     this.pool = pool;
     this.nostrRelays = nostrRelays;
     this.graphManager = graphManager;
@@ -72,6 +82,7 @@ export class MetricsValidator {
     // Keep it in seconds to avoid accidentally producing multi-year TTLs.
     this.cacheTtlSeconds = cacheTtlSeconds ?? 60 * 60 * 48;
     this.metadataRepository = metadataRepository;
+    this.pubkeyKvRepository = pubkeyKvRepository;
 
     // Create registry
     this.registry = new ValidationRegistry();
@@ -128,6 +139,7 @@ export class MetricsValidator {
         graphManager: this.graphManager,
         pool: this.pool,
         relays: this.nostrRelays,
+        pubkeyKvRepository: this.pubkeyKvRepository,
       };
 
       // Execute all registered plugins
@@ -257,6 +269,7 @@ export class MetricsValidator {
               graphManager: this.graphManager,
               pool: this.pool,
               relays: this.nostrRelays,
+              pubkeyKvRepository: this.pubkeyKvRepository,
             };
 
             const metrics = await this.registry.executeAll(context);

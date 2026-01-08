@@ -10,7 +10,7 @@ import { logger } from "../utils/Logger";
 import { fetchUserRelayList } from "../utils/utils.nostr";
 import { relaySet } from "applesauce-core/helpers";
 import { COMMON_RELAYS, TA_USER_KIND } from "@/constants/nostr";
-import { PUBKEY_KV_KEYS, type RelayListValueV1 } from "@/constants/pubkeyKv";
+import { PUBKEY_KV_KEYS, type TARelaysValueV1 } from "@/constants/pubkeyKv";
 
 export interface TAServiceDependencies {
   config: RelatrConfig;
@@ -130,10 +130,10 @@ export class TAService {
 
     // action === "unsubscribe"
     await this.taRepository.deactivateSubscriber(subscriberPubkey);
-
+    // TODO: Maybe we can remove this reading operation.
     const subscriber = await this.taRepository.getSubscriber(subscriberPubkey);
     const now = Math.floor(Date.now() / 1000);
-
+    logger.debug(`TA subscription deactivated for ${subscriberPubkey}`);
     return {
       success: true,
       subscriberPubkey,
@@ -156,32 +156,33 @@ export class TAService {
     customRelays?: string[],
   ): Promise<PublishResponse[]> {
     try {
-      // Try to get cached relay list from pubkey_kv store
+      // Try to get cached TA relays from pubkey_kv store
       let userRelays: string[] = [];
-      const cachedRelayList =
-        await this.pubkeyKvRepository.getJSON<RelayListValueV1>(
+      const cachedTARelays =
+        await this.pubkeyKvRepository.getJSON<TARelaysValueV1>(
           targetPubkey,
-          PUBKEY_KV_KEYS.relay_list,
+          PUBKEY_KV_KEYS.ta_relays,
         );
 
-      if (cachedRelayList && Array.isArray(cachedRelayList.relays)) {
-        userRelays = cachedRelayList.relays;
+      if (cachedTARelays) {
+        userRelays = cachedTARelays.relays;
         logger.debug(
-          `Using cached relay list for ${targetPubkey}: ${userRelays.length} relays`,
+          `Using cached TA relays for ${targetPubkey}: ${userRelays.length} relays`,
         );
       } else {
-        // Fetch relay list from relays
+        // Fetch user's inboxes and outboxes from relays
         const fetchedRelays = await fetchUserRelayList(
           targetPubkey,
           this.relayPool,
           COMMON_RELAYS,
+          this.pubkeyKvRepository,
         );
 
-        if (fetchedRelays && fetchedRelays.length > 0) {
-          userRelays = fetchedRelays;
-          logger.debug(
-            `Fetched relay list for ${targetPubkey}: ${userRelays.length} relays`,
-          );
+        if (
+          (fetchedRelays && fetchedRelays.inboxes?.length) ||
+          fetchedRelays?.outboxes?.length
+        ) {
+          userRelays = relaySet(fetchedRelays.inboxes, fetchedRelays.outboxes);
         } else {
           logger.debug(
             `No relay list found for ${targetPubkey}, using server relays only`,
@@ -196,19 +197,20 @@ export class TAService {
         ...(customRelays || []),
       ]);
 
-      // Persist combined relay list to pubkey_kv for future use
+      // Persist combined TA relay list to pubkey_kv for future use
       if (allRelays.length > 0) {
-        const relayListValue: RelayListValueV1 = {
+        const taRelaysValue: TARelaysValueV1 = {
           version: 1,
           relays: Array.from(allRelays),
         };
         await this.pubkeyKvRepository.setJSON(
           targetPubkey,
-          PUBKEY_KV_KEYS.relay_list,
-          relayListValue,
+          PUBKEY_KV_KEYS.ta_relays,
+          taRelaysValue,
         );
+
         logger.debug(
-          `Cached relay list for ${targetPubkey}: ${allRelays.length} relays`,
+          `Cached TA relays for ${targetPubkey}: ${allRelays.length} relays`,
         );
       }
 

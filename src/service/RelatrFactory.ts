@@ -116,6 +116,7 @@ export class RelatrFactory {
                 socialGraph,
                 metricsRepository,
                 metadataRepository,
+                pubkeyKvRepository,
                 validatedConfig.cacheTtlSeconds,
                 ALL_PLUGINS,
             );

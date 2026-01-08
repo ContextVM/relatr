@@ -5,6 +5,7 @@ import { withTimeout } from "@/utils/utils";
 import type { RelayPool } from "applesauce-relay";
 import { logger } from "../utils/Logger";
 import { fetchUserRelayList } from "../utils/utils.nostr";
+import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
 
 /**
  * Validation context passed to all validation plugins
@@ -16,6 +17,7 @@ export interface ValidationContext {
   graphManager: SocialGraph;
   pool: RelayPool;
   relays: string[];
+  pubkeyKvRepository: PubkeyKvRepository;
   searchQuery?: string; // For context-aware validations
 }
 
@@ -205,10 +207,14 @@ export class EventPlugin implements ValidationPlugin {
         ctx.pubkey,
         ctx.pool,
         ctx.relays,
+        ctx.pubkeyKvRepository,
         this.timeoutMs,
       );
 
-      return relayList && relayList.length > 0 ? 1.0 : 0.0;
+      return relayList &&
+        (relayList.inboxes?.length || relayList?.outboxes?.length)
+        ? 1.0
+        : 0.0;
     } catch {
       return 0.0;
     }

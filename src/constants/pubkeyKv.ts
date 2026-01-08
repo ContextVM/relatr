@@ -10,7 +10,8 @@
  * Using `as const` ensures compile-time safety when using these keys.
  */
 export const PUBKEY_KV_KEYS = {
-  relay_list: "relay_list",
+  ta_relays: "ta_relays",
+  user_relays: "user_relays",
 } as const;
 
 /**
@@ -19,10 +20,19 @@ export const PUBKEY_KV_KEYS = {
 export type PubkeyKvKey = (typeof PUBKEY_KV_KEYS)[keyof typeof PUBKEY_KV_KEYS];
 
 /**
- * Value structure for TA relay list entries.
- * Versioned to allow future extensions while maintaining backward compatibility.
+ * Value structure for TA relay list entries
  */
-export type RelayListValueV1 = {
+export type TARelaysValueV1 = {
   version: 1;
   relays: string[];
+};
+
+/**
+ * Value structure for user relay list entries (inboxes and outboxes from kind 10002).
+ * Versioned to allow future extensions while maintaining backward compatibility.
+ */
+export type UserRelaysValueV1 = {
+  version: 1;
+  inboxes?: string[];
+  outboxes?: string[];
 };

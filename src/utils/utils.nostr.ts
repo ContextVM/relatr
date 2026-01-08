@@ -1,4 +1,5 @@
 import { EventStore } from "applesauce-core";
+import { getInboxes, getOutboxes, relaySet } from "applesauce-core/helpers";
 import type { NostrEvent } from "nostr-tools";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "../types";
@@ -8,6 +9,9 @@ import { logger } from "./Logger";
 import { isHexKey } from "applesauce-core/helpers";
 import { RelayList } from "nostr-tools/kinds";
 import { NEG_RELAYS } from "@/constants/nostr";
+import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
+import type { UserRelaysValueV1 } from "@/constants/pubkeyKv";
+import { PUBKEY_KV_KEYS } from "@/constants/pubkeyKv";
 
 /**
  * Default batch size for fetching events from relays
@@ -202,6 +206,7 @@ export function validateAndDecodePubkey(identifier: string): string | null {
  * @param pubkey User's public key
  * @param pool Relay pool
  * @param relays Relays to query
+ * @param pubkeyKvRepository Repository for persisting user relays
  * @param timeoutMs Timeout in milliseconds (default: 10000)
  * @returns Array of relay URLs or null if not found
  */
@@ -209,13 +214,25 @@ export async function fetchUserRelayList(
   pubkey: string,
   pool: RelayPool,
   relays: string[],
-  timeoutMs: number = 10000,
-): Promise<string[] | null> {
+  pubkeyKvRepository: PubkeyKvRepository,
+  timeoutMs: number = 30000,
+): Promise<UserRelaysValueV1 | null> {
   try {
+    const previousKnownRelays =
+      await pubkeyKvRepository.getJSON<UserRelaysValueV1>(
+        pubkey,
+        PUBKEY_KV_KEYS.user_relays,
+      );
+    const relaysToQuery = relaySet(
+      previousKnownRelays?.inboxes,
+      previousKnownRelays?.outboxes,
+      relays,
+    );
+
     const event = await new Promise<NostrEvent | null>((resolve, reject) => {
       const subscription = pool
         .request(
-          relays,
+          relaysToQuery,
           {
             kinds: [RelayList],
             authors: [pubkey],
@@ -246,12 +263,39 @@ export async function fetchUserRelayList(
       return null;
     }
 
-    // Extract relay URLs from event tags
-    const relayUrls = event.tags
-      .filter((tag) => tag[0] === "r" && tag[1])
-      .map((tag) => tag[1] as string);
+    // Extract inboxes and outboxes using applesauce helpers
+    const inboxes = getInboxes(event);
+    const outboxes = getOutboxes(event);
 
-    return relayUrls.length > 0 ? relayUrls : null;
+    // Log for debugging
+    logger.debug(
+      `Fetched relay list for ${pubkey}: ${inboxes} inboxes, ${outboxes} outboxes`,
+    );
+
+    // Persist to DB
+    const userRelaysValue: UserRelaysValueV1 = {
+      version: 1,
+      inboxes,
+      outboxes,
+    };
+
+    try {
+      await pubkeyKvRepository.setJSON(
+        pubkey,
+        PUBKEY_KV_KEYS.user_relays,
+        userRelaysValue,
+      );
+
+      logger.debug(`Cached user relays for ${pubkey}`);
+    } catch (dbError) {
+      logger.warn(
+        `Failed to cache user relays for ${pubkey}:`,
+        dbError instanceof Error ? dbError.message : String(dbError),
+      );
+      // Continue anyway - the function should still return the relay URLs
+    }
+
+    return userRelaysValue;
   } catch (error) {
     logger.warn(
       `Failed to fetch relay list for ${pubkey}:`,
