@@ -56,6 +56,13 @@ export async function startMCPServer(): Promise<void> {
       signer: new PrivateKeySigner(config.serverSecretKey),
       relayHandler: new ApplesauceRelayPool(config.serverRelays),
       injectClientPubkey: true,
+      isPublicServer: config.isPublicServer,
+      serverInfo: {
+        name: config.serverName,
+        about: config.serverAbout,
+        website: config.serverWebsite,
+        picture: config.serverPicture,
+      },
     });
     await server.connect(transport);
 

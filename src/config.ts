@@ -59,6 +59,24 @@ export const RelatrConfigSchema = z.object({
     .union([z.boolean(), z.string()])
     .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
     .default(false),
+
+  // MCP server configuration
+  isPublicServer: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
+    .default(false),
+  serverName: z.string().default("Relatr"),
+  serverAbout: z
+    .string()
+    .default(
+      "Relatr is a social graph analysis and trust score service for Nostr.",
+    ),
+  serverWebsite: z.string().default("https://relatr.xyz"),
+  serverPicture: z
+    .string()
+    .default(
+      "https://image.nostr.build/30d7fdef1b3d3b83d9e33f47b7d15388deeb47428041f0656612d1450cdb1216.jpg",
+    ),
 });
 
 /**
@@ -99,6 +117,13 @@ export function loadConfig(): RelatrConfig {
       : undefined,
 
     taEnabled: process.env.TA_ENABLED,
+
+    // MCP server configuration
+    isPublicServer: process.env.IS_PUBLIC_SERVER,
+    serverName: process.env.SERVER_NAME,
+    serverAbout: process.env.SERVER_ABOUT,
+    serverWebsite: process.env.SERVER_WEBSITE,
+    serverPicture: process.env.SERVER_PICTURE,
   };
 
   const result = RelatrConfigSchema.safeParse(configData);

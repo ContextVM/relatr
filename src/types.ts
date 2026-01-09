@@ -25,6 +25,15 @@ export interface RelatrConfig {
    * (NIP-85 kind 30382) publishing. Controlled by the operator.
    */
   taEnabled: boolean;
+
+  /**
+   * MCP server configuration
+   */
+  isPublicServer: boolean;
+  serverName: string;
+  serverAbout: string;
+  serverWebsite: string;
+  serverPicture: string;
 }
 export interface MetricWeights {
   distanceWeight: number;

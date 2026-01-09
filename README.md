@@ -99,6 +99,14 @@ SERVER_SECRET_KEY=your_generated_hex_key_here
 - `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
 - `TA_ENABLED` - Enable Trusted Assertions provider (default: false)
 
+**MCP Server Configuration:**
+
+- `IS_PUBLIC_SERVER` - Whether the MCP server is public (accessible to anyone) or private (default: false)
+- `SERVER_NAME` - Server name displayed in MCP server info (default: Relatr)
+- `SERVER_ABOUT` - Server description/about text (default: "Relatr is a social graph analysis and trust score service for Nostr.")
+- `SERVER_WEBSITE` - Server website URL (default: https://relatr.xyz)
+- `SERVER_PICTURE` - Server picture/avatar URL (default: https://image.nostr.build/30d7fdef1b3d3b83d9e33f47b7d15388deeb47428041f0656612d1450cdb1216.jpg)
+
 See `.env.example` for a complete configuration template with all available options.
 
 #### Managing the Service
