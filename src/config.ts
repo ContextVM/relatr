@@ -1,6 +1,7 @@
 import { normalizeToPubkey } from "applesauce-core/helpers";
 import type { MetricWeights, RelatrConfig } from "./types";
 import { z } from "zod";
+import { COMMON_RELAYS, CVM_RELAY } from "./constants/nostr";
 
 /**
  * Canonical default metric weighting scheme used by trust scoring.
@@ -31,37 +32,39 @@ export const RelatrConfigSchema = z.object({
   nostrRelays: z
     .array(z.string())
     .min(1, "At least one NOSTR_RELAY is required")
-    .default([
-      "wss://relay.damus.io",
-      "wss://relay.nostr.band",
-      "wss://relay.snort.social",
-    ]),
+    .default(COMMON_RELAYS),
   serverSecretKey: z.string().min(1, "SERVER_SECRET_KEY is required"),
-  serverRelays: z.array(z.string()).default(["wss://relay.contextvm.org"]),
+  serverRelays: z.array(z.string()).default(CVM_RELAY),
   decayFactor: z.number().min(0).default(0.1),
-  cacheTtlSeconds: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 72),
+  cacheTtlHours: z.number().positive().default(72),
   numberOfHops: z.number().int().positive().default(1),
-  syncInterval: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 21),
-  cleanupInterval: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 7),
-  validationSyncInterval: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 3),
+  syncIntervalHours: z.number().positive().default(21),
+  cleanupIntervalHours: z.number().positive().default(7),
+  validationSyncIntervalHours: z.number().positive().default(3),
 
   // Optional features
   taEnabled: z
     .union([z.boolean(), z.string()])
     .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
     .default(false),
+
+  // MCP server configuration
+  isPublicServer: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
+    .default(false),
+  serverName: z.string().default("Relatr"),
+  serverAbout: z
+    .string()
+    .default(
+      "Relatr is a social graph analysis and trust score service for Nostr.",
+    ),
+  serverWebsite: z.string().default("https://relatr.xyz"),
+  serverPicture: z
+    .string()
+    .default(
+      "https://image.nostr.build/30d7fdef1b3d3b83d9e33f47b7d15388deeb47428041f0656612d1450cdb1216.jpg",
+    ),
 });
 
 /**
@@ -85,23 +88,30 @@ export function loadConfig(): RelatrConfig {
     decayFactor: process.env.DECAY_FACTOR
       ? parseFloat(process.env.DECAY_FACTOR)
       : undefined,
-    cacheTtlSeconds: process.env.CACHE_TTL_SECONDS
-      ? parseInt(process.env.CACHE_TTL_SECONDS, 10)
+    cacheTtlHours: process.env.CACHE_TTL_HOURS
+      ? parseInt(process.env.CACHE_TTL_HOURS, 10)
       : undefined,
     numberOfHops: process.env.NUMBER_OF_HOPS
       ? parseInt(process.env.NUMBER_OF_HOPS, 10)
       : undefined,
-    syncInterval: process.env.SYNC_INTERVAL
-      ? parseInt(process.env.SYNC_INTERVAL, 10)
+    syncIntervalHours: process.env.SYNC_INTERVAL_HOURS
+      ? parseInt(process.env.SYNC_INTERVAL_HOURS, 10)
       : undefined,
-    cleanupInterval: process.env.CLEANUP_INTERVAL
-      ? parseInt(process.env.CLEANUP_INTERVAL, 10)
+    cleanupIntervalHours: process.env.CLEANUP_INTERVAL_HOURS
+      ? parseInt(process.env.CLEANUP_INTERVAL_HOURS, 10)
       : undefined,
-    validationSyncInterval: process.env.VALIDATION_SYNC_INTERVAL
-      ? parseInt(process.env.VALIDATION_SYNC_INTERVAL, 10)
+    validationSyncIntervalHours: process.env.VALIDATION_SYNC_INTERVAL_HOURS
+      ? parseInt(process.env.VALIDATION_SYNC_INTERVAL_HOURS, 10)
       : undefined,
 
     taEnabled: process.env.TA_ENABLED,
+
+    // MCP server configuration
+    isPublicServer: process.env.IS_PUBLIC_SERVER,
+    serverName: process.env.SERVER_NAME,
+    serverAbout: process.env.SERVER_ABOUT,
+    serverWebsite: process.env.SERVER_WEBSITE,
+    serverPicture: process.env.SERVER_PICTURE,
   };
 
   const result = RelatrConfigSchema.safeParse(configData);

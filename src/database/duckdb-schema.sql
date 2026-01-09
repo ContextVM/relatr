@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS profile_metrics (
     metric_key VARCHAR NOT NULL,
     metric_value DOUBLE NOT NULL,
     computed_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
 );
 
 -- Indexes for optimized querying
@@ -40,24 +40,40 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at INTEGER NOT NULL
 );
 
--- Create sequence for ta_subscribers id
-CREATE SEQUENCE IF NOT EXISTS seq_ta_subscribers_id;
+-- Create sequence for ta id
+CREATE SEQUENCE IF NOT EXISTS seq_ta_id;
 
--- Table 4: Trusted Assertions Subscribers
-CREATE TABLE IF NOT EXISTS ta_subscribers (
-    id INTEGER PRIMARY KEY DEFAULT nextval('seq_ta_subscribers_id'),
-    subscriber_pubkey VARCHAR(64) NOT NULL,
+-- Table 4: Trusted Assertions
+CREATE TABLE IF NOT EXISTS ta (
+    id INTEGER PRIMARY KEY DEFAULT nextval('seq_ta_id'),
+    pubkey VARCHAR(64) NOT NULL,
     latest_rank INTEGER, -- Latest computed rank (0-100)
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    UNIQUE(subscriber_pubkey)
+    computed_at INTEGER NOT NULL,
+    is_active BOOLEAN DEFAULT FALSE,
+    UNIQUE(pubkey)
 );
 
--- Indexes for TA subscribers table
-CREATE INDEX IF NOT EXISTS idx_ta_subscribers_pubkey
-    ON ta_subscribers(subscriber_pubkey);
-CREATE INDEX IF NOT EXISTS idx_ta_subscribers_active
-    ON ta_subscribers(is_active);
-CREATE INDEX IF NOT EXISTS idx_ta_subscribers_created
-    ON ta_subscribers(created_at);
+-- Indexes for TA table
+CREATE INDEX IF NOT EXISTS idx_ta_pubkey
+    ON ta(pubkey);
+CREATE INDEX IF NOT EXISTS idx_ta_active
+    ON ta(is_active);
+CREATE INDEX IF NOT EXISTS idx_ta_computed
+    ON ta(computed_at);
+
+-- Table 5: Pubkey Key-Value Store
+CREATE TABLE IF NOT EXISTS pubkey_kv (
+    pubkey VARCHAR(64) NOT NULL,
+    key VARCHAR NOT NULL,
+    value TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(pubkey, key)
+);
+
+-- Indexes for pubkey_kv table
+CREATE INDEX IF NOT EXISTS idx_pubkey_kv_pubkey
+    ON pubkey_kv(pubkey);
+CREATE INDEX IF NOT EXISTS idx_pubkey_kv_key
+    ON pubkey_kv(key);

@@ -12,6 +12,7 @@ import { RelatrService } from "../service/RelatrService.js";
 import { TAService } from "../service/TAService.js";
 import type { SearchProfileResult } from "../types.js";
 import { logger } from "../utils/Logger.js";
+import { relaySet } from "applesauce-core/helpers";
 
 /**
  * Start the MCP server for Relatr
@@ -43,7 +44,7 @@ export async function startMCPServer(): Promise<void> {
     registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
     if (taService) {
-      registerManageTAProviderTool(server, taService);
+      registerManageTATool(server, taService);
     }
 
     // Setup graceful shutdown
@@ -55,6 +56,13 @@ export async function startMCPServer(): Promise<void> {
       signer: new PrivateKeySigner(config.serverSecretKey),
       relayHandler: new ApplesauceRelayPool(config.serverRelays),
       injectClientPubkey: true,
+      isPublicServer: config.isPublicServer,
+      serverInfo: {
+        name: config.serverName,
+        about: config.serverAbout,
+        website: config.serverWebsite,
+        picture: config.serverPicture,
+      },
     });
     await server.connect(transport);
 
@@ -453,79 +461,101 @@ function registerSearchProfilesTool(
 }
 
 /**
- * Register the manage_ta_provider tool
+ * Register the manage_ta tool
  */
-function registerManageTAProviderTool(
-  server: McpServer,
-  taService: TAService,
-): void {
+function registerManageTATool(server: McpServer, taService: TAService): void {
   // Input schema with action parameter
   const inputSchema = z.object({
     action: z
-      .enum(["get", "subscribe", "unsubscribe"])
+      .enum(["get", "enable", "disable"])
       .describe(
-        "Action to perform: 'get' to check status, 'subscribe' to activate, 'unsubscribe' to deactivate",
+        "Action to perform: 'get' to check status, 'enable' to activate, 'disable' to deactivate",
+      ),
+    customRelays: z
+      .string()
+      .optional()
+      .describe(
+        "Optional comma-separated list of custom relay URLs to publish TA events to (only used for enable action)",
       ),
   });
 
   // Output schema - unified response from manageTASub
   const outputSchema = z.object({
     success: z.boolean(),
-    message: z.string(),
-    subscriberPubkey: z.string(),
+    message: z.string().optional(),
+    pubkey: z.string(),
     isActive: z.boolean(),
     createdAt: z.number().nullable(),
-    updatedAt: z.number().nullable(),
+    computedAt: z.number().nullable(),
     rank: z
       .object({
         published: z.boolean(),
         rank: z.number(),
         previousRank: z.number().nullable(),
+        relayResults: z
+          .array(
+            z.object({
+              ok: z.boolean(),
+              message: z.string().optional(),
+              from: z.string(),
+            }),
+          )
+          .optional(),
       })
       .optional(),
   });
 
   server.registerTool(
-    "manage_ta_provider",
+    "manage_ta",
     {
-      title: "Manage TA Provider",
+      title: "Manage TA",
       description:
-        "Manage your Trusted Assertions provider subscription. Check status, subscribe, or unsubscribe from TA services.",
+        "Manage your Trusted Assertions. Check status, enable, or disable TA entries.",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
     async (params, { _meta }) => {
+      // Extract client pubkey from _meta (injected by CEP-16)
+      // NOTE: This is always hex when using NostrServerTransport with injectClientPubkey=true.
+      const clientPubkey = _meta?.clientPubkey;
+
+      if (!clientPubkey || typeof clientPubkey !== "string") {
+        return {
+          content: [],
+          structuredContent: {
+            success: false,
+            message: "Client public key not available",
+            pubkey: "",
+            isActive: false,
+            createdAt: null,
+            computedAt: null,
+          },
+          isError: true,
+        };
+      }
+
       try {
-        // Extract client pubkey from _meta (injected by CEP-16)
-        // NOTE: This is always hex when using NostrServerTransport with injectClientPubkey=true.
-        const clientPubkey = _meta?.clientPubkey;
-
-        if (!clientPubkey || typeof clientPubkey !== "string") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Error: Client public key not available.",
-              },
-            ],
-            isError: true,
-          };
-        }
-
         // Validate input
         const action = params.action;
+        const customRelays = params.customRelays
+          ? relaySet(params.customRelays.split(",").map((url) => url.trim()))
+          : undefined;
 
-        const result = await taService.manageTASub(action, clientPubkey);
+        const result = await taService.manageTASub(
+          action,
+          clientPubkey,
+          customRelays,
+        );
 
         return {
           content: [],
           structuredContent: {
             success: result.success,
             message: result.message,
-            subscriberPubkey: result.subscriberPubkey,
+            pubkey: result.pubkey,
             isActive: result.isActive,
             createdAt: result.createdAt,
-            updatedAt: result.updatedAt,
+            computedAt: result.computedAt,
             rank: result.rank,
           },
         };
@@ -534,12 +564,15 @@ function registerManageTAProviderTool(
           error instanceof Error ? error.message : "Unknown error";
 
         return {
-          content: [
-            {
-              type: "text",
-              text: `Error managing TA provider: ${errorMessage}`,
-            },
-          ],
+          content: [],
+          structuredContent: {
+            success: false,
+            message: errorMessage,
+            pubkey: clientPubkey,
+            isActive: false,
+            createdAt: null,
+            computedAt: null,
+          },
           isError: true,
         };
       }

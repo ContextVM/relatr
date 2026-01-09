@@ -21,6 +21,8 @@ import type { MetadataRepository } from "../database/repositories/MetadataReposi
 import type { SettingsRepository } from "../database/repositories/SettingsRepository";
 import type { TARepository } from "../database/repositories/TARepository";
 import type { TrustCalculator } from "../trust/TrustCalculator";
+import type { TAService } from "./TAService";
+import type { RelayPool } from "applesauce-relay";
 
 export interface ISearchService {
   searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult>;
@@ -53,6 +55,17 @@ export interface ISchedulerService {
   getMetricsStats(): Promise<{ totalEntries: number }>;
 }
 
+export interface ISchedulerServiceDependencies {
+  config: RelatrConfig;
+  metricsRepository: MetricsRepository;
+  socialGraph: SocialGraph;
+  metricsValidator: MetricsValidator;
+  metadataRepository: MetadataRepository;
+  settingsRepository: SettingsRepository;
+  pool: RelayPool;
+  taService?: TAService;
+}
+
 export interface IRelatrService {
   calculateTrustScore(params: CalculateTrustScoreParams): Promise<TrustScore>;
   searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult>;
@@ -76,8 +89,14 @@ export interface RelatrServiceDependencies {
    */
   taRepository?: TARepository;
 
+  /**
+   * Optional TA service. TA is an operator-controlled feature and may be disabled.
+   * Used for lazy TA refresh after trust computation.
+   */
+  taService?: TAService;
+
   pubkeyMetadataFetcher: PubkeyMetadataFetcher;
   trustCalculator: TrustCalculator;
   searchService: ISearchService;
-  schedulerService: ISchedulerService;
+  schedulerService?: ISchedulerService;
 }

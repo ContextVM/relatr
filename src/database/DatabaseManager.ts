@@ -66,7 +66,7 @@ export class DatabaseManager {
   }
 
   /**
-   * Load and execute the database schema
+   * Load and execute the database schema.
    */
   private async loadSchema(): Promise<void> {
     if (!this.writeConnection)
@@ -76,34 +76,10 @@ export class DatabaseManager {
       const schemaPath = join(__dirname, "duckdb-schema.sql");
       const schema = readFileSync(schemaPath, "utf-8");
 
-      // Start transaction for schema load
-      await this.writeConnection.run("BEGIN TRANSACTION");
-
-      try {
-        // Execute schema in chunks
-        const statements = schema.split(";").filter((stmt) => stmt.trim());
-        for (const statement of statements) {
-          if (statement.trim()) {
-            await this.writeConnection.run(statement);
-          }
-        }
-
-        // Commit transaction
-        await this.writeConnection.run("COMMIT");
-      } catch (error) {
-        // Rollback on error
-        try {
-          await this.writeConnection.run("ROLLBACK");
-        } catch (rollbackError) {
-          logger.error(
-            "Failed to rollback schema transaction:",
-            rollbackError instanceof Error
-              ? rollbackError.message
-              : String(rollbackError),
-          );
-        }
-        throw error;
-      }
+      // Execute the full schema as a single script.
+      // Avoid explicit BEGIN/COMMIT here to sidestep DuckDB commit-time DDL edge cases
+      // (seen with CREATE INDEX after manual drop/recreate during local testing).
+      await this.writeConnection.run(schema);
     } catch (error) {
       throw new DatabaseError(
         `Failed to load schema: ${error instanceof Error ? error.message : String(error)}`,

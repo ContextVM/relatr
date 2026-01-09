@@ -13,13 +13,9 @@ import type { TrustCalculator } from "../trust/TrustCalculator";
 import type { ISearchService } from "./ServiceInterfaces";
 import { ValidationError } from "../types";
 import { logger } from "../utils/Logger";
+import { SEARCH_RELAYS } from "@/constants/nostr";
 
 export class SearchService implements ISearchService {
-  private static readonly SEARCH_RELAYS = [
-    "wss://relay.nostr.band",
-    "wss://search.nos.today",
-  ];
-
   private static readonly FIELD_WEIGHTS = {
     name: 0.5,
     display_name: 0.35,
@@ -128,7 +124,7 @@ export class SearchService implements ISearchService {
       const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
         const events: NostrEvent[] = [];
         const subscription = this.pool
-          .request(SearchService.SEARCH_RELAYS, searchFilter, { retries: 1 })
+          .request(SEARCH_RELAYS, searchFilter, { retries: 1 })
           .subscribe({
             next: (event) => events.push(event),
             error: (error) => reject(error),

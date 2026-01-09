@@ -3,8 +3,9 @@ import type { NostrProfile } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
 import { withTimeout } from "@/utils/utils";
 import type { RelayPool } from "applesauce-relay";
-import type { NostrEvent } from "nostr-tools";
 import { logger } from "../utils/Logger";
+import { fetchUserRelayList } from "../utils/utils.nostr";
+import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
 
 /**
  * Validation context passed to all validation plugins
@@ -16,6 +17,7 @@ export interface ValidationContext {
   graphManager: SocialGraph;
   pool: RelayPool;
   relays: string[];
+  pubkeyKvRepository: PubkeyKvRepository;
   searchQuery?: string; // For context-aware validations
 }
 
@@ -71,7 +73,7 @@ export class ValidationRegistry {
  * NIP-05 validation plugin
  */
 export class Nip05Plugin implements ValidationPlugin {
-  name = "nip05Valid";
+  public name = "nip05Valid";
   private timeoutMs: number = 10000;
 
   async validate(ctx: ValidationContext): Promise<number> {
@@ -95,7 +97,7 @@ export class Nip05Plugin implements ValidationPlugin {
  * Lightning address validation plugin
  */
 export class LightningPlugin implements ValidationPlugin {
-  name = "lightningAddress";
+  public name = "lightningAddress";
 
   async validate(ctx: ValidationContext): Promise<number> {
     if (!ctx.profile) return 0.0;
@@ -192,7 +194,7 @@ export class LightningPlugin implements ValidationPlugin {
  * Event kind 10002 validation plugin
  */
 export class EventPlugin implements ValidationPlugin {
-  name = "eventKind10002";
+  public name = "eventKind10002";
   private timeoutMs: number = 10000;
 
   async validate(ctx: ValidationContext): Promise<number> {
@@ -201,37 +203,18 @@ export class EventPlugin implements ValidationPlugin {
     }
 
     try {
-      const event = await new Promise<NostrEvent | null>((resolve, reject) => {
-        const subscription = ctx.pool
-          .request(
-            ctx.relays,
-            {
-              kinds: [10002],
-              authors: [ctx.pubkey],
-              limit: 1,
-            },
-            {
-              retries: 1,
-            },
-          )
-          .subscribe({
-            next: (event) => {
-              resolve(event);
-              subscription.unsubscribe();
-            },
-            error: (error) => {
-              reject(error);
-            },
-          });
+      const relayList = await fetchUserRelayList(
+        ctx.pubkey,
+        ctx.pool,
+        ctx.relays,
+        ctx.pubkeyKvRepository,
+        this.timeoutMs,
+      );
 
-        // Auto-unsubscribe after timeout
-        setTimeout(() => {
-          subscription.unsubscribe();
-          resolve(null);
-        }, this.timeoutMs);
-      });
-
-      return event ? 1.0 : 0.0;
+      return relayList &&
+        (relayList.inboxes?.length || relayList?.outboxes?.length)
+        ? 1.0
+        : 0.0;
     } catch {
       return 0.0;
     }
@@ -242,7 +225,7 @@ export class EventPlugin implements ValidationPlugin {
  * Reciprocity validation plugin
  */
 export class ReciprocityPlugin implements ValidationPlugin {
-  name = "reciprocity";
+  public name = "reciprocity";
 
   async validate(ctx: ValidationContext): Promise<number> {
     if (!ctx.sourcePubkey || !ctx.pubkey) {
@@ -272,7 +255,7 @@ export class ReciprocityPlugin implements ValidationPlugin {
  * Root NIP-05 validation plugin
  */
 export class RootNip05Plugin implements ValidationPlugin {
-  name = "isRootNip05";
+  public name = "isRootNip05";
 
   async validate(ctx: ValidationContext): Promise<number> {
     if (!ctx.profile?.nip05) return 0.0;

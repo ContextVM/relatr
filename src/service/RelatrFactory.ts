@@ -6,6 +6,7 @@ import { MetadataRepository } from '../database/repositories/MetadataRepository'
 import { MetricsRepository } from '../database/repositories/MetricsRepository';
 import { SettingsRepository } from '../database/repositories/SettingsRepository';
 import { TARepository } from '../database/repositories/TARepository';
+import { PubkeyKvRepository } from '../database/repositories/PubkeyKvRepository';
 import { PubkeyMetadataFetcher } from '../graph/PubkeyMetadataFetcher';
 import { SocialGraph as RelatrSocialGraph } from '../graph/SocialGraph';
 import { SocialGraphBuilder, type SocialGraphCreationResult } from '../graph/SocialGraphBuilder';
@@ -55,9 +56,10 @@ export class RelatrFactory {
             const readConnection = dbManager.getReadConnection();
             
             // Step 3: Initialize Repositories (use dual connections: read for reads, write for writes)
-            const metricsRepository: IMetricsRepository = new MetricsRepository(readConnection, writeConnection, validatedConfig.cacheTtlSeconds);
+            const metricsRepository: IMetricsRepository = new MetricsRepository(readConnection, writeConnection, validatedConfig.cacheTtlHours * 3600);
             const metadataRepository: IMetadataRepository = new MetadataRepository(readConnection, writeConnection);
             const settingsRepository: ISettingsRepository = new SettingsRepository(readConnection, writeConnection);
+            const pubkeyKvRepository = new PubkeyKvRepository(readConnection, writeConnection);
 
             // TA is optional and operator-controlled
             const taRepository = validatedConfig.taEnabled ? new TARepository(readConnection, writeConnection) : undefined;
@@ -114,7 +116,8 @@ export class RelatrFactory {
                 socialGraph,
                 metricsRepository,
                 metadataRepository,
-                validatedConfig.cacheTtlSeconds,
+                pubkeyKvRepository,
+                validatedConfig.cacheTtlHours * 3600,
                 ALL_PLUGINS,
             );
             
@@ -125,18 +128,6 @@ export class RelatrFactory {
                 socialGraph,
                 metricsValidator,
                 trustCalculator,
-                pool
-            );
-            
-            // Initialize task queue service
-            const schedulerService = new SchedulerService(
-                validatedConfig,
-                metricsRepository,
-                socialGraph,
-                metricsValidator,
-                metadataRepository,
-                pubkeyMetadataFetcher,
-                settingsRepository,
                 pool
             );
 
@@ -152,7 +143,8 @@ export class RelatrFactory {
                 pubkeyMetadataFetcher,
                 trustCalculator,
                 searchService,
-                schedulerService
+                schedulerService: undefined,
+                taService: undefined // Will be set after TA service is created
             };
 
             const relatrService = new RelatrService(serviceDependencies);
@@ -165,8 +157,30 @@ export class RelatrFactory {
                   relatrService,
                   relayPool: pool,
                   signer: new PrivateKeySigner(validatedConfig.serverSecretKey),
+                  pubkeyKvRepository,
                 })
               : null;
+
+            // Update relatrService with taService for lazy TA refresh
+            if (taService) {
+                relatrService.setTAService(taService);
+            }
+            
+            // Initialize task queue service (after TA service is created)
+            const schedulerService = new SchedulerService(
+                validatedConfig,
+                metricsRepository,
+                socialGraph,
+                metricsValidator,
+                metadataRepository,
+                pubkeyMetadataFetcher,
+                settingsRepository,
+                pool,
+                taService || undefined
+            );
+            
+            // Update serviceDependencies with the actual schedulerService
+            serviceDependencies.schedulerService = schedulerService;
             
             // Step 9: If this is the first time running, fetch initial metadata
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {

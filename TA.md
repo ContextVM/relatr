@@ -1,6 +1,6 @@
 # Trusted Assertions (TA) Provider
 
-Relatr can now act as a **Trusted Assertion Provider** following [NIP-85](https://nostrhub.io/naddr1qvzqqqrcvypzq3svyhng9ld8sv44950j957j9vchdktj7cxumsep9mvvjthc2pjuqyt8wumn8ghj7un9d3shjtnswf5k6ctv9ehx2aqqzf68yatnw3jkgttpwdek2un5d9hkuuctys9zn). This feature allows Relatr to publish **Kind 30382** Nostr events that assert a computed trust rank (0–100) for subscribers, enabling clients to verify trustworthiness based on Relatr’s social graph and metrics.
+Relatr can now act as a **Trusted Assertion Provider** following [NIP-85](https://nostrhub.io/naddr1qvzqqqrcvypzq3svyhng9ld8sv44950j957j9vchdktj7cxumsep9mvvjthc2pjuqyt8wumn8ghj7un9d3shjtnswf5k6ctv9ehx2aqqzf68yatnw3jkgttpwdek2un5d9hkuuctys9zn). This feature allows Relatr to publish **Kind 30382** Nostr events that assert a computed trust rank (0–100) for users, enabling clients to verify trustworthiness based on Relatr’s social graph and metrics.
 
 ---
 
@@ -8,9 +8,9 @@ Relatr can now act as a **Trusted Assertion Provider** following [NIP-85](https:
 
 When enabled, Relatr:
 
-- Accepts **TA subscriber registrations** via the MCP `register_ta_provider` tool.
-- Computes a **trust rank** (0–100) for each subscriber using the same trust calculation used internally.
-- Publishes **Kind 30382** events to configured relays, asserting the rank for the subscriber.
+- Accepts **TA user registrations** via the MCP `register_ta_provider` tool.
+- Computes a **trust rank** (0–100) for each user using the same trust calculation used internally.
+- Publishes **Kind 30382** events to configured relays, asserting the rank for the user.
 - Updates ranks automatically after social graph syncs.
 
 ---

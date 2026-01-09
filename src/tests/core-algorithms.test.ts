@@ -20,11 +20,11 @@ const testConfig: RelatrConfig = {
   serverSecretKey: "test_server_secret_key",
   serverRelays: ["wss://relay.example.com"],
   decayFactor: 0.5,
-  cacheTtlSeconds: 3600,
+  cacheTtlHours: 1,
   numberOfHops: 1,
-  syncInterval: 1000,
-  cleanupInterval: 1000,
-  validationSyncInterval: 1000,
+  syncIntervalHours: 1,
+  cleanupIntervalHours: 1,
+  validationSyncIntervalHours: 1,
   taEnabled: false,
 };
 

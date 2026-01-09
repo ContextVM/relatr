@@ -21,114 +21,85 @@ describe("TARepository", () => {
     }
   });
 
-  describe("addSubscriber", () => {
-    it("should add a new subscriber successfully", async () => {
+  describe("addTA", () => {
+    it("should add a new user successfully", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      const subscriber = await taRepository.addSubscriber(pubkey);
+      const user = await taRepository.addTA(pubkey);
 
-      expect(subscriber.subscriberPubkey).toBe(pubkey);
-      expect(subscriber.latestRank).toBeNull();
-      expect(subscriber.isActive).toBe(true);
-      expect(subscriber.createdAt).toBeGreaterThan(0);
-      expect(subscriber.updatedAt).toBeGreaterThan(0);
+      expect(user.pubkey).toBe(pubkey);
+      expect(user.latestRank).toBeNull();
+      expect(user.isActive).toBe(true);
+      expect(user.createdAt).toBeGreaterThan(0);
+      expect(user.computedAt).toBeGreaterThan(0);
     });
   });
 
-  describe("isSubscribed", () => {
-    it("should return true for active subscriber", async () => {
+  describe("isActive", () => {
+    it("should return true for active user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      await taRepository.addSubscriber(pubkey);
+      await taRepository.addTA(pubkey);
 
-      const isSubscribed = await taRepository.isSubscribed(pubkey);
-      expect(isSubscribed).toBe(true);
+      const isActive = await taRepository.isActive(pubkey);
+      expect(isActive).toBe(true);
     });
 
-    it("should return false for non-existent subscriber", async () => {
+    it("should return false for non-existent user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      const isSubscribed = await taRepository.isSubscribed(pubkey);
-      expect(isSubscribed).toBe(false);
+      const isActive = await taRepository.isActive(pubkey);
+      expect(isActive).toBe(false);
     });
 
-    it("should return false for deactivated subscriber", async () => {
+    it("should return false for deactivated user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      await taRepository.addSubscriber(pubkey);
-      await taRepository.deactivateSubscriber(pubkey);
+      await taRepository.addTA(pubkey);
+      await taRepository.disableTA(pubkey);
 
-      const isSubscribed = await taRepository.isSubscribed(pubkey);
-      expect(isSubscribed).toBe(false);
+      const isActive = await taRepository.isActive(pubkey);
+      expect(isActive).toBe(false);
     });
   });
 
-  describe("getActiveSubscribers", () => {
-    it("should return all active subscribers", async () => {
-      const pubkey1 =
+  describe("disableTA", () => {
+    it("should deactivate user successfully", async () => {
+      const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      const pubkey2 =
-        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-      const pubkey3 =
-        "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+      await taRepository.addTA(pubkey);
 
-      await taRepository.addSubscriber(pubkey1);
-      await taRepository.addSubscriber(pubkey2);
-      await taRepository.addSubscriber(pubkey3);
-      await taRepository.deactivateSubscriber(pubkey2); // Deactivate one
+      await taRepository.disableTA(pubkey);
 
-      const activeSubscribers = await taRepository.getActiveSubscribers();
-      expect(activeSubscribers).toHaveLength(2);
-      expect(activeSubscribers).toContain(pubkey1);
-      expect(activeSubscribers).toContain(pubkey3);
-      expect(activeSubscribers).not.toContain(pubkey2);
+      const isActive = await taRepository.isActive(pubkey);
+      expect(isActive).toBe(false);
     });
 
-    it("should return empty array when no active subscribers", async () => {
-      const activeSubscribers = await taRepository.getActiveSubscribers();
-      expect(activeSubscribers).toHaveLength(0);
+    it("should not throw error for non-existent user", async () => {
+      const pubkey =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+      expect(taRepository.disableTA(pubkey)).resolves.toBe(undefined);
     });
   });
 
-  describe("deactivateSubscriber", () => {
-    it("should deactivate subscriber successfully", async () => {
+  describe("getTA", () => {
+    it("should return user data for existing user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      await taRepository.addSubscriber(pubkey);
+      const created = await taRepository.addTA(pubkey);
 
-      await taRepository.deactivateSubscriber(pubkey);
-
-      const isSubscribed = await taRepository.isSubscribed(pubkey);
-      expect(isSubscribed).toBe(false);
+      const user = await taRepository.getTA(pubkey);
+      expect(user).not.toBeNull();
+      expect(user!.id).toBe(created.id);
+      expect(user!.pubkey).toBe(pubkey);
     });
 
-    it("should not throw error for non-existent subscriber", async () => {
+    it("should return null for non-existent user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-
-      expect(taRepository.deactivateSubscriber(pubkey)).resolves.toBe(
-        undefined,
-      );
-    });
-  });
-
-  describe("getSubscriber", () => {
-    it("should return subscriber data for existing subscriber", async () => {
-      const pubkey =
-        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      const created = await taRepository.addSubscriber(pubkey);
-
-      const subscriber = await taRepository.getSubscriber(pubkey);
-      expect(subscriber).not.toBeNull();
-      expect(subscriber!.id).toBe(created.id);
-      expect(subscriber!.subscriberPubkey).toBe(pubkey);
-    });
-
-    it("should return null for non-existent subscriber", async () => {
-      const pubkey =
-        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      const subscriber = await taRepository.getSubscriber(pubkey);
-      expect(subscriber).toBeNull();
+      const user = await taRepository.getTA(pubkey);
+      expect(user).toBeNull();
     });
   });
 
@@ -136,17 +107,17 @@ describe("TARepository", () => {
     it("should update rank successfully", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      await taRepository.addSubscriber(pubkey);
+      await taRepository.addTA(pubkey);
 
       const computedAt = Math.floor(Date.now() / 1000);
       await taRepository.updateLatestRank(pubkey, 75, computedAt);
 
-      const subscriber = await taRepository.getSubscriber(pubkey);
-      expect(subscriber!.latestRank).toBe(75);
-      expect(subscriber!.updatedAt).toBe(computedAt);
+      const user = await taRepository.getTA(pubkey);
+      expect(user!.latestRank).toBe(75);
+      expect(user!.computedAt).toBe(computedAt);
     });
 
-    it("should not throw error for non-existent subscriber", async () => {
+    it("should not throw error for non-existent user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
       const computedAt = Math.floor(Date.now() / 1000);
@@ -165,10 +136,10 @@ describe("TARepository", () => {
       const pubkey3 =
         "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
 
-      await taRepository.addSubscriber(pubkey1);
-      await taRepository.addSubscriber(pubkey2);
-      await taRepository.addSubscriber(pubkey3);
-      await taRepository.deactivateSubscriber(pubkey2);
+      await taRepository.addTA(pubkey1);
+      await taRepository.addTA(pubkey2);
+      await taRepository.addTA(pubkey3);
+      await taRepository.disableTA(pubkey2);
 
       const stats = await taRepository.getStats();
       expect(stats.total).toBe(3);
@@ -179,6 +150,195 @@ describe("TARepository", () => {
       const stats = await taRepository.getStats();
       expect(stats.total).toBe(0);
       expect(stats.active).toBe(0);
+    });
+  });
+
+  describe("getOrCreateTA", () => {
+    it("should create new user when not exists", async () => {
+      const pubkey =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+      const user = await taRepository.getOrCreateTA(pubkey, true);
+
+      expect(user.pubkey).toBe(pubkey);
+      expect(user.isActive).toBe(true);
+      expect(user.latestRank).toBeNull();
+      expect(user.createdAt).toBeGreaterThan(0);
+      expect(user.computedAt).toBeGreaterThan(0);
+    });
+
+    it("should return existing user when exists", async () => {
+      const pubkey =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+      const created = await taRepository.addTA(pubkey);
+      const retrieved = await taRepository.getOrCreateTA(pubkey, false);
+
+      expect(retrieved.id).toBe(created.id);
+      expect(retrieved.pubkey).toBe(pubkey);
+      // Should preserve original isActive state
+      expect(retrieved.isActive).toBe(true);
+    });
+
+    it("should create with isActive=false when specified", async () => {
+      const pubkey =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+      const user = await taRepository.getOrCreateTA(pubkey, false);
+
+      expect(user.isActive).toBe(false);
+    });
+
+    it("should default to isActive=false when not specified", async () => {
+      const pubkey =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+      const user = await taRepository.getOrCreateTA(pubkey);
+
+      expect(user.isActive).toBe(false);
+    });
+  });
+
+  describe("getStaleActiveTA", () => {
+    it("should return active users with computed_at before threshold", async () => {
+      const pubkey1 =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+      const pubkey2 =
+        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+      const pubkey3 =
+        "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+
+      await taRepository.addTA(pubkey1);
+      await taRepository.addTA(pubkey2);
+      await taRepository.addTA(pubkey3);
+
+      // Update pubkey1 to make it fresh
+      await taRepository.updateLatestRank(
+        pubkey1,
+        75,
+        Math.floor(Date.now() / 1000),
+      );
+
+      // pubkey2 and pubkey3 remain stale (default computed_at from addTA)
+      const now = Math.floor(Date.now() / 1000);
+      const staleThreshold = now + 3600; // 1 hour in the future (all are stale)
+
+      const staleEntries = await taRepository.getStaleActiveTA(staleThreshold);
+      expect(staleEntries).toHaveLength(3);
+      const stalePubkeys = staleEntries.map((s) => s.pubkey);
+      expect(stalePubkeys).toContain(pubkey1);
+      expect(stalePubkeys).toContain(pubkey2);
+      expect(stalePubkeys).toContain(pubkey3);
+    });
+
+    it("should return empty array when no stale active users", async () => {
+      const pubkey =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+      await taRepository.addTA(pubkey);
+      await taRepository.updateLatestRank(
+        pubkey,
+        75,
+        Math.floor(Date.now() / 1000),
+      );
+
+      const now = Math.floor(Date.now() / 1000);
+      const staleThreshold = now - 3600; // 1 hour ago (none are stale)
+
+      const staleEntries = await taRepository.getStaleActiveTA(staleThreshold);
+      expect(staleEntries).toHaveLength(0);
+    });
+
+    it("should be ordered by computed_at asc for active users", async () => {
+      const pubkey1 =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+      const pubkey2 =
+        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+      const pubkey3 =
+        "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+
+      await taRepository.addTA(pubkey1);
+      await taRepository.addTA(pubkey2);
+      await taRepository.addTA(pubkey3);
+
+      const now = Math.floor(Date.now() / 1000);
+      const staleThreshold = now + 3600; // 1 hour in the future (all are stale)
+
+      const staleEntries = await taRepository.getStaleActiveTA(staleThreshold);
+      expect(staleEntries).toHaveLength(3);
+      // Should be ordered by computed_at asc (oldest first)
+      expect(staleEntries[0]?.pubkey).toBe(pubkey1);
+      expect(staleEntries[1]?.pubkey).toBe(pubkey2);
+      expect(staleEntries[2]?.pubkey).toBe(pubkey3);
+    });
+  });
+
+  describe("updateLatestRanksBatch", () => {
+    it("should update multiple ranks in a single transaction", async () => {
+      const pubkey1 =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+      const pubkey2 =
+        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+      const pubkey3 =
+        "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
+
+      await taRepository.addTA(pubkey1);
+      await taRepository.addTA(pubkey2);
+      await taRepository.addTA(pubkey3);
+
+      const now = Math.floor(Date.now() / 1000);
+      const updates = [
+        { pubkey: pubkey1, rank: 75, computedAt: now },
+        { pubkey: pubkey2, rank: 50, computedAt: now },
+        { pubkey: pubkey3, rank: 90, computedAt: now },
+      ];
+
+      await taRepository.updateLatestRanksBatch(updates);
+
+      const user1 = await taRepository.getTA(pubkey1);
+      const user2 = await taRepository.getTA(pubkey2);
+      const user3 = await taRepository.getTA(pubkey3);
+
+      expect(user1!.latestRank).toBe(75);
+      expect(user1!.computedAt).toBe(now);
+      expect(user2!.latestRank).toBe(50);
+      expect(user2!.computedAt).toBe(now);
+      expect(user3!.latestRank).toBe(90);
+      expect(user3!.computedAt).toBe(now);
+    });
+
+    it("should handle empty updates array", async () => {
+      await expect(
+        taRepository.updateLatestRanksBatch([]),
+      ).resolves.toBeUndefined();
+    });
+
+    it("should silently skip non-existent users", async () => {
+      const pubkey1 =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+      const pubkey2 =
+        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+
+      await taRepository.addTA(pubkey1);
+
+      const now = Math.floor(Date.now() / 1000);
+      const updates = [
+        { pubkey: pubkey1, rank: 75, computedAt: now },
+        { pubkey: pubkey2, rank: 50, computedAt: now }, // doesn't exist
+      ];
+
+      // Should not throw - SQL UPDATE silently skips non-existent rows
+      await expect(
+        taRepository.updateLatestRanksBatch(updates),
+      ).resolves.toBeUndefined();
+
+      // pubkey1 should be updated
+      const user1 = await taRepository.getTA(pubkey1);
+      expect(user1!.latestRank).toBe(75);
+
+      // pubkey2 should not exist
+      const user2 = await taRepository.getTA(pubkey2);
+      expect(user2).toBeNull();
     });
   });
 });

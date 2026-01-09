@@ -1,10 +1,17 @@
 import { EventStore } from "applesauce-core";
+import { getInboxes, getOutboxes, relaySet } from "applesauce-core/helpers";
 import type { NostrEvent } from "nostr-tools";
 import type { Filter } from "nostr-tools";
 import { RelatrError } from "../types";
 import type { RelayPool } from "applesauce-relay";
-import { decode, npubEncode, nprofileEncode } from "nostr-tools/nip19";
+import { decode } from "nostr-tools/nip19";
 import { logger } from "./Logger";
+import { isHexKey } from "applesauce-core/helpers";
+import { RelayList } from "nostr-tools/kinds";
+import { NEG_RELAYS } from "@/constants/nostr";
+import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
+import type { UserRelaysValueV1 } from "@/constants/pubkeyKv";
+import { PUBKEY_KV_KEYS } from "@/constants/pubkeyKv";
 
 /**
  * Default batch size for fetching events from relays
@@ -82,13 +89,6 @@ export async function negSyncFromRelays(
 }
 
 /**
- * Fetch events for a list of pubkeys from relays
- * @param pubkeys List of pubkeys to fetch events for
- * @param kind The event kind to fetch
- * @param relays Relays to query (optional)
- * @returns Array of Nostr events
- */
-/**
  * Fetch events for a list of pubkeys from relays with streaming support to avoid memory accumulation.
  * Note: This function clears the EventStore for the fetched authors after each batch to free memory.
  *
@@ -103,11 +103,7 @@ export async function negSyncFromRelays(
 export async function fetchEventsForPubkeys(
   pubkeys: string[],
   kind: number,
-  relays: string[] = [
-    "wss://relay.damus.io",
-    "wss://profiles.nostr1.com/",
-    "wss://wot.grapevine.network/",
-  ],
+  relays: string[] = NEG_RELAYS,
   pool: RelayPool,
   options?: {
     onBatch?: (
@@ -171,16 +167,6 @@ export async function fetchEventsForPubkeys(
 }
 
 /**
- * Validates if a string is a valid hex key (32 bytes = 64 hex characters)
- * @param value The string to validate
- * @returns True if valid hex key, false otherwise
- */
-export function isHexKey(value: string): boolean {
-  if (!value || typeof value !== "string") return false;
-  return /^[0-9a-fA-F]{64}$/.test(value);
-}
-
-/**
  * Validates and decodes a nostr identifier (hex pubkey, npub, or nprofile)
  * @param identifier The identifier to validate and decode
  * @returns The hex pubkey if valid, null otherwise
@@ -216,53 +202,105 @@ export function validateAndDecodePubkey(identifier: string): string | null {
 }
 
 /**
- * Encodes a hex pubkey to npub format
- * @param hexPubkey The hex pubkey to encode
- * @returns The npub encoded string
+ * Fetch a user's relay list (kind 10002) from relays
+ * @param pubkey User's public key
+ * @param pool Relay pool
+ * @param relays Relays to query
+ * @param pubkeyKvRepository Repository for persisting user relays
+ * @param timeoutMs Timeout in milliseconds (default: 10000)
+ * @returns Array of relay URLs or null if not found
  */
-export function encodeNpub(hexPubkey: string): string {
-  return npubEncode(hexPubkey);
-}
+export async function fetchUserRelayList(
+  pubkey: string,
+  pool: RelayPool,
+  relays: string[],
+  pubkeyKvRepository: PubkeyKvRepository,
+  timeoutMs: number = 30000,
+): Promise<UserRelaysValueV1 | null> {
+  try {
+    const previousKnownRelays =
+      await pubkeyKvRepository.getJSON<UserRelaysValueV1>(
+        pubkey,
+        PUBKEY_KV_KEYS.user_relays,
+      );
+    const relaysToQuery = relaySet(
+      previousKnownRelays?.inboxes,
+      previousKnownRelays?.outboxes,
+      relays,
+    );
 
-/**
- * Encodes a hex pubkey and optional relays to nprofile format
- * @param hexPubkey The hex pubkey to encode
- * @param relays Optional array of relay URLs
- * @returns The nprofile encoded string
- */
-export function encodeNprofile(hexPubkey: string, relays?: string[]): string {
-  return nprofileEncode({ pubkey: hexPubkey, relays: relays || [] });
-}
+    const event = await new Promise<NostrEvent | null>((resolve, reject) => {
+      const subscription = pool
+        .request(
+          relaysToQuery,
+          {
+            kinds: [RelayList],
+            authors: [pubkey],
+            limit: 1,
+          },
+          {
+            retries: 1,
+          },
+        )
+        .subscribe({
+          next: (event) => {
+            resolve(event);
+            subscription.unsubscribe();
+          },
+          error: (error) => {
+            reject(error);
+          },
+        });
 
-/**
- * Type guard functions for nostr identifiers
- */
-export const NostrIdentifierTypeGuard = {
-  isNpub: (value: string): boolean => {
-    if (!value) return false;
-    try {
-      const { type } = decode(value);
-      return type === "npub";
-    } catch {
-      return false;
+      // Auto-unsubscribe after timeout
+      setTimeout(() => {
+        subscription.unsubscribe();
+        resolve(null);
+      }, timeoutMs);
+    });
+
+    if (!event) {
+      return null;
     }
-  },
 
-  isNprofile: (value: string): boolean => {
-    if (!value) return false;
+    // Extract inboxes and outboxes using applesauce helpers
+    const inboxes = getInboxes(event);
+    const outboxes = getOutboxes(event);
+
+    // Log for debugging
+    logger.debug(
+      `Fetched relay list for ${pubkey}: ${inboxes} inboxes, ${outboxes} outboxes`,
+    );
+
+    // Persist to DB
+    const userRelaysValue: UserRelaysValueV1 = {
+      version: 1,
+      inboxes,
+      outboxes,
+    };
+
     try {
-      const { type } = decode(value);
-      return type === "nprofile";
-    } catch {
-      return false;
+      await pubkeyKvRepository.setJSON(
+        pubkey,
+        PUBKEY_KV_KEYS.user_relays,
+        userRelaysValue,
+      );
+
+      logger.debug(`Cached user relays for ${pubkey}`);
+    } catch (dbError) {
+      logger.warn(
+        `Failed to cache user relays for ${pubkey}:`,
+        dbError instanceof Error ? dbError.message : String(dbError),
+      );
+      // Continue anyway - the function should still return the relay URLs
     }
-  },
 
-  isHexPubkey: (value: string): boolean => {
-    return isHexKey(value);
-  },
-
-  isValidPubkeyIdentifier: (value: string): boolean => {
-    return validateAndDecodePubkey(value) !== null;
-  },
-};
+    return userRelaysValue;
+  } catch (error) {
+    logger.warn(
+      `Failed to fetch relay list for ${pubkey}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
