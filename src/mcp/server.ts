@@ -44,7 +44,7 @@ export async function startMCPServer(): Promise<void> {
     registerStatsTool(server, relatrService);
     registerSearchProfilesTool(server, relatrService);
     if (taService) {
-      registerManageTASubscriptionTool(server, taService);
+      registerManageTATool(server, taService);
     }
 
     // Setup graceful shutdown
@@ -461,24 +461,21 @@ function registerSearchProfilesTool(
 }
 
 /**
- * Register the manage_ta_subscription tool
+ * Register the manage_ta tool
  */
-function registerManageTASubscriptionTool(
-  server: McpServer,
-  taService: TAService,
-): void {
+function registerManageTATool(server: McpServer, taService: TAService): void {
   // Input schema with action parameter
   const inputSchema = z.object({
     action: z
-      .enum(["get", "subscribe", "unsubscribe"])
+      .enum(["get", "enable", "disable"])
       .describe(
-        "Action to perform: 'get' to check status, 'subscribe' to activate, 'unsubscribe' to deactivate",
+        "Action to perform: 'get' to check status, 'enable' to activate, 'disable' to deactivate",
       ),
     customRelays: z
       .string()
       .optional()
       .describe(
-        "Optional comma-separated list of custom relay URLs to publish TA events to (only used for subscribe action)",
+        "Optional comma-separated list of custom relay URLs to publish TA events to (only used for enable action)",
       ),
   });
 
@@ -486,10 +483,10 @@ function registerManageTASubscriptionTool(
   const outputSchema = z.object({
     success: z.boolean(),
     message: z.string().optional(),
-    subscriberPubkey: z.string(),
+    pubkey: z.string(),
     isActive: z.boolean(),
     createdAt: z.number().nullable(),
-    updatedAt: z.number().nullable(),
+    computedAt: z.number().nullable(),
     rank: z
       .object({
         published: z.boolean(),
@@ -509,11 +506,11 @@ function registerManageTASubscriptionTool(
   });
 
   server.registerTool(
-    "manage_ta_subscription",
+    "manage_ta",
     {
-      title: "Manage TA Subscription",
+      title: "Manage TA",
       description:
-        "Manage your Trusted Assertions subscription. Check status, subscribe, or unsubscribe from TA services.",
+        "Manage your Trusted Assertions. Check status, enable, or disable TA entries.",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
@@ -528,10 +525,10 @@ function registerManageTASubscriptionTool(
           structuredContent: {
             success: false,
             message: "Client public key not available",
-            subscriberPubkey: "",
+            pubkey: "",
             isActive: false,
             createdAt: null,
-            updatedAt: null,
+            computedAt: null,
           },
           isError: true,
         };
@@ -555,10 +552,10 @@ function registerManageTASubscriptionTool(
           structuredContent: {
             success: result.success,
             message: result.message,
-            subscriberPubkey: result.subscriberPubkey,
+            pubkey: result.pubkey,
             isActive: result.isActive,
             createdAt: result.createdAt,
-            updatedAt: result.updatedAt,
+            computedAt: result.computedAt,
             rank: result.rank,
           },
         };
@@ -571,10 +568,10 @@ function registerManageTASubscriptionTool(
           structuredContent: {
             success: false,
             message: errorMessage,
-            subscriberPubkey: clientPubkey,
+            pubkey: clientPubkey,
             isActive: false,
             createdAt: null,
-            updatedAt: null,
+            computedAt: null,
           },
           isError: true,
         };

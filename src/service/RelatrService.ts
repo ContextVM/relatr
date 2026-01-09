@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import { ValidationError, RelatrError } from '../types';
 import type { RelatrServiceDependencies, IRelatrService } from './ServiceInterfaces';
+import type { TAService } from './TAService';
 import { logger } from '../utils/Logger';
 import { isHexKey } from 'applesauce-core/helpers';
 
@@ -22,6 +23,7 @@ export class RelatrService implements IRelatrService {
     private schedulerService: RelatrServiceDependencies['schedulerService'];
     private dbManager: RelatrServiceDependencies['dbManager'];
     private metadataRepository: RelatrServiceDependencies['metadataRepository'];
+    private taService: TAService | undefined;
 
     constructor(dependencies: RelatrServiceDependencies) {
         this.config = dependencies.config;
@@ -32,7 +34,40 @@ export class RelatrService implements IRelatrService {
         this.schedulerService = dependencies.schedulerService;
         this.dbManager = dependencies.dbManager;
         this.metadataRepository = dependencies.metadataRepository;
+        this.taService = dependencies.taService;
         this.initialized = true;
+    }
+
+    /**
+     * Set TA service for lazy TA refresh after trust computation
+     * This is called after TA service is created to avoid circular dependency
+     */
+    setTAService(taService: RelatrServiceDependencies['taService']): void {
+        this.taService = taService;
+    }
+
+    /**
+     * Calculate trust score without triggering TA lazy refresh
+     * This is used internally by TAService to avoid recursion
+     */
+    async calculateTrustScoreInternal(params: CalculateTrustScoreParams): Promise<TrustScore> {
+        // Validate and decode target pubkey once
+        const decodedTargetPubkey = validateAndDecodePubkey(params.targetPubkey);
+        if (!decodedTargetPubkey) {
+            throw new ValidationError('Invalid target pubkey format. Must be hex, npub, or nprofile', 'targetPubkey');
+        }
+
+        const results = await this.calculateTrustScoresBatch({
+            sourcePubkey: params.sourcePubkey,
+            targetPubkeys: [decodedTargetPubkey] // Pass already-decoded hex to avoid re-validation
+        });
+
+        const trustScore = results.get(decodedTargetPubkey);
+        if (!trustScore) {
+            throw new RelatrError('Trust calculation failed: missing trust score result', 'CALCULATE_TRUST');
+        }
+
+        return trustScore;
     }
 
     async calculateTrustScore(params: CalculateTrustScoreParams): Promise<TrustScore> {
@@ -50,6 +85,16 @@ export class RelatrService implements IRelatrService {
         const trustScore = results.get(decodedTargetPubkey);
         if (!trustScore) {
             throw new RelatrError('Trust calculation failed: missing trust score result', 'CALCULATE_TRUST');
+        }
+
+        // Trigger lazy TA refresh after trust computation (non-blocking, best-effort)
+        if (this.taService) {
+            this.taService.maybeRefreshAndEnqueueTA(decodedTargetPubkey).catch((error) => {
+                logger.warn(
+                    `Failed to lazy refresh TA for ${decodedTargetPubkey}:`,
+                    error instanceof Error ? error.message : String(error),
+                );
+            });
         }
 
         return trustScore;
@@ -224,7 +269,7 @@ export class RelatrService implements IRelatrService {
         if (!this.initialized) return;
 
         try {
-            await this.schedulerService.stop();
+            await this.schedulerService?.stop();
             
             if (this.dbManager) {
                 await this.dbManager.close();

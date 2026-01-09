@@ -14,11 +14,11 @@ export interface RelatrConfig {
   serverSecretKey: string;
   serverRelays: string[];
   decayFactor: number;
-  cacheTtlSeconds: number;
+  cacheTtlHours: number;
   numberOfHops: number;
-  syncInterval: number;
-  cleanupInterval: number;
-  validationSyncInterval: number;
+  syncIntervalHours: number;
+  cleanupIntervalHours: number;
+  validationSyncIntervalHours: number;
 
   /**
    * Optional feature flag: enable Trusted Assertions
@@ -178,12 +178,12 @@ export class SocialGraphError extends RelatrError {
 }
 
 // TA-related types
-export interface TASubscriber {
+export interface TA {
   id: number;
-  subscriberPubkey: string;
+  pubkey: string;
   latestRank: number | null;
   createdAt: number;
-  updatedAt: number;
+  computedAt: number;
   isActive: boolean;
 }
 

@@ -21,28 +21,29 @@ export interface TAServiceDependencies {
   signer: PrivateKeySigner;
 }
 
-export type ManageTASubAction = "get" | "subscribe" | "unsubscribe";
+export type ManageTASubAction = "get" | "enable" | "disable";
 
 export interface ManageTASubResult {
   success: boolean;
   message?: string;
-  subscriberPubkey: string;
+  pubkey: string;
 
   /**
-   * Whether the subscriber is currently active (i.e. the server is publishing TA events for them).
+   * Whether entry was user-requested (via enable).
    */
   isActive: boolean;
 
   /**
-   * Stable timestamps from the DB when available.
-   * - createdAt: when the subscriber record was first created
-   * - updatedAt: last state change (subscribe/unsubscribe) or latest rank update
+   * Stable timestamps from DB when available.
+   * - createdAt: when the entry was first created
+   * - computedAt: last time rank was computed
    */
   createdAt: number | null;
-  updatedAt: number | null;
+  computedAt: number | null;
 
   /**
-   * Only included for subscribe, when we compute & publish a TA rank.
+   * Only included for enable, when we compute & publish a TA rank.
+   * Note: published indicates whether the publish attempt succeeded.
    */
   rank?: TARankUpdateResult;
 }
@@ -65,86 +66,112 @@ export class TAService {
   }
 
   /**
-   * Manage TA subscription state for a given pubkey.
+   * Manage TA entry state for a given pubkey.
    *
-   * - "get": returns the current subscription state
-   * - "subscribe": activates the subscription and publishes a (replaceable) TA event
-   * - "unsubscribe": deactivates the subscription
+   * - "get": returns current entry state with cached rank (no compute/publish)
+   * - "enable": computes rank, publishes TA event, and marks entry as user-requested
+   * - "disable": marks entry as not user-requested (keeps cached rank)
    */
   async manageTASub(
     action: ManageTASubAction,
-    subscriberPubkey: string,
+    pubkey: string,
     customRelays?: string[],
   ): Promise<ManageTASubResult> {
+    // Guard: TA feature must be enabled
+    if (!this.config.taEnabled) {
+      return {
+        success: false,
+        message: "TA feature is disabled",
+        pubkey,
+        isActive: false,
+        createdAt: null,
+        computedAt: null,
+      };
+    }
     if (action === "get") {
-      const subscriber =
-        await this.taRepository.getSubscriber(subscriberPubkey);
+      const user = await this.taRepository.getTA(pubkey);
 
       const result: ManageTASubResult = {
         success: true,
-        subscriberPubkey,
-        isActive: Boolean(subscriber?.isActive),
-        createdAt: subscriber?.createdAt ?? null,
-        updatedAt: subscriber?.updatedAt ?? null,
+        pubkey,
+        isActive: Boolean(user?.isActive),
+        createdAt: user?.createdAt ?? null,
+        computedAt: user?.computedAt ?? null,
       };
 
-      // Include rank if subscriber exists and has a latestRank
-      if (subscriber && subscriber.latestRank !== null) {
+      // Include rank if user exists and has a latestRank
+      if (user && user.latestRank !== null) {
         result.rank = {
-          published: subscriber.isActive,
-          rank: subscriber.latestRank,
-          previousRank: subscriber.latestRank,
+          published: false, // get action doesn't publish
+          rank: user.latestRank,
+          previousRank: user.latestRank,
         };
       }
 
       return result;
     }
 
-    if (action === "subscribe") {
-      // First compute and publish (atomic - no DB changes yet)
-      const rank = await this.computeAndPublishRank(
-        subscriberPubkey,
-        customRelays,
-      );
+    if (action === "enable") {
+      // Get or create user entry with is_active=TRUE
+      const user = await this.taRepository.getOrCreateTA(pubkey, true);
 
-      // Only if publishing succeeds, add to DB
-      const subscriber =
-        await this.taRepository.addSubscriber(subscriberPubkey);
+      // Compute rank first (non-atomic: persist regardless of publish success)
+      // IMPORTANT: use internal trust computation to avoid triggering TA lazy refresh
+      // (which would otherwise cause duplicate compute/publish work on enable).
+      const trustScore = await this.relatrService.calculateTrustScoreInternal({
+        targetPubkey: pubkey,
+      });
+      const newRank = Math.round(trustScore.score * 100);
+      const now = Math.floor(Date.now() / 1000);
 
       // Persist the computed rank immediately
-      await this.taRepository.updateLatestRank(
-        subscriberPubkey,
-        rank.rank,
-        Math.floor(Date.now() / 1000),
-      );
+      await this.taRepository.updateLatestRank(pubkey, newRank, now, {
+        // getOrCreateTA() above guarantees existence
+        existsGuaranteed: true,
+      });
+
+      // Publish TA event (errors are caught and logged, don't fail the operation)
+      let published = false;
+      let relayResults: PublishResponse[] | undefined;
+      try {
+        relayResults = await this.publishTAEvent(pubkey, newRank, customRelays);
+        published = true;
+      } catch (error) {
+        logger.warn(
+          `TA publish failed for ${pubkey}, but rank was cached:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
 
       return {
         success: true,
-        subscriberPubkey,
+        pubkey,
         isActive: true,
-        createdAt: subscriber.createdAt,
-        updatedAt: subscriber.updatedAt,
-        rank,
+        createdAt: user.createdAt,
+        computedAt: now,
+        rank: {
+          published,
+          rank: newRank,
+          previousRank: user.latestRank,
+          relayResults,
+        },
       };
     }
 
-    // action === "unsubscribe"
-    await this.taRepository.deactivateSubscriber(subscriberPubkey);
-    // TODO: Maybe we can remove this reading operation.
-    const subscriber = await this.taRepository.getSubscriber(subscriberPubkey);
-    const now = Math.floor(Date.now() / 1000);
-    logger.debug(`TA subscription deactivated for ${subscriberPubkey}`);
+    // action === "disable"
+    await this.taRepository.disableTA(pubkey);
+    logger.debug(`TA entry deactivated for ${pubkey}`);
     return {
       success: true,
-      subscriberPubkey,
+      pubkey,
       isActive: false,
-      createdAt: subscriber?.createdAt ?? null,
-      updatedAt: subscriber?.updatedAt ?? now,
+      createdAt: null,
+      computedAt: null,
     };
   }
 
   /**
-   * Publish Kind 30382 TA event for a subscriber
+   * Publish Kind 30382 TA event for a user
    * @param targetPubkey Target pubkey to rank
    * @param rank Computed rank value (0-100)
    * @param customRelays Optional list of custom relay URLs to publish to
@@ -155,6 +182,11 @@ export class TAService {
     rank: number,
     customRelays?: string[],
   ): Promise<PublishResponse[]> {
+    // Guard: TA feature must be enabled
+    if (!this.config.taEnabled) {
+      throw new RelatrError("TA feature is disabled", "TA_FEATURE_DISABLED");
+    }
+
     try {
       // Try to get cached TA relays from pubkey_kv store
       let userRelays: string[] = [];
@@ -269,56 +301,203 @@ export class TAService {
   }
 
   /**
-   * Compute rank for a subscriber and publish
-   * This is called after syncs to update TA events
-   * @param subscriberPubkey Subscriber's public key
-   * @returns Object indicating if event was published and the rank
+   * Compute rank for a user without publishing
+   * Used for cache refresh
+   * @param pubkey TA user public key
+   * @returns The computed rank (0-100)
    */
-  async computeAndPublishRank(
-    subscriberPubkey: string,
-    customRelays?: string[],
-  ): Promise<TARankUpdateResult> {
-    // Get current subscriber data (if exists)
-    const subscriber = await this.taRepository.getSubscriber(subscriberPubkey);
-
-    // Compute new rank using existing trust calculation
-    const trustScore = await this.relatrService.calculateTrustScore({
-      targetPubkey: subscriberPubkey,
+  async computeRank(pubkey: string): Promise<number> {
+    // Use internal method to avoid triggering TA lazy refresh (recursion prevention)
+    const trustScore = await this.relatrService.calculateTrustScoreInternal({
+      targetPubkey: pubkey,
     });
+    return Math.round(trustScore.score * 100);
+  }
 
-    // Convert trust score (0-1) to rank (0-100)
-    const newRank = Math.round(trustScore.score * 100);
-
-    // Check if rank has changed (null for new subscribers)
-    const previousRank = subscriber?.latestRank ?? null;
-
-    // Publish TA event (let errors propagate)
-    const relayResults = await this.publishTAEvent(
-      subscriberPubkey,
-      newRank,
-      customRelays,
-    );
-
-    // Only update DB if subscriber exists and rank changed
-    if (subscriber && previousRank !== newRank) {
-      await this.taRepository.updateLatestRank(
-        subscriberPubkey,
-        newRank,
-        Math.floor(Date.now() / 1000),
-      );
-      logger.info(
-        `TA rank updated for ${subscriberPubkey}: ${previousRank} → ${newRank}`,
-      );
-    } else if (previousRank === newRank) {
-      logger.debug(`TA rank unchanged for ${subscriberPubkey}: ${newRank}`);
+  /**
+   * Refresh stale TA ranks for active entries only
+   * This recomputes ranks for stale active entries and publishes TA events only when rank changes
+   * @returns Summary of refresh results
+   */
+  async refreshStaleRanks(): Promise<{
+    staleEntries: number;
+    refreshed: number;
+    published: number;
+    errors: number;
+  }> {
+    // Guard: TA feature must be enabled
+    if (!this.config.taEnabled) {
+      logger.debug("TA refresh skipped: feature is disabled");
+      return { staleEntries: 0, refreshed: 0, published: 0, errors: 0 };
     }
 
-    return {
-      published: true,
-      rank: newRank,
-      previousRank,
-      relayResults,
-    };
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const staleThreshold = now - this.config.cacheTtlHours * 3600;
+
+      // Use DuckDB to filter stale active TA directly
+      const staleActiveTA =
+        await this.taRepository.getStaleActiveTA(staleThreshold);
+
+      logger.info(`TA refresh: ${staleActiveTA.length} stale active entries`);
+
+      let refreshed = 0;
+      let published = 0;
+      let errors = 0;
+
+      // Compute ranks for stale active TA only
+      const rankUpdates: Array<{
+        pubkey: string;
+        rank: number;
+        computedAt: number;
+      }> = [];
+      const publishQueue: Array<{ pubkey: string; rank: number }> = [];
+
+      for (const user of staleActiveTA) {
+        try {
+          // Compute new rank
+          const newRank = await this.computeRank(user.pubkey);
+          const previousRank = user.latestRank;
+          const changed = previousRank === null || previousRank !== newRank;
+
+          rankUpdates.push({
+            pubkey: user.pubkey,
+            rank: newRank,
+            computedAt: now,
+          });
+
+          // Only publish if rank changed
+          if (changed) {
+            publishQueue.push({
+              pubkey: user.pubkey,
+              rank: newRank,
+            });
+          }
+
+          logger.debug(
+            `TA rank computed for ${user.pubkey}: ${previousRank} → ${newRank} ${changed ? "(changed)" : "(unchanged)"}`,
+          );
+        } catch (error) {
+          errors++;
+          logger.error(
+            `Failed to compute TA rank for ${user.pubkey}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+
+      // Bulk update all ranks in a single transaction
+      if (rankUpdates.length > 0) {
+        try {
+          await this.taRepository.updateLatestRanksBatch(rankUpdates);
+          refreshed = rankUpdates.length;
+        } catch (error) {
+          errors += rankUpdates.length;
+          logger.error(
+            `Failed to bulk update TA ranks:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+
+      // Publish TA events only for changed ranks
+      for (const item of publishQueue) {
+        try {
+          await this.publishTAEvent(item.pubkey, item.rank);
+          published++;
+        } catch (error) {
+          errors++;
+          logger.error(
+            `Failed to publish TA event for ${item.pubkey}:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+
+      logger.info(
+        `TA refresh completed: ${refreshed} refreshed, ${published} published, ${errors} errors`,
+      );
+
+      return {
+        staleEntries: staleActiveTA.length,
+        refreshed,
+        published,
+        errors,
+      };
+    } catch (error) {
+      logger.error(
+        "Failed to refresh TA ranks:",
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new RelatrError(
+        `TA refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_REFRESH_FAILED",
+      );
+    }
+  }
+
+  /**
+   * Lazy refresh and publish for inactive entries
+   * Called when trust is computed for an inactive pubkey
+   * This ensures cache stays warm and publishes when rank changes
+   * @param targetPubkey Target pubkey to potentially refresh
+   */
+  async maybeRefreshAndEnqueueTA(targetPubkey: string): Promise<void> {
+    // Guard: TA feature must be enabled
+    if (!this.config.taEnabled) {
+      return;
+    }
+
+    try {
+      const user = await this.taRepository.getTA(targetPubkey);
+      const now = Math.floor(Date.now() / 1000);
+      const staleThreshold = now - this.config.cacheTtlHours * 3600;
+
+      const stale =
+        !user || user.latestRank === null || user.computedAt < staleThreshold;
+
+      if (!stale) {
+        return; // Cache is fresh, nothing to do
+      }
+
+      // Compute new rank
+      const newRank = await this.computeRank(targetPubkey);
+      const previousRank = user?.latestRank ?? null;
+      const changed = previousRank === null || previousRank !== newRank;
+
+      // Get or create user entry (inactive by default for lazy refresh)
+      await this.taRepository.getOrCreateTA(targetPubkey, false);
+
+      // Update rank with existence guaranteed (hot path optimization)
+      await this.taRepository.updateLatestRank(targetPubkey, newRank, now, {
+        existsGuaranteed: true,
+      });
+
+      // Publish only if rank changed
+      if (changed) {
+        try {
+          await this.publishTAEvent(targetPubkey, newRank);
+          logger.debug(
+            `Lazy TA refresh: published for ${targetPubkey}, rank ${previousRank} → ${newRank}`,
+          );
+        } catch (error) {
+          logger.warn(
+            `Failed to publish TA event for ${targetPubkey} during lazy refresh:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      } else {
+        logger.debug(
+          `Lazy TA refresh: rank unchanged for ${targetPubkey}, skipping publish`,
+        );
+      }
+    } catch (error) {
+      logger.error(
+        `Failed to lazy refresh TA for ${targetPubkey}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      // Don't throw - this is a best-effort cache update
+    }
   }
 
   /**
@@ -326,43 +505,5 @@ export class TAService {
    */
   getStats(): ReturnType<TARepository["getStats"]> {
     return this.taRepository.getStats();
-  }
-
-  /**
-   * Update ranks for all active subscribers
-   * This should be called after social graph syncs
-   */
-  async updateAllSubscriberRanks(): Promise<void> {
-    try {
-      const activeSubscribers = await this.taRepository.getActiveSubscribers();
-      logger.info(
-        `Updating TA ranks for ${activeSubscribers.length} active subscribers`,
-      );
-
-      // Process each subscriber asynchronously
-      const updatePromises = activeSubscribers.map(async (subscriberPubkey) => {
-        try {
-          await this.computeAndPublishRank(subscriberPubkey);
-        } catch (error) {
-          logger.error(
-            `Failed to update TA rank for ${subscriberPubkey}:`,
-            error instanceof Error ? error.message : String(error),
-          );
-          // Continue with other subscribers even if one fails
-        }
-      });
-
-      await Promise.allSettled(updatePromises);
-      logger.info("TA rank updates completed for all active subscribers");
-    } catch (error) {
-      logger.error(
-        "Failed to update TA ranks for all subscribers:",
-        error instanceof Error ? error.message : String(error),
-      );
-      throw new RelatrError(
-        `Bulk TA rank update failed: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_BULK_UPDATE_FAILED",
-      );
-    }
   }
 }

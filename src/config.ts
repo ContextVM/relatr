@@ -36,23 +36,11 @@ export const RelatrConfigSchema = z.object({
   serverSecretKey: z.string().min(1, "SERVER_SECRET_KEY is required"),
   serverRelays: z.array(z.string()).default(CVM_RELAY),
   decayFactor: z.number().min(0).default(0.1),
-  cacheTtlSeconds: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 72),
+  cacheTtlHours: z.number().positive().default(72),
   numberOfHops: z.number().int().positive().default(1),
-  syncInterval: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 21),
-  cleanupInterval: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 7),
-  validationSyncInterval: z
-    .number()
-    .positive()
-    .default(60 * 60 * 1000 * 3),
+  syncIntervalHours: z.number().positive().default(21),
+  cleanupIntervalHours: z.number().positive().default(7),
+  validationSyncIntervalHours: z.number().positive().default(3),
 
   // Optional features
   taEnabled: z
@@ -100,20 +88,20 @@ export function loadConfig(): RelatrConfig {
     decayFactor: process.env.DECAY_FACTOR
       ? parseFloat(process.env.DECAY_FACTOR)
       : undefined,
-    cacheTtlSeconds: process.env.CACHE_TTL_SECONDS
-      ? parseInt(process.env.CACHE_TTL_SECONDS, 10)
+    cacheTtlHours: process.env.CACHE_TTL_HOURS
+      ? parseInt(process.env.CACHE_TTL_HOURS, 10)
       : undefined,
     numberOfHops: process.env.NUMBER_OF_HOPS
       ? parseInt(process.env.NUMBER_OF_HOPS, 10)
       : undefined,
-    syncInterval: process.env.SYNC_INTERVAL
-      ? parseInt(process.env.SYNC_INTERVAL, 10)
+    syncIntervalHours: process.env.SYNC_INTERVAL_HOURS
+      ? parseInt(process.env.SYNC_INTERVAL_HOURS, 10)
       : undefined,
-    cleanupInterval: process.env.CLEANUP_INTERVAL
-      ? parseInt(process.env.CLEANUP_INTERVAL, 10)
+    cleanupIntervalHours: process.env.CLEANUP_INTERVAL_HOURS
+      ? parseInt(process.env.CLEANUP_INTERVAL_HOURS, 10)
       : undefined,
-    validationSyncInterval: process.env.VALIDATION_SYNC_INTERVAL
-      ? parseInt(process.env.VALIDATION_SYNC_INTERVAL, 10)
+    validationSyncIntervalHours: process.env.VALIDATION_SYNC_INTERVAL_HOURS
+      ? parseInt(process.env.VALIDATION_SYNC_INTERVAL_HOURS, 10)
       : undefined,
 
     taEnabled: process.env.TA_ENABLED,

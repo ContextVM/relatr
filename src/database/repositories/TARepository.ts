@@ -1,5 +1,5 @@
 import { DuckDBConnection } from "@duckdb/node-api";
-import { DatabaseError, type TASubscriber } from "../../types";
+import { DatabaseError, type TA } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
@@ -9,10 +9,10 @@ export class TARepository {
   private writeConnection: DuckDBConnection;
 
   /**
-   * NOTE: DuckDB returns rows by index; keep SELECT projections explicit and in sync with mapRowToSubscriber.
+   * NOTE: DuckDB returns rows by index; keep SELECT projections explicit and in sync with mapRowToTA.
    */
-  private static readonly SUBSCRIBER_SELECT_COLUMNS =
-    "id, subscriber_pubkey, latest_rank, created_at, updated_at, is_active";
+  private static readonly TA_SELECT_COLUMNS =
+    "id, pubkey, latest_rank, created_at, computed_at, is_active";
 
   constructor(
     readConnection: DuckDBConnection,
@@ -23,65 +23,64 @@ export class TARepository {
   }
 
   /**
-   * Add a new TA subscriber
-   * @param subscriberPubkey Hex-encoded public key of subscriber
-   * @returns The created subscriber record
+   * Add a new TA
+   * @param pubkey Hex-encoded public key of user
+   * @returns The created TA record
    * @throws DatabaseError if insertion fails
    */
-  async addSubscriber(subscriberPubkey: string): Promise<TASubscriber> {
+  async addTA(pubkey: string): Promise<TA> {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
           const now = Math.floor(Date.now() / 1000);
 
           await this.writeConnection.run(
-            `INSERT INTO ta_subscribers (subscriber_pubkey, created_at, updated_at, is_active)
+            `INSERT INTO ta (pubkey, created_at, computed_at, is_active)
              VALUES ($1, $2, $3, TRUE)
-             ON CONFLICT (subscriber_pubkey) DO UPDATE SET
-               is_active = TRUE,
-               updated_at = $3`,
-            { 1: subscriberPubkey, 2: now, 3: now },
+             ON CONFLICT (pubkey) DO UPDATE SET
+               is_active = TRUE`,
+            { 1: pubkey, 2: now, 3: now },
           );
 
           // Retrieve the created/updated record (explicit projection to match mapping)
           const result = await this.readConnection.run(
-            `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
-             FROM ta_subscribers
-             WHERE subscriber_pubkey = $1`,
-            { 1: subscriberPubkey },
+            `SELECT ${TARepository.TA_SELECT_COLUMNS}
+             FROM ta
+             WHERE pubkey = $1`,
+            { 1: pubkey },
           );
 
           const rows = await result.getRows();
           if (rows.length === 0) {
-            throw new Error("Failed to retrieve created subscriber");
+            throw new Error("Failed to retrieve created user");
           }
 
-          return this.mapRowToSubscriber(rows[0]);
+          return this.mapRowToTA(rows[0]);
         });
       });
     } catch (error) {
       logger.warn(
-        `Failed to add TA subscriber ${subscriberPubkey} after retries:`,
+        `Failed to add TA user ${pubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
-        `Failed to add TA subscriber: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_SUBSCRIBER_ADD",
+        `Failed to add TA user: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_ADD",
       );
     }
   }
 
   /**
-   * Check if a pubkey is subscribed
-   * @param subscriberPubkey Hex-encoded public key to check
-   * @returns True if subscribed and active
+   * Check if an entry is marked as user-requested (is_active flag).
+   * @param pubkey Hex-encoded public key to check
+   * @returns True if entry exists and is_active = TRUE
    */
-  async isSubscribed(subscriberPubkey: string): Promise<boolean> {
+  async isActive(pubkey: string): Promise<boolean> {
     try {
       return await executeWithRetry(async () => {
         const result = await this.readConnection.run(
-          "SELECT COUNT(*) as count FROM ta_subscribers WHERE subscriber_pubkey = $1 AND is_active = TRUE",
-          { 1: subscriberPubkey },
+          "SELECT COUNT(*) as count FROM ta WHERE pubkey = $1 AND is_active = TRUE",
+          { 1: pubkey },
         );
 
         const rows = await result.getRows();
@@ -90,91 +89,91 @@ export class TARepository {
       });
     } catch (error) {
       logger.warn(
-        `Failed to check TA subscription for ${subscriberPubkey} after retries:`,
+        `Failed to check TA active flag for ${pubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
-        `Failed to check TA subscription: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_SUBSCRIPTION_CHECK",
+        `Failed to check TA active flag: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_ACTIVE_FLAG_CHECK",
       );
     }
   }
 
   /**
-   * Get all active subscribers
-   * @returns Array of active subscriber pubkeys
+   * Get stale active TA based on computed_at timestamp
+   * @param staleThreshold Unix timestamp threshold
+   * @returns Array of stale active user records
    */
-  async getActiveSubscribers(): Promise<string[]> {
+  async getStaleActiveTA(staleThreshold: number): Promise<TA[]> {
     try {
       return await executeWithRetry(async () => {
         const result = await this.readConnection.run(
-          "SELECT subscriber_pubkey FROM ta_subscribers WHERE is_active = TRUE",
+          `SELECT ${TARepository.TA_SELECT_COLUMNS}
+           FROM ta
+           WHERE is_active = TRUE AND (latest_rank IS NULL OR computed_at < $1)
+           ORDER BY computed_at ASC`,
+          { 1: staleThreshold },
         );
 
         const rows = await result.getRows();
-        return rows.map((row) => {
-          const rowArray = row as unknown[];
-          return rowArray[0] as string;
-        });
+        return rows.map((row) => this.mapRowToTA(row));
       });
     } catch (error) {
       logger.warn(
-        "Failed to get active TA subscribers after retries:",
+        "Failed to get stale active TA after retries:",
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
-        `Failed to get active TA subscribers: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_ACTIVE_SUBSCRIBERS_GET",
+        `Failed to get stale active TA: ${error instanceof Error ? error.message : String(error)}`,
+        "ta_GET_STALE_ACTIVE",
       );
     }
   }
 
   /**
-   * Deactivate a subscriber (soft delete).
+   * Deactivate a user (soft delete).
    *
    * This method is intentionally idempotent:
-   * - If the subscriber does not exist, or is already inactive, it does nothing and succeeds.
-   * - If the subscriber is active, it marks it inactive and updates updated_at.
+   * - If the user does not exist, or is already inactive, it does nothing and succeeds.
+   * - If the user is active, it marks it inactive (without touching computed_at).
    *
-   * @param subscriberPubkey Hex-encoded public key to deactivate
+   * @param pubkey Hex-encoded public key to deactivate
    */
-  async deactivateSubscriber(subscriberPubkey: string): Promise<void> {
+  async disableTA(pubkey: string): Promise<void> {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
-
           await this.writeConnection.run(
-            "UPDATE ta_subscribers SET is_active = FALSE, updated_at = $1 WHERE subscriber_pubkey = $2 AND is_active = TRUE",
-            { 1: now, 2: subscriberPubkey },
+            "UPDATE ta SET is_active = FALSE WHERE pubkey = $1 AND is_active = TRUE",
+            { 1: pubkey },
           );
         });
       });
     } catch (error) {
       logger.warn(
-        `Failed to deactivate TA subscriber ${subscriberPubkey} after retries:`,
+        `Failed to deactivate TA user ${pubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
-        `Failed to deactivate TA subscriber: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_SUBSCRIBER_DEACTIVATE",
+        `Failed to deactivate TA user: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_DEACTIVATE",
       );
     }
   }
 
   /**
-   * Get subscriber by pubkey
-   * @param subscriberPubkey Hex-encoded public key
-   * @returns Subscriber record or null
+   * Get user by pubkey
+   * @param pubkey Hex-encoded public key
+   * @returns TA record or null
    */
-  async getSubscriber(subscriberPubkey: string): Promise<TASubscriber | null> {
+  async getTA(pubkey: string): Promise<TA | null> {
     try {
       return await executeWithRetry(async () => {
         const result = await this.readConnection.run(
-          `SELECT ${TARepository.SUBSCRIBER_SELECT_COLUMNS}
-           FROM ta_subscribers
-           WHERE subscriber_pubkey = $1`,
-          { 1: subscriberPubkey },
+          `SELECT ${TARepository.TA_SELECT_COLUMNS}
+           FROM ta
+           WHERE pubkey = $1`,
+          { 1: pubkey },
         );
 
         const rows = await result.getRows();
@@ -182,56 +181,131 @@ export class TARepository {
           return null;
         }
 
-        return this.mapRowToSubscriber(rows[0]);
+        return this.mapRowToTA(rows[0]);
       });
     } catch (error) {
       logger.warn(
-        `Failed to get TA subscriber ${subscriberPubkey} after retries:`,
+        `Failed to get TA user ${pubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
-        `Failed to get TA subscriber: ${error instanceof Error ? error.message : String(error)}`,
-        "TA_SUBSCRIBER_GET",
+        `Failed to get TA user: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_GET",
       );
     }
   }
 
   /**
-   * Update the latest rank for a subscriber
-   * @param subscriberPubkey Hex-encoded public key
+   * Get or create a user entry
+   * @param pubkey Hex-encoded public key
+   * @param isActive Whether the entry should be marked as user-requested
+   * @returns The user record
+   */
+  async getOrCreateTA(pubkey: string, isActive: boolean = false): Promise<TA> {
+    try {
+      return await executeWithRetry(async () => {
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = Math.floor(Date.now() / 1000);
+
+          // Try to get existing user
+          const existingResult = await this.readConnection.run(
+            `SELECT ${TARepository.TA_SELECT_COLUMNS}
+             FROM ta
+             WHERE pubkey = $1`,
+            { 1: pubkey },
+          );
+          const existingRows = await existingResult.getRows();
+
+          if (existingRows.length > 0) {
+            const existing = this.mapRowToTA(existingRows[0]);
+
+            // If caller requested isActive=true and row exists with different state, update it
+            if (isActive && !existing.isActive) {
+              await this.writeConnection.run(
+                "UPDATE ta SET is_active = TRUE WHERE pubkey = $1",
+                { 1: pubkey },
+              );
+              existing.isActive = true;
+            }
+
+            return existing;
+          }
+
+          // Create new user
+          await this.writeConnection.run(
+            `INSERT INTO ta (pubkey, created_at, computed_at, is_active)
+             VALUES ($1, $2, $3, $4)`,
+            { 1: pubkey, 2: now, 3: now, 4: isActive },
+          );
+
+          const result = await this.readConnection.run(
+            `SELECT ${TARepository.TA_SELECT_COLUMNS}
+             FROM ta
+             WHERE pubkey = $1`,
+            { 1: pubkey },
+          );
+
+          const rows = await result.getRows();
+          if (rows.length === 0) {
+            throw new Error("Failed to retrieve created user");
+          }
+
+          return this.mapRowToTA(rows[0]);
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to get or create TA user ${pubkey} after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new DatabaseError(
+        `Failed to get or create TA user: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_GET_OR_CREATE",
+      );
+    }
+  }
+
+  /**
+   * Update the latest rank for a user
+   * @param pubkey Hex-encoded public key
    * @param rank The computed rank (0-100)
    * @param computedAt Unix timestamp when rank was computed
+   * @param opts Optional options to skip existence check for hot paths
    */
   async updateLatestRank(
-    subscriberPubkey: string,
+    pubkey: string,
     rank: number,
     computedAt: number,
+    opts?: { existsGuaranteed?: boolean },
   ): Promise<void> {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
           // Verify existence explicitly; DuckDB UPDATE row counts are not reliable.
-          const existsResult = await this.readConnection.run(
-            "SELECT 1 FROM ta_subscribers WHERE subscriber_pubkey = $1 LIMIT 1",
-            { 1: subscriberPubkey },
-          );
-          const existsRows = await existsResult.getRows();
-          if (existsRows.length === 0) {
-            throw new DatabaseError(
-              `Subscriber not found: ${subscriberPubkey}`,
-              "TA_SUBSCRIBER_NOT_FOUND",
+          // Skip if caller guarantees existence (hot path optimization).
+          if (!opts?.existsGuaranteed) {
+            const existsResult = await this.readConnection.run(
+              "SELECT 1 FROM ta WHERE pubkey = $1 LIMIT 1",
+              { 1: pubkey },
             );
+            const existsRows = await existsResult.getRows();
+            if (existsRows.length === 0) {
+              throw new DatabaseError(
+                `TA not found: ${pubkey}`,
+                "TA_NOT_FOUND",
+              );
+            }
           }
 
           await this.writeConnection.run(
-            "UPDATE ta_subscribers SET latest_rank = $1, updated_at = $2 WHERE subscriber_pubkey = $3",
-            { 1: rank, 2: computedAt, 3: subscriberPubkey },
+            "UPDATE ta SET latest_rank = $1, computed_at = $2 WHERE pubkey = $3",
+            { 1: rank, 2: computedAt, 3: pubkey },
           );
         });
       });
     } catch (error) {
       logger.warn(
-        `Failed to update TA rank for ${subscriberPubkey} after retries:`,
+        `Failed to update TA rank for ${pubkey} after retries:`,
         error instanceof Error ? error.message : String(error),
       );
       throw new DatabaseError(
@@ -242,17 +316,80 @@ export class TARepository {
   }
 
   /**
-   * Get statistics about TA subscriptions
+   * Update latest ranks for multiple TA in a single transaction
+   * @param updates Array of {pubkey, rank, computedAt} objects
+   * @throws DatabaseError if any update fails
+   */
+  async updateLatestRanksBatch(
+    updates: Array<{ pubkey: string; rank: number; computedAt: number }>,
+  ): Promise<void> {
+    try {
+      return await executeWithRetry(async () => {
+        return await dbWriteQueue.runExclusive(async () => {
+          if (updates.length === 0) {
+            return;
+          }
+
+          // Process updates in batches to avoid unbounded SQL statements
+          const BATCH_SIZE = 500;
+          const totalBatches = Math.ceil(updates.length / BATCH_SIZE);
+
+          for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+            const start = batchIndex * BATCH_SIZE;
+            const end = Math.min(start + BATCH_SIZE, updates.length);
+            const batch = updates.slice(start, end);
+
+            // Build VALUES clause for bulk update
+            const valuesClause = batch
+              .map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`)
+              .join(", ");
+
+            // Flatten parameters
+            const params: (string | number)[] = [];
+            for (const update of batch) {
+              params.push(update.pubkey, update.rank, update.computedAt);
+            }
+
+            // Use DuckDB's FROM clause for bulk update
+            await this.writeConnection.run(
+              `UPDATE ta
+               SET latest_rank = updates.rank,
+                   computed_at = updates.computedAt
+               FROM (VALUES ${valuesClause}) AS updates(pubkey, rank, computedAt)
+               WHERE ta.pubkey = updates.pubkey`,
+              params,
+            );
+
+            logger.debug(
+              `Updated TA ranks batch ${batchIndex + 1}/${totalBatches} (${batch.length} entries)`,
+            );
+          }
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to update TA ranks in batch after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new DatabaseError(
+        `Failed to update TA ranks in batch: ${error instanceof Error ? error.message : String(error)}`,
+        "TA_RANK_UPDATE_BATCH",
+      );
+    }
+  }
+
+  /**
+   * Get statistics about TA entries
    * @returns Object with total and active counts
    */
   async getStats(): Promise<{ total: number; active: number }> {
     try {
       return await executeWithRetry(async () => {
         const totalResult = await this.readConnection.run(
-          "SELECT COUNT(*) as count FROM ta_subscribers",
+          "SELECT COUNT(*) as count FROM ta",
         );
         const activeResult = await this.readConnection.run(
-          "SELECT COUNT(*) as count FROM ta_subscribers WHERE is_active = TRUE",
+          "SELECT COUNT(*) as count FROM ta WHERE is_active = TRUE",
         );
 
         const totalRows = await totalResult.getRows();
@@ -279,18 +416,18 @@ export class TARepository {
   }
 
   /**
-   * Map a database row to TASubscriber interface
+   * Map a database row to TA interface
    * @param row Database row from DuckDB
-   * @returns TASubscriber object
+   * @returns TA object
    */
-  private mapRowToSubscriber(row: unknown): TASubscriber {
+  private mapRowToTA(row: unknown): TA {
     const rowArray = row as unknown[];
     return {
       id: Number(rowArray[0]),
-      subscriberPubkey: rowArray[1] as string,
+      pubkey: rowArray[1] as string,
       latestRank: rowArray[2] !== null ? Number(rowArray[2]) : null,
       createdAt: Number(rowArray[3]),
-      updatedAt: Number(rowArray[4]),
+      computedAt: Number(rowArray[4]),
       isActive: Boolean(rowArray[5]),
     };
   }
