@@ -1,5 +1,14 @@
 # relatr
 
+## 0.1.12
+
+### Patch Changes
+
+- f4dcb50: chore: bump versions
+- refactor(service): consolidate trust score calculation with lazy refresh control
+
+Remove calculateTrustScoreInternal method and add enableLazyRefresh parameter
+
 ## 0.1.5
 
 ### Patch Changes

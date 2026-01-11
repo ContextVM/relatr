@@ -116,11 +116,14 @@ export class TAService {
       const user = await this.taRepository.getOrCreateTA(pubkey, true);
 
       // Compute rank first (non-atomic: persist regardless of publish success)
-      // IMPORTANT: use internal trust computation to avoid triggering TA lazy refresh
+      // IMPORTANT: disable TA refresh to avoid triggering lazy refresh
       // (which would otherwise cause duplicate compute/publish work on enable).
-      const trustScore = await this.relatrService.calculateTrustScoreInternal({
-        targetPubkey: pubkey,
-      });
+      const trustScore = await this.relatrService.calculateTrustScore(
+        {
+          targetPubkey: pubkey,
+        },
+        false,
+      );
       const newRank = Math.round(trustScore.score * 100);
       const now = Math.floor(Date.now() / 1000);
 
@@ -307,10 +310,13 @@ export class TAService {
    * @returns The computed rank (0-100)
    */
   async computeRank(pubkey: string): Promise<number> {
-    // Use internal method to avoid triggering TA lazy refresh (recursion prevention)
-    const trustScore = await this.relatrService.calculateTrustScoreInternal({
-      targetPubkey: pubkey,
-    });
+    // Use calculateTrustScore with TA refresh disabled to avoid recursion
+    const trustScore = await this.relatrService.calculateTrustScore(
+      {
+        targetPubkey: pubkey,
+      },
+      false,
+    );
     return Math.round(trustScore.score * 100);
   }
 

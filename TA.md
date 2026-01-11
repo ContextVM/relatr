@@ -1,6 +1,6 @@
 # Trusted Assertions (TA) in Relatr
 
-Relatr can act as a **Trusted Assertion provider** as described by NIP-85, publishing **Kind 30382** events that assert a rank (0–100) for a pubkey. The important part is *how* Relatr does this in practice: it treats TA as a persisted, queryable **rank cache**, and publishes events as a side-effect when appropriate.
+Relatr can act as a **Trusted Assertion provider** as described by NIP-85, publishing **Kind 30382** events that assert a rank (0–100) for a pubkey. The important part is _how_ Relatr does this in practice: it treats TA as a persisted, queryable **rank cache**, and publishes events as a side-effect when appropriate.
 
 This document explains the mechanics of TA inside Relatr: the persisted table, the meaning of `is_active`, the “dual API” (request/response vs. publishing), and what operators need to enable it.
 
@@ -10,9 +10,9 @@ Many systems model TA as a subscription list: “users who opted in will get the
 
 Think of it like a mailbox label, not a billing plan.
 
-* The TA table stores: the most recent rank, when it was computed, and whether it was explicitly requested.
-* The service uses staleness to decide when to recompute.
-* Publishing Kind 30382 is a side-effect that happens on enable and on refreshes when the rank changes.
+- The TA table stores: the most recent rank, when it was computed, and whether it was explicitly requested.
+- The service uses staleness to decide when to recompute.
+- Publishing Kind 30382 is a side-effect that happens on enable and on refreshes when the rank changes.
 
 The outcome is simpler semantics and better performance: TA also becomes a cache layer that prevents re-running expensive trust computations for the same pubkey over and over.
 
@@ -20,9 +20,9 @@ The outcome is simpler semantics and better performance: TA also becomes a cache
 
 Relatr stores TA state in a DuckDB table with a unique row per pubkey. From the service perspective, the core fields are:
 
-* `latest_rank`: the last computed rank (0–100)
-* `computed_at`: unix seconds when `latest_rank` was computed
-* `is_active`: a boolean meaning “user requested this entry via `enable`”
+- `latest_rank`: the last computed rank (0–100)
+- `computed_at`: unix seconds when `latest_rank` was computed
+- `is_active`: a boolean meaning “user requested this entry via `enable`”
 
 Staleness is intentionally boring: an entry is stale when `computed_at` is older than `now - CACHE_TTL_HOURS`, or when `latest_rank` is missing.
 
@@ -36,12 +36,12 @@ It means: “this pubkey explicitly asked Relatr to manage TA for them.”
 
 That single bit is used for one operational purpose: periodic refresh work focuses on active entries (so operators can bound cost), while inactive entries are updated only when they naturally appear in Relatr’s trust computation flow.
 
-## The dual API: request/response *and* publication
+## The dual API: request/response _and_ publication
 
 TA has two faces that run in parallel:
 
-1) A **request/response interface** that returns status and cached rank.
-2) A **publishing interface** that emits Kind 30382 events to relays.
+1. A **request/response interface** that returns status and cached rank.
+2. A **publishing interface** that emits Kind 30382 events to relays.
 
 They are related, but not identical.
 
@@ -53,9 +53,9 @@ Relatr exposes TA management through an MCP tool named `manage_ta` with actions 
 
 `enable` does three things in one intentional, user-facing operation:
 
-* creates (or updates) the TA row and sets `is_active = TRUE`
-* computes a fresh rank and persists it (so the cache is warm immediately)
-* attempts to publish a Kind 30382 event
+- creates (or updates) the TA row and sets `is_active = TRUE`
+- computes a fresh rank and persists it (so the cache is warm immediately)
+- attempts to publish a Kind 30382 event
 
 If publishing fails, the operation still succeeds from the user’s perspective: the cache is updated and the system logs the publish failure. This is deliberate—publishing is network-dependent; caching is local truth.
 
@@ -65,14 +65,14 @@ If publishing fails, the operation still succeeds from the user’s perspective:
 
 When Relatr publishes TA, it publishes Kind 30382 with tags that include:
 
-* `d` tag: the subject pubkey
-* `rank` tag: the rank as a string
+- `d` tag: the subject pubkey
+- `rank` tag: the rank as a string
 
 The event is signed by the server’s key (configured via `SERVER_SECRET_KEY`) and is published to a relay set derived from:
 
-* the user’s relay list (when available)
-* the server’s configured relays
-* optional `customRelays` supplied on `enable`
+- the user’s relay list (when available)
+- the server’s configured relays
+- optional `customRelays` supplied on `enable`
 
 The implementation is in [`TAService.publishTAEvent()`](src/service/TAService.ts:180). Relatr also caches the final relay set per pubkey in the key/value store, so repeated publishes don’t need to refetch relay lists every time.
 
@@ -123,9 +123,9 @@ Operationally, `CACHE_TTL_HOURS` is the main dial: a shorter TTL increases fresh
 
 If you call `manage_ta`:
 
-* `get` returns what Relatr currently knows (cached rank + timestamps).
-* `enable` immediately computes a fresh rank, stores it, and attempts to publish it.
-* `disable` stops periodic refresh by clearing `is_active`, while keeping the cached rank for future reads and potential lazy refresh.
+- `get` returns what Relatr currently knows (cached rank + timestamps).
+- `enable` immediately computes a fresh rank, stores it, and attempts to publish it.
+- `disable` stops periodic refresh by clearing `is_active`, while keeping the cached rank for future reads and potential lazy refresh.
 
 The user-visible guarantee is simple: Relatr will never pretend to publish a rank it couldn’t publish, but it will still cache ranks locally to avoid wasteful recomputation.
 
@@ -133,4 +133,4 @@ The user-visible guarantee is simple: Relatr will never pretend to publish a ran
 
 Relatr’s TA implementation is intentionally “weakly coupled”: rank computation, persistence, and publishing are separate concerns. This keeps the service honest. A relay outage cannot rewrite history; it can only delay propagation. A user can opt into periodic attention (`is_active`) without forcing a long-lived subscription contract.
 
-In other words: TA in Relatr is a *local truth engine* that can speak to the network, not a network dependency that dictates local truth.
+In other words: TA in Relatr is a _local truth engine_ that can speak to the network, not a network dependency that dictates local truth.

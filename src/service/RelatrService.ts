@@ -46,58 +46,23 @@ export class RelatrService implements IRelatrService {
         this.taService = taService;
     }
 
-    /**
-     * Calculate trust score without triggering TA lazy refresh
-     * This is used internally by TAService to avoid recursion
-     */
-    async calculateTrustScoreInternal(params: CalculateTrustScoreParams): Promise<TrustScore> {
+    async calculateTrustScore(params: CalculateTrustScoreParams, enableLazyRefresh: boolean = true): Promise<TrustScore> {
         // Validate and decode target pubkey once
         const decodedTargetPubkey = validateAndDecodePubkey(params.targetPubkey);
         if (!decodedTargetPubkey) {
             throw new ValidationError('Invalid target pubkey format. Must be hex, npub, or nprofile', 'targetPubkey');
         }
-
-        const results = await this.calculateTrustScoresBatch({
+       
+        const result = await this.calculateTrustScoresBatch( {
             sourcePubkey: params.sourcePubkey,
-            targetPubkeys: [decodedTargetPubkey] // Pass already-decoded hex to avoid re-validation
-        });
-
-        const trustScore = results.get(decodedTargetPubkey);
-        if (!trustScore) {
+            targetPubkeys: [decodedTargetPubkey]
+        }, enableLazyRefresh).then(results => results.get(decodedTargetPubkey));
+        
+        if (!result) {
             throw new RelatrError('Trust calculation failed: missing trust score result', 'CALCULATE_TRUST');
         }
-
-        return trustScore;
-    }
-
-    async calculateTrustScore(params: CalculateTrustScoreParams): Promise<TrustScore> {
-        // Validate and decode target pubkey once
-        const decodedTargetPubkey = validateAndDecodePubkey(params.targetPubkey);
-        if (!decodedTargetPubkey) {
-            throw new ValidationError('Invalid target pubkey format. Must be hex, npub, or nprofile', 'targetPubkey');
-        }
-
-        const results = await this.calculateTrustScoresBatch({
-            sourcePubkey: params.sourcePubkey,
-            targetPubkeys: [decodedTargetPubkey] // Pass already-decoded hex to avoid re-validation
-        });
-
-        const trustScore = results.get(decodedTargetPubkey);
-        if (!trustScore) {
-            throw new RelatrError('Trust calculation failed: missing trust score result', 'CALCULATE_TRUST');
-        }
-
-        // Trigger lazy TA refresh after trust computation (non-blocking, best-effort)
-        if (this.taService) {
-            this.taService.maybeRefreshAndEnqueueTA(decodedTargetPubkey).catch((error) => {
-                logger.warn(
-                    `Failed to lazy refresh TA for ${decodedTargetPubkey}:`,
-                    error instanceof Error ? error.message : String(error),
-                );
-            });
-        }
-
-        return trustScore;
+        
+        return result;
     }
 
     /**
@@ -105,11 +70,12 @@ export class RelatrService implements IRelatrService {
      *
      * Notes:
      * - Inputs may be hex, npub, or nprofile; all are decoded to hex internally.
+     * - When enableLazyRefresh is true, triggers TA refresh for all targets after computation (non-blocking).
      */
     async calculateTrustScoresBatch(params: {
         sourcePubkey?: string;
         targetPubkeys: string[];
-    }): Promise<Map<string, TrustScore>> {
+    }, enableLazyRefresh: boolean = true): Promise<Map<string, TrustScore>> {
         if (!this.initialized) throw new RelatrError('Not initialized', 'NOT_INITIALIZED');
 
         const { sourcePubkey, targetPubkeys } = params;
@@ -173,6 +139,28 @@ export class RelatrService implements IRelatrService {
                 );
 
                 trustScores.set(targetHex, trustScore);
+            }
+
+            // Trigger lazy TA refresh after trust computation (non-blocking, best-effort)
+            if (enableLazyRefresh && this.taService) {
+                // Process pubkeys in batches to limit concurrency
+                const CONCURRENCY_LIMIT = 5;
+                
+                for (let i = 0; i < decodedTargetPubkeys.length; i += CONCURRENCY_LIMIT) {
+                    const batchStart = i;
+                    const batchEnd = Math.min(i + CONCURRENCY_LIMIT, decodedTargetPubkeys.length);
+                    
+                    // Fire promises directly without intermediate array allocation
+                    for (let j = batchStart; j < batchEnd; j++) {
+                        const pubkey = decodedTargetPubkeys[j]!; // Safe: bounds checked by loop
+                        this.taService.maybeRefreshAndEnqueueTA(pubkey).catch((error) => {
+                            logger.warn(
+                                `Failed lazy TA refresh for ${pubkey}:`,
+                                error instanceof Error ? error.message : String(error),
+                            );
+                        });
+                    }
+                }
             }
 
             return trustScores;
