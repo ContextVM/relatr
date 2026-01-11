@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.13
+
+### Patch Changes
+
+- feat(ta): add support for extra relays in TA configuration
+
 ## 0.1.12
 
 ### Patch Changes
