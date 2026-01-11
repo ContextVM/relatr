@@ -35,6 +35,7 @@ export const RelatrConfigSchema = z.object({
     .default(COMMON_RELAYS),
   serverSecretKey: z.string().min(1, "SERVER_SECRET_KEY is required"),
   serverRelays: z.array(z.string()).default(CVM_RELAY),
+  taExtraRelays: z.array(z.string()).default([]),
   decayFactor: z.number().min(0).default(0.1),
   cacheTtlHours: z.number().positive().default(72),
   numberOfHops: z.number().int().positive().default(1),
@@ -83,6 +84,9 @@ export function loadConfig(): RelatrConfig {
     ),
     serverSecretKey: process.env.SERVER_SECRET_KEY,
     serverRelays: process.env.SERVER_RELAYS?.split(",").map((relay) =>
+      relay.trim(),
+    ),
+    taExtraRelays: process.env.TA_EXTRA_RELAYS?.split(",").map((relay) =>
       relay.trim(),
     ),
     decayFactor: process.env.DECAY_FACTOR

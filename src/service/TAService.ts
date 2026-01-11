@@ -225,10 +225,11 @@ export class TAService {
         }
       }
 
-      // Combine user's relays with server relays and custom relays (deduplicated)
+      // Combine user's relays with server relays, special purpose relays, and custom relays (deduplicated)
       const allRelays = relaySet([
         ...userRelays,
         ...this.config.serverRelays,
+        ...this.config.taExtraRelays,
         ...(customRelays || []),
       ]);
 

@@ -13,6 +13,7 @@ export interface RelatrConfig {
   nostrRelays: string[];
   serverSecretKey: string;
   serverRelays: string[];
+  taExtraRelays: string[];
   decayFactor: number;
   cacheTtlHours: number;
   numberOfHops: number;
