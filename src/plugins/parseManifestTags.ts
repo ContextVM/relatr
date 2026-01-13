@@ -1,4 +1,5 @@
 import type { PluginManifest } from "./plugin-types";
+import { isValidCapabilityName } from "../capabilities/capability-catalog";
 
 /**
  * Parse Nostr event tags into a structured plugin manifest
@@ -26,7 +27,7 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
   for (const tag of tags) {
     if (tag.length < 2) continue; // Skip invalid tags
 
-    const [key, value, ...rest] = tag;
+    const [key, value] = tag;
 
     switch (key) {
       case "name":
@@ -39,8 +40,9 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
         manifest.about = value || null;
         break;
       case "weight":
-        const weight = parseFloat(value || "");
-        manifest.weight = isNaN(weight) ? null : weight;
+        manifest.weight = isNaN(parseFloat(value || ""))
+          ? null
+          : parseFloat(value || "");
         break;
       case "cap":
         // If we have a current cap being built, push it to the list
@@ -88,20 +90,9 @@ export function validateManifest(manifest: PluginManifest): {
     );
   }
 
-  // Validate cap names
-  const validCapNames = [
-    "nostr.query",
-    "graph.stats",
-    "graph.all_pubkeys",
-    "graph.pubkey_exists",
-    "graph.is_following",
-    "graph.are_mutual",
-    "graph.degree",
-    "http.nip05_resolve",
-  ];
-
+  // Validate cap names using the centralized catalog
   for (const cap of manifest.caps) {
-    if (!validCapNames.includes(cap.name)) {
+    if (!isValidCapabilityName(cap.name)) {
       errors.push(`Unknown capability: ${cap.name}`);
     }
   }

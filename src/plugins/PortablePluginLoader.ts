@@ -46,83 +46,75 @@ function deriveUnsafeId(event: Partial<NostrEvent>): string {
 export async function loadPluginFromFile(
   filePath: string,
 ): Promise<PortablePlugin> {
-  try {
-    const content = await readFile(filePath, "utf-8");
-    const rawEvent = JSON.parse(content) as NostrEvent;
+  const content = await readFile(filePath, "utf-8");
+  const rawEvent = JSON.parse(content) as NostrEvent;
 
-    // Check if this is an unsafe plugin (missing signature)
-    const isUnsafe = !rawEvent.sig;
+  // Check if this is an unsafe plugin (missing signature)
+  const isUnsafe = !rawEvent.sig;
 
-    if (isUnsafe && !isUnsafeModeEnabled()) {
-      throw new Error(
-        `Plugin ${filePath} is missing signature. ` +
-          `Set ELO_PLUGINS_ALLOW_UNSAFE=true to load unsigned plugins (dev/test only).`,
-      );
-    }
-
-    // For unsafe plugins, derive a local ID if missing
-    const pluginId = isUnsafe
-      ? rawEvent.id || deriveUnsafeId(rawEvent)
-      : rawEvent.id;
-
-    // Validate required fields
-    if (!pluginId) {
-      throw new Error(`Plugin ${filePath} is missing required 'id' field`);
-    }
-
-    if (!rawEvent.pubkey) {
-      throw new Error(`Plugin ${filePath} is missing required 'pubkey' field`);
-    }
-
-    if (!rawEvent.created_at) {
-      throw new Error(
-        `Plugin ${filePath} is missing required 'created_at' field`,
-      );
-    }
-
-    if (!rawEvent.kind) {
-      throw new Error(`Plugin ${filePath} is missing required 'kind' field`);
-    }
-
-    if (!rawEvent.tags) {
-      throw new Error(`Plugin ${filePath} is missing required 'tags' field`);
-    }
-
-    if (rawEvent.content === undefined) {
-      throw new Error(`Plugin ${filePath} is missing required 'content' field`);
-    }
-
-    // Parse manifest
-    const manifest = parseManifestTags(rawEvent.tags);
-
-    // Validate manifest
-    const validation = validateManifest(manifest);
-    if (!validation.valid) {
-      throw new Error(
-        `Plugin ${filePath} manifest validation failed: ${validation.errors.join(", ")}`,
-      );
-    }
-
-    // Log warning for unsafe plugins
-    if (isUnsafe) {
-      logger.warn(`Loading unsafe plugin: ${manifest.name} from ${filePath}`);
-    }
-
-    return {
-      id: pluginId,
-      pubkey: rawEvent.pubkey,
-      createdAt: rawEvent.created_at,
-      kind: rawEvent.kind,
-      content: rawEvent.content,
-      manifest,
-      rawEvent,
-      unsafe: isUnsafe,
-    };
-  } catch (error) {
+  if (isUnsafe && !isUnsafeModeEnabled()) {
     throw new Error(
-      `Failed to load plugin from ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      `Plugin is missing signature. ` +
+        `Set ELO_PLUGINS_ALLOW_UNSAFE=true to load unsigned plugins (dev/test only).`,
     );
   }
+
+  // For unsafe plugins, derive a local ID if missing
+  const pluginId = isUnsafe
+    ? rawEvent.id || deriveUnsafeId(rawEvent)
+    : rawEvent.id;
+
+  // Validate required fields
+  if (!pluginId) {
+    throw new Error(`Plugin is missing required 'id' field`);
+  }
+
+  if (!rawEvent.pubkey) {
+    throw new Error(`Plugin is missing required 'pubkey' field`);
+  }
+
+  if (!rawEvent.created_at) {
+    throw new Error(`Plugin is missing required 'created_at' field`);
+  }
+
+  if (!rawEvent.kind) {
+    throw new Error(`Plugin is missing required 'kind' field`);
+  }
+
+  if (!rawEvent.tags) {
+    throw new Error(`Plugin is missing required 'tags' field`);
+  }
+
+  if (rawEvent.content === undefined) {
+    throw new Error(`Plugin is missing required 'content' field`);
+  }
+
+  // Parse manifest
+  const manifest = parseManifestTags(rawEvent.tags);
+
+  // Validate manifest
+  const validation = validateManifest(manifest);
+  if (!validation.valid) {
+    throw new Error(
+      `Plugin manifest validation failed: ${validation.errors.join(", ")}`,
+    );
+  }
+
+  // Log warning for unsafe plugins
+  if (isUnsafe) {
+    logger.warn(`Loading unsafe plugin: ${manifest.name} from ${filePath}`);
+  }
+
+  return {
+    id: pluginId,
+    pubkey: rawEvent.pubkey,
+    createdAt: rawEvent.created_at,
+    kind: rawEvent.kind,
+    content: rawEvent.content,
+    manifest,
+    rawEvent,
+    unsafe: isUnsafe,
+  };
 }
 
 /**

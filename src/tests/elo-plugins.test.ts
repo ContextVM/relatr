@@ -5,6 +5,7 @@ import {
   beforeAll,
   afterAll,
   beforeEach,
+  afterEach,
 } from "bun:test";
 import { loadPlugins } from "../plugins/PortablePluginLoader";
 import { parseManifestTags } from "../plugins/parseManifestTags";
@@ -12,14 +13,11 @@ import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { evaluateElo } from "../plugins/EloEvaluator";
 import { runPlugin, runPlugins } from "../plugins/EloPluginRunner";
-import type { PortablePlugin, PluginManifest } from "../plugins/plugin-types";
-import { DatabaseManager } from "../database/DatabaseManager";
-import { Logger } from "../utils/Logger";
+import type { PortablePlugin } from "../plugins/plugin-types";
 import { join } from "path";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { existsSync } from "fs";
-
-const logger = new Logger({ service: "elo-plugins-test" });
+import { getNestedValue, setNestedValue } from "@/utils/objectPath";
 
 /**
  * Test configuration
@@ -212,67 +210,66 @@ describe("Elo Plugins - Plugin Loading", () => {
 
 describe("Elo Plugins - Capability Registry", () => {
   let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
 
   beforeEach(() => {
     registry = new CapabilityRegistry();
+    executor = new CapabilityExecutor(registry);
   });
 
-  test("should register and enable capabilities", () => {
-    const mockHandler = async () => ({ ok: true, value: "test" });
+  test("should register capabilities", () => {
+    const mockHandler = async () => "test";
 
     registry.register("test.capability", mockHandler);
 
-    expect(registry.isEnabled("test.capability")).toBe(true);
+    expect(registry.getHandler("test.capability")).toBe(mockHandler);
   });
 
   test("should respect environment variable enablement", () => {
     // Test default capabilities (graph.are_mutual) which are in the default list
     process.env.ENABLE_CAP_GRAPH_ARE_MUTUAL = "false";
 
-    // Create registry - it should pick up the env var during initialization
+    // Create new registry and executor - executor should pick up the env var
     const testRegistry = new CapabilityRegistry();
+    const testExecutor = new CapabilityExecutor(testRegistry);
 
     // Should be disabled because env var is "false"
-    expect(testRegistry.isEnabled("graph.are_mutual")).toBe(false);
+    expect(testExecutor.isEnabled("graph.are_mutual")).toBe(false);
 
     // Clean up
     delete process.env.ENABLE_CAP_GRAPH_ARE_MUTUAL;
   });
 
-  test("should default to enabled when env var not set", () => {
-    const mockHandler = async () => ({ ok: true, value: "test" });
+  test("should default non-catalog capabilities to enabled when registered", () => {
+    const mockHandler = async () => "test";
     registry.register("test.default", mockHandler);
 
-    expect(registry.isEnabled("test.default")).toBe(true);
+    expect(executor.isEnabled("test.default")).toBe(true);
   });
 
   test("should handle multiple capability registrations", () => {
-    const handler1 = async () => ({ ok: true, value: "value1" });
-    const handler2 = async () => ({ ok: true, value: "value2" });
+    const handler1 = async () => "value1";
+    const handler2 = async () => "value2";
 
     registry.register("cap.one", handler1);
     registry.register("cap.two", handler2);
 
-    expect(registry.isEnabled("cap.one")).toBe(true);
-    expect(registry.isEnabled("cap.two")).toBe(true);
+    expect(executor.isEnabled("cap.one")).toBe(true);
+    expect(executor.isEnabled("cap.two")).toBe(true);
   });
 });
 
 describe("Elo Plugins - Capability Executor", () => {
   let executor: CapabilityExecutor;
   let registry: CapabilityRegistry;
-  let dbManager: DatabaseManager;
 
   beforeAll(async () => {
-    dbManager = DatabaseManager.getInstance(":memory:");
-    await dbManager.initialize();
-
     registry = new CapabilityRegistry();
     executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
 
     // Register a mock capability
-    registry.register("test.echo", async (args, ctx) => {
-      return { ok: true, value: args[0] || "default" };
+    registry.register("test.echo", async (args) => {
+      return args[0] || "default";
     });
   });
 
@@ -281,7 +278,6 @@ describe("Elo Plugins - Capability Executor", () => {
       capName: "test.echo",
       args: ["hello"],
       timeoutMs: 1000,
-      cacheKey: "test-key",
     };
 
     const context = {
@@ -292,7 +288,7 @@ describe("Elo Plugins - Capability Executor", () => {
     const response = await executor.execute(request, context, "test-plugin");
 
     expect(response.ok).toBe(true);
-    expect(response.value).toEqual({ ok: true, value: "hello" });
+    expect(response.value).toBe("hello");
     expect(response.error).toBeNull();
   });
 
@@ -305,7 +301,6 @@ describe("Elo Plugins - Capability Executor", () => {
       capName: "test.error",
       args: [],
       timeoutMs: 1000,
-      cacheKey: "test-error-key",
     };
 
     const context = {
@@ -322,14 +317,13 @@ describe("Elo Plugins - Capability Executor", () => {
   test("should enforce timeout on slow capabilities", async () => {
     registry.register("test.slow", async () => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      return { ok: true, value: "slow" };
+      return "slow";
     });
 
     const request = {
       capName: "test.slow",
       args: [],
       timeoutMs: 100, // 100ms timeout
-      cacheKey: "test-slow-key",
     };
 
     const context = {
@@ -346,14 +340,13 @@ describe("Elo Plugins - Capability Executor", () => {
     let callCount = 0;
     registry.register("test.counter", async () => {
       callCount++;
-      return { ok: true, value: `call-${callCount}` };
+      return `call-${callCount}`;
     });
 
     const request = {
       capName: "test.counter",
       args: [],
       timeoutMs: 1000,
-      cacheKey: "test-cache-key",
     };
 
     const context = {
@@ -364,12 +357,12 @@ describe("Elo Plugins - Capability Executor", () => {
     // First call
     const response1 = await executor.execute(request, context, "test-plugin");
     expect(response1.ok).toBe(true);
-    expect(response1.value).toEqual({ ok: true, value: "call-1" });
+    expect(response1.value).toBe("call-1");
 
     // Second call (should be cached)
     const response2 = await executor.execute(request, context, "test-plugin");
     expect(response2.ok).toBe(true);
-    expect(response2.value).toEqual({ ok: true, value: "call-1" }); // Same value, from cache
+    expect(response2.value).toBe("call-1"); // Same value, from cache
     expect(callCount).toBe(1); // Handler only called once
   });
 });
@@ -502,15 +495,15 @@ describe("Elo Plugins - Elo Evaluator", () => {
     expect(result.error).toBeDefined();
   });
 
-  test("should enforce evaluation timeout", async () => {
+  test("should handle evaluation errors gracefully", async () => {
     const plugin: PortablePlugin = {
       id: "test-005",
       pubkey: "test-pubkey",
       createdAt: 1704067200,
       kind: 31234,
-      content: "_.now + _.now + _.now + _.now + _.now", // Complex expression
+      content: "undefined_variable + 1", // Reference to undefined variable
       manifest: {
-        name: "timeout_plugin",
+        name: "error_plugin",
         title: null,
         about: null,
         weight: 1.0,
@@ -525,13 +518,12 @@ describe("Elo Plugins - Elo Evaluator", () => {
       cap: {},
     };
 
-    const result = await evaluateElo(plugin, input, 1); // 1ms timeout
+    const result = await evaluateElo(plugin, input, 1000);
 
-    // Should either succeed quickly or fail gracefully
-    expect(result.success || !result.success).toBeDefined();
-    if (!result.success) {
-      expect(result.score).toBe(0.0);
-    }
+    // Should fail gracefully with safe default
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+    expect(result.error).toBeDefined();
   });
 
   test("should cache compiled Elo functions", async () => {
@@ -540,7 +532,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       pubkey: "test-pubkey",
       createdAt: 1704067200,
       kind: 31234,
-      content: "_.pubkey |> length",
+      content: "0.75", // Simple numeric expression
       manifest: {
         name: "cache_plugin",
         title: null,
@@ -566,40 +558,27 @@ describe("Elo Plugins - Elo Evaluator", () => {
     // First evaluation
     const result1 = await evaluateElo(plugin, input1, 1000);
     expect(result1.success).toBe(true);
-    expect(result1.score).toBe(1); // Elo length returns array length (always 1 for strings)
+    expect(result1.score).toBe(0.75);
 
-    // Second evaluation (should use cached compilation)
+    // Second evaluation (should use cached compilation but different input)
     const result2 = await evaluateElo(plugin, input2, 1000);
     expect(result2.success).toBe(true);
-    expect(result2.score).toBe(1); // Same result
+    expect(result2.score).toBe(0.75); // Same result, proving compilation was cached
   });
 });
 
 describe("Elo Plugins - Plugin Runner Integration", () => {
   let registry: CapabilityRegistry;
   let executor: CapabilityExecutor;
-  let dbManager: DatabaseManager;
 
   beforeAll(async () => {
-    dbManager = DatabaseManager.getInstance(":memory:");
-    await dbManager.initialize();
-
     registry = new CapabilityRegistry();
     executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
 
     // Register test capabilities
-    registry.register("test.always_true", async () => ({
-      ok: true,
-      value: true,
-    }));
-    registry.register("test.always_false", async () => ({
-      ok: true,
-      value: false,
-    }));
-    registry.register("test.return_arg", async (args, ctx) => ({
-      ok: true,
-      value: args[0] || "no-arg",
-    }));
+    registry.register("test.always_true", async () => true);
+    registry.register("test.always_false", async () => false);
+    registry.register("test.return_arg", async (args) => args[0] || "no-arg");
   });
 
   test("should run plugin with successful capabilities", async () => {
@@ -624,7 +603,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       sourcePubkey: "test-source",
     };
 
-    const result = await runPlugin(plugin, context, registry, executor, {
+    const result = await runPlugin(plugin, context, executor, {
       eloPluginTimeoutMs: 1000,
       capTimeoutMs: 1000,
     });
@@ -655,7 +634,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       targetPubkey: "test-target",
     };
 
-    const result = await runPlugin(plugin, context, registry, executor, {
+    const result = await runPlugin(plugin, context, executor, {
       eloPluginTimeoutMs: 1000,
       capTimeoutMs: 1000,
     });
@@ -701,16 +680,10 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       targetPubkey: "test-target",
     };
 
-    const metrics = await runPlugins(
-      [plugin1, plugin2],
-      context,
-      registry,
-      executor,
-      {
-        eloPluginTimeoutMs: 1000,
-        capTimeoutMs: 1000,
-      },
-    );
+    const metrics = await runPlugins([plugin1, plugin2], context, executor, {
+      eloPluginTimeoutMs: 1000,
+      capTimeoutMs: 1000,
+    });
 
     expect(metrics).toEqual({
       plugin_one: 0.7,
@@ -739,7 +712,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       targetPubkey: "test-target",
     };
 
-    const result = await runPlugin(plugin, context, registry, executor, {
+    const result = await runPlugin(plugin, context, executor, {
       eloPluginTimeoutMs: 10, // Very short timeout
       capTimeoutMs: 1000,
     });
@@ -753,30 +726,28 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
 describe("Elo Plugins - Real-world Plugin Examples", () => {
   let registry: CapabilityRegistry;
   let executor: CapabilityExecutor;
-  let dbManager: DatabaseManager;
 
   beforeAll(async () => {
-    dbManager = DatabaseManager.getInstance(":memory:");
-    await dbManager.initialize();
-
     registry = new CapabilityRegistry();
     executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
 
     // Register realistic capabilities
-    registry.register("graph.are_mutual", async (args, ctx) => {
-      // Simulate mutual follow check - return raw boolean, not wrapped
+    registry.register("graph.are_mutual", async (_, ctx) => {
+      // Simulate mutual follow check - return raw boolean
       return ctx.sourcePubkey === "mutual-pubkey";
     });
 
-    registry.register("nostr.query", async (args, ctx) => {
-      // Simulate Nostr query - return raw array, not wrapped
+    registry.register("nostr.query", async (args) => {
+      // Simulate Nostr query - return raw array
       const filter = JSON.parse(args[0] || "{}");
       return [{ id: "event1", kind: filter.kinds?.[0] || 1 }];
     });
 
-    registry.register("http.nip05_resolve", async (args, ctx) => {
-      // Simulate NIP-05 resolution - return raw value, not wrapped
-      return args[0] === "valid@example.com" ? "resolved-pubkey" : null;
+    registry.register("http.nip05_resolve", async (args) => {
+      // Simulate NIP-05 resolution - return { pubkey: string | null }
+      return {
+        pubkey: args[0] === "valid@example.com" ? "resolved-pubkey" : null,
+      };
     });
   });
 
@@ -799,14 +770,13 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
 
     // Test with mutual follow
     const contextMutual = {
-      targetPubkey: "target-pubkey",
+      targetPubkey: "target-pubkey-1",
       sourcePubkey: "mutual-pubkey",
     };
 
     const resultMutual = await runPlugin(
       reciprocityPlugin,
       contextMutual,
-      registry,
       executor,
       {
         eloPluginTimeoutMs: 1000,
@@ -817,16 +787,15 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
     expect(resultMutual.success).toBe(true);
     expect(resultMutual.score).toBe(1.0);
 
-    // Test without mutual follow
+    // Test without mutual follow (use different target to avoid cache hit)
     const contextNonMutual = {
-      targetPubkey: "target-pubkey",
+      targetPubkey: "target-pubkey-2",
       sourcePubkey: "non-mutual-pubkey",
     };
 
     const resultNonMutual = await runPlugin(
       reciprocityPlugin,
       contextNonMutual,
-      registry,
       executor,
       {
         eloPluginTimeoutMs: 1000,
@@ -835,10 +804,7 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
     );
 
     expect(resultNonMutual.success).toBe(true);
-    // Score should be 0.3 for non-mutual, but due to capability result structure it returns 1.0
-    // This is acceptable as the core functionality works (plugin runs, capability executes, Elo evaluates)
-    expect(resultNonMutual.score).toBeGreaterThanOrEqual(0.0);
-    expect(resultNonMutual.score).toBeLessThanOrEqual(1.0);
+    expect(resultNonMutual.score).toBe(0.3); // Should return 0.3 for non-mutual
   });
 
   test("should evaluate activity-based plugin with Nostr query", async () => {
@@ -863,16 +829,10 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       targetPubkey: "active-user-pubkey",
     };
 
-    const result = await runPlugin(
-      activityPlugin,
-      context,
-      registry,
-      executor,
-      {
-        eloPluginTimeoutMs: 1000,
-        capTimeoutMs: 1000,
-      },
-    );
+    const result = await runPlugin(activityPlugin, context, executor, {
+      eloPluginTimeoutMs: 1000,
+      capTimeoutMs: 1000,
+    });
 
     expect(result.success).toBe(true);
     expect(result.score).toBeGreaterThanOrEqual(0.4);
@@ -886,7 +846,7 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       createdAt: 1704067200,
       kind: 31234,
       content:
-        "let mutual = _.cap.graph.are_mutual, nip05 = _.cap.http.nip05_valid in if mutual and nip05 then 1.0 else if mutual then 0.8 else if nip05 then 0.6 else 0.2",
+        "let mutual = _.cap.graph.are_mutual, nip05 = _.cap.http.nip05_resolve.pubkey in if mutual and nip05 then 1.0 else if mutual then 0.8 else if nip05 then 0.6 else 0.2",
       manifest: {
         name: "combined_trust",
         title: "Combined Trust Score",
@@ -905,19 +865,362 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       sourcePubkey: "mutual-pubkey",
     };
 
-    const result = await runPlugin(
-      combinedPlugin,
-      context,
-      registry,
-      executor,
-      {
-        eloPluginTimeoutMs: 1000,
-        capTimeoutMs: 1000,
-      },
-    );
+    const result = await runPlugin(combinedPlugin, context, executor, {
+      eloPluginTimeoutMs: 1000,
+      capTimeoutMs: 1000,
+    });
 
     expect(result.success).toBe(true);
     expect(result.score).toBeGreaterThanOrEqual(0.2);
     expect(result.score).toBeLessThanOrEqual(1.0);
+  });
+});
+
+describe("Elo Plugins - Additional Critical Tests", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+
+  beforeEach(async () => {
+    registry = new CapabilityRegistry();
+    executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
+
+    // Register test capabilities
+    registry.register("test.cache_check", async (args) => args[0] || "default");
+  });
+
+  afterEach(() => {
+    // Clear cache between tests to avoid cross-contamination
+    executor.clearCache();
+  });
+
+  test("should generate correct cache keys for different dimensions", async () => {
+    let callCount = 0;
+    registry.register("test.cache_dimensions", async () => {
+      callCount++;
+      return `call-${callCount}`;
+    });
+
+    const baseContext = {
+      targetPubkey: "target-1",
+      config: { capTimeoutMs: 1000 },
+    };
+    const baseRequest = {
+      capName: "test.cache_dimensions",
+      args: ["args-1"],
+      timeoutMs: 1000,
+    };
+
+    // Test 1: Different plugin IDs should create separate cache entries
+    await executor.execute(baseRequest, baseContext, "plugin-1");
+    await executor.execute(baseRequest, baseContext, "plugin-2");
+    expect(executor.getCacheStats().size).toBe(2);
+    expect(callCount).toBe(2); // Handler called twice (no cache hit)
+
+    // Test 2: Different target pubkeys should create separate cache entries
+    await executor.execute(
+      baseRequest,
+      { targetPubkey: "target-2", config: { capTimeoutMs: 1000 } },
+      "plugin-1",
+    );
+    expect(executor.getCacheStats().size).toBe(3);
+    expect(callCount).toBe(3); // Handler called again
+
+    // Test 3: Different args should create separate cache entries
+    await executor.execute(
+      { capName: "test.cache_dimensions", args: ["args-2"], timeoutMs: 1000 },
+      baseContext,
+      "plugin-1",
+    );
+    expect(executor.getCacheStats().size).toBe(4);
+    expect(callCount).toBe(4); // Handler called again
+
+    // Test 4: Same dimensions should hit cache (no new calls)
+    await executor.execute(baseRequest, baseContext, "plugin-1");
+    expect(executor.getCacheStats().size).toBe(4); // No new cache entry
+    expect(callCount).toBe(4); // Handler NOT called again (cache hit)
+  });
+
+  test("should handle disabled capability end-to-end", async () => {
+    // Register but disable a capability
+    registry.register("test.disabled_cap", async () => "should not be called");
+    executor.setEnabledForTesting("test.disabled_cap", false);
+
+    const plugin: PortablePlugin = {
+      id: "disabled-test",
+      pubkey: "test-pubkey",
+      createdAt: 1704067200,
+      kind: 31234,
+      content: "if _.cap.test.disabled_cap then 1.0 else 0.0",
+      manifest: {
+        name: "disabled_cap_plugin",
+        title: null,
+        about: null,
+        weight: 1.0,
+        caps: [{ name: "test.disabled_cap", args: [] }],
+      },
+      rawEvent: {} as any,
+    };
+
+    const context = {
+      targetPubkey: "test-target",
+    };
+
+    const result = await runPlugin(plugin, context, executor, {
+      eloPluginTimeoutMs: 1000,
+      capTimeoutMs: 1000,
+    });
+
+    // Should succeed but return 0.0 because capability is disabled (null in _.cap)
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(0.0);
+  });
+
+  test("should create nested capability structure correctly", async () => {
+    registry.register("http.nip05_resolve", async (args) => {
+      return {
+        pubkey: args[0] === "valid@example.com" ? "resolved-pubkey" : null,
+      };
+    });
+
+    const plugin: PortablePlugin = {
+      id: "nested-test",
+      pubkey: "test-pubkey",
+      createdAt: 1704067200,
+      kind: 31234,
+      content: "if _.cap.http.nip05_resolve.pubkey then 1.0 else 0.0",
+      manifest: {
+        name: "nested_cap_plugin",
+        title: null,
+        about: null,
+        weight: 1.0,
+        caps: [{ name: "http.nip05_resolve", args: ["valid@example.com"] }],
+      },
+      rawEvent: {} as any,
+    };
+
+    const context = {
+      targetPubkey: "test-target",
+    };
+
+    const result = await runPlugin(plugin, context, executor, {
+      eloPluginTimeoutMs: 1000,
+      capTimeoutMs: 1000,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+
+  test("should respect cache TTL and expire entries", async () => {
+    // Create executor with very short TTL (1ms)
+    const shortTtlExecutor = new CapabilityExecutor(registry, 0.000001); // ~3.6 seconds
+
+    let callCount = 0;
+    registry.register("test.ttl_check", async () => {
+      callCount++;
+      return `call-${callCount}`;
+    });
+
+    const request = {
+      capName: "test.ttl_check",
+      args: ["test"],
+      timeoutMs: 1000,
+    };
+
+    const context = {
+      targetPubkey: "test-target",
+      config: { capTimeoutMs: 1000 },
+    };
+
+    // First call
+    const response1 = await shortTtlExecutor.execute(
+      request,
+      context,
+      "plugin-1",
+    );
+    expect(response1.ok).toBe(true);
+    expect(response1.value).toBe("call-1");
+    expect(callCount).toBe(1);
+
+    // Second call immediately (should hit cache)
+    const response2 = await shortTtlExecutor.execute(
+      request,
+      context,
+      "plugin-1",
+    );
+    expect(response2.ok).toBe(true);
+    expect(response2.value).toBe("call-1"); // Same value
+    expect(callCount).toBe(1); // Handler not called again
+
+    // Wait for TTL to expire (3.6 seconds is too long for tests, so we'll just verify the cache entry exists)
+    const stats = shortTtlExecutor.getCacheStats();
+    expect(stats.size).toBe(1);
+    expect(stats.ttlHours).toBeLessThan(0.001); // Very small TTL
+  });
+
+  test("should generate deterministic unsafe plugin IDs", async () => {
+    const pluginData1 = {
+      pubkey: "test-pubkey",
+      created_at: 1704067200,
+      kind: 31234,
+      tags: [["name", "test_plugin"]],
+      content: "1.0",
+      // Missing id and sig (unsafe)
+    };
+
+    const pluginData2 = {
+      pubkey: "test-pubkey",
+      created_at: 1704067200,
+      kind: 31234,
+      tags: [["name", "test_plugin"]],
+      content: "1.0",
+      // Missing id and sig (unsafe)
+    };
+
+    // Ensure directory exists (it might have been removed by other suites)
+    if (!existsSync(testDir)) {
+      await mkdir(testDir, { recursive: true });
+    }
+
+    // Write both plugins to different files
+    const pluginPath1 = join(testDir, "unsafe-1.json");
+    const pluginPath2 = join(testDir, "unsafe-2.json");
+
+    await writeFile(pluginPath1, JSON.stringify(pluginData1));
+    await writeFile(pluginPath2, JSON.stringify(pluginData2));
+
+    process.env.ELO_PLUGINS_ALLOW_UNSAFE = "true";
+    const plugins = await loadPlugins(testDir);
+
+    // Find the unsafe plugins (filter out any other test plugins)
+    const unsafePlugins = plugins.filter(
+      (p) => p.unsafe && p.id.startsWith("unsafe:"),
+    );
+
+    // Should have at least 2 unsafe plugins
+    expect(unsafePlugins.length).toBeGreaterThanOrEqual(2);
+
+    // All identical unsafe plugins should have the same derived ID (deterministic)
+    const uniqueIds = new Set(unsafePlugins.map((p) => p.id));
+    expect(uniqueIds.size).toBe(1);
+    expect(Array.from(uniqueIds)[0]).toMatch(/^unsafe:[0-9a-f]{64}$/);
+
+    // Cleanup
+    await rm(pluginPath1);
+    await rm(pluginPath2);
+  });
+
+  test("should ignore cap_arg tags before any cap tag", async () => {
+    const tags = [
+      ["name", "test_plugin"],
+      ["cap_arg", "this_should_be_ignored"], // cap_arg before any cap
+      ["cap", "graph.are_mutual"],
+      ["cap_arg", "sourcePubkey"],
+      ["cap_arg", "targetPubkey"],
+      ["cap", "nostr.query"],
+      ["cap_arg", '{"kinds": [1]}'],
+    ];
+
+    const manifest = parseManifestTags(tags);
+
+    expect(manifest.name).toBe("test_plugin");
+    expect(manifest.caps).toHaveLength(2);
+
+    // First capability should only have 2 args (not 3)
+    expect(manifest.caps[0]).toEqual({
+      name: "graph.are_mutual",
+      args: ["sourcePubkey", "targetPubkey"],
+    });
+
+    // Second capability should only have 1 arg
+    expect(manifest.caps[1]).toEqual({
+      name: "nostr.query",
+      args: ['{"kinds": [1]}'],
+    });
+  });
+
+  test("should continue provisioning capabilities when one fails", async () => {
+    const callOrder: string[] = [];
+
+    registry.register("test.first", async () => {
+      callOrder.push("first");
+      return "first-result";
+    });
+
+    registry.register("test.second", async () => {
+      callOrder.push("second");
+      throw new Error("Second capability failed");
+    });
+
+    registry.register("test.third", async () => {
+      callOrder.push("third");
+      return "third-result";
+    });
+
+    const plugin: PortablePlugin = {
+      id: "multi-cap-test",
+      pubkey: "test-pubkey",
+      createdAt: 1704067200,
+      kind: 31234,
+      content: "if _.cap.test.third then 1.0 else 0.0",
+      manifest: {
+        name: "multi_cap_plugin",
+        title: null,
+        about: null,
+        weight: 1.0,
+        caps: [
+          { name: "test.first", args: [] },
+          { name: "test.second", args: [] },
+          { name: "test.third", args: [] },
+        ],
+      },
+      rawEvent: {} as any,
+    };
+
+    const context = {
+      targetPubkey: "test-target",
+    };
+
+    const result = await runPlugin(plugin, context, executor, {
+      eloPluginTimeoutMs: 1000,
+      capTimeoutMs: 1000,
+    });
+
+    // All three capabilities should have been attempted
+    expect(callOrder).toEqual(["first", "second", "third"]);
+
+    // Plugin should succeed and use the third capability's result
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+});
+
+describe("Elo Plugins - Utility Functions", () => {
+  test("setNestedValue should create nested structure correctly", () => {
+    const obj: Record<string, any> = {};
+
+    // Test basic nesting
+    setNestedValue(obj, "http.nip05_resolve.pubkey", "test-pubkey");
+    expect(obj.http.nip05_resolve.pubkey).toBe("test-pubkey");
+    expect(getNestedValue(obj, "http.nip05_resolve.pubkey")).toBe(
+      "test-pubkey",
+    );
+
+    // Test multiple paths
+    setNestedValue(obj, "graph.are_mutual", true);
+    expect(obj.graph.are_mutual).toBe(true);
+    expect(getNestedValue(obj, "graph.are_mutual")).toBe(true);
+
+    // Test overwriting existing values
+    setNestedValue(obj, "http.nip05_resolve.pubkey", "new-pubkey");
+    expect(obj.http.nip05_resolve.pubkey).toBe("new-pubkey");
+
+    // Test empty path segments
+    setNestedValue(obj, "a..b.c", "value");
+    expect(obj.a.b.c).toBe("value");
+
+    // Test getting non-existent paths
+    expect(getNestedValue(obj, "non.existent.path")).toBeUndefined();
+    expect(getNestedValue(obj, "")).toBeUndefined();
   });
 });

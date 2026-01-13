@@ -164,11 +164,13 @@ Integration dependencies:
 
 Proposed modules:
 
-- [`src/capabilities/CapabilityRegistry.ts`](src/capabilities/CapabilityRegistry.ts:1)
-- [`src/capabilities/CapabilityExecutor.ts`](src/capabilities/CapabilityExecutor.ts:1)
+- [`src/capabilities/CapabilityRegistry.ts`](src/capabilities/CapabilityRegistry.ts:1) - Stores capability handlers only
+- [`src/capabilities/CapabilityExecutor.ts`](src/capabilities/CapabilityExecutor.ts:1) - Executes capabilities with caching, timeouts, and enablement policy
+- [`src/capabilities/capability-catalog.ts`](src/capabilities/capability-catalog.ts:1) - Centralized capability definitions and validation
 - [`src/capabilities/nostrQuery.ts`](src/capabilities/nostrQuery.ts:1)
 - [`src/capabilities/httpNip05Resolve.ts`](src/capabilities/httpNip05Resolve.ts:1)
 - [`src/capabilities/graphOps.ts`](src/capabilities/graphOps.ts:1)
+- [`src/utils/objectPath.ts`](src/utils/objectPath.ts:1) - Utility for nested object manipulation
 
 ### 3.4 Elo evaluation
 
@@ -256,10 +258,11 @@ Even if individual capabilities differ, the executor should operate on a uniform
 {
   capName: string,
   args: string[],
-  timeoutMs: number,
-  cacheKey: string
+  timeoutMs: number
 }
 ```
+
+Note: Cache keys are generated internally by the executor based on plugin ID, target pubkey, capability name, and a hash of the args. This ensures proper cache isolation and prevents collisions.
 
 The response is:
 
@@ -383,9 +386,23 @@ Capability toggles (env):
 
 Decision: keep these booleans in env rather than config file to match current operational style.
 
-### 7.2 Default enablement
+### 7.2 Capability enablement model
 
-Each capability defines its own default enable/disable state; env vars override.
+**Design Decision:** The `CapabilityExecutor` owns the enablement policy, not the `CapabilityRegistry`.
+
+- **Registry responsibility:** Store and retrieve capability handlers only
+- **Executor responsibility:** Determine if a capability is enabled based on:
+  - Capability catalog definitions
+  - Environment variables (`ENABLE_CAP_*`)
+  - Runtime overrides (for testing only, via `setEnabledForTesting()`)
+
+**Enablement rules:**
+
+- Catalog capabilities are enabled by default unless `ENABLE_CAP_*=false`
+- Non-catalog capabilities (e.g., test mocks) are always enabled if registered
+- Runtime overrides take precedence over environment settings
+
+This separation simplifies the registry and centralizes policy decisions in the executor.
 
 ---
 
@@ -445,31 +462,87 @@ Design check:
 
 ## 9. Phased integration checklist (actionable)
 
-### Phase 1: plumbing (no behavior change)
+### Phase 1: plumbing (no behavior change) ✅ COMPLETED
 
 - Add config fields for enabling Elo plugins and plugin directory.
 - Create loader that reads plugin JSON from disk.
 - Parse manifest tags and validate required fields.
+- Support unsafe plugin templates for development.
 
-### Phase 2: capabilities + single plugin execution
+### Phase 2: capabilities + single plugin execution ✅ COMPLETED
 
-- Implement `nostr.query` capability using existing pool/relays.
-- Implement minimal `graph.are_mutual` (or `graph.stats`) via `SocialGraph`.
-- Implement `http.nip05_resolve` by reusing existing logic in [`Nip05Plugin.validate()`](src/validators/plugins.ts:79).
-- Implement Elo evaluator using `@enspirit/elo` `compile()`.
-- Do unit testing to determine if the approach stills feasible
+- Implement `CapabilityRegistry` for storing handlers.
+- Implement `CapabilityExecutor` with caching, timeouts, and enablement policy.
+- Create centralized capability catalog.
+- Implement `http.nip05_resolve` capability.
+- Implement `graph.*` capabilities (stats, mutual follows, etc.).
+- Implement Elo evaluator with compilation caching.
+- Implement Elo plugin runner with capability provisioning.
+- Create comprehensive test suite (36 tests, 100% pass rate).
+- Extract utility functions (objectPath for nested value manipulation).
 
-### Phase 3: integrate with MetricsValidator
+### Phase 3: integrate with MetricsValidator ⏳ PENDING
 
 - In `MetricsValidator.validateAll()` and `validateAllBatch()`, when enabled:
-  - compute Elo metrics
-  - merge into metrics map
+  - Load and execute Elo plugins
+  - Merge Elo metrics with TS metrics: `{...tsMetrics, ...eloMetrics}`
 - Ensure errors yield `0.0` but do not break the rest of the metrics.
+- Add plugin execution instrumentation and logging.
 
-### Phase 4: hardening
+### Phase 4: hardening ⏳ PENDING
 
-- Add capability caching.
-- Add compilation caching.
-- Add limits and instrumentation (timings per capability/plugin).
+- Implement `nostr.query` capability with relay integration.
+- Add global capability batching optimization (deduplicate across plugins).
+- Add performance metrics collection (timings per capability/plugin).
+- Add input validation and size limits.
+- Implement plugin signature verification.
+
+---
+
+## 10. Design decisions and rationale
+
+### 10.1 Capability enablement ownership
+
+**Decision:** `CapabilityExecutor` owns enablement policy, not `CapabilityRegistry`.
+
+**Rationale:**
+
+- Single responsibility: Registry stores handlers, Executor decides what can run
+- Centralizes policy logic (catalog + env vars + overrides)
+- Simplifies testing: can override enablement without mutating registry state
+- Cleaner separation of concerns
+
+### 10.2 Centralized capability catalog
+
+**Decision:** Single source of truth in `capability-catalog.ts`.
+
+**Rationale:**
+
+- Eliminates duplicate capability name lists
+- Ensures consistency between implementation, validation, and documentation
+- Makes adding new capabilities straightforward
+- Enables programmatic discovery of available capabilities
+
+### 10.3 Cache key generation
+
+**Decision:** Cache keys generated internally by executor, not passed in requests.
+
+**Rationale:**
+
+- Prevents cache key collisions from malformed input
+- Ensures consistent cache key format across the system
+- Hides implementation details from callers
+- Allows transparent cache key evolution
+
+### 10.4 Utility extraction
+
+**Decision:** Extract `setNestedValue` into `objectPath.ts` utility module.
+
+**Rationale:**
+
+- Reusable across codebase for dot-notation object manipulation
+- Easier to test in isolation
+- Clearer failure modes when nested structure creation fails
+- Follows DRY principle
 
 ---

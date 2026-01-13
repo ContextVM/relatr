@@ -3,6 +3,20 @@
  */
 
 import type { NostrEvent } from "nostr-tools";
+import type { SocialGraph } from "../graph/SocialGraph";
+import type { RelayPool } from "applesauce-relay";
+
+/**
+ * Base context shared across plugin and capability execution
+ */
+export interface BaseContext {
+  targetPubkey: string;
+  sourcePubkey?: string;
+  // Optional context for specific capability types
+  graph?: SocialGraph;
+  pool?: RelayPool;
+  relays?: string[];
+}
 
 /**
  * Parsed plugin manifest from Nostr event tags
@@ -39,7 +53,6 @@ export interface CapabilityRequest {
   capName: string;
   args: string[];
   timeoutMs: number;
-  cacheKey: string;
 }
 
 /**
@@ -47,7 +60,7 @@ export interface CapabilityRequest {
  */
 export interface CapabilityResponse {
   ok: boolean;
-  value: any;
+  value: unknown;
   error: string | null;
   elapsedMs: number;
 }
@@ -59,7 +72,8 @@ export interface EloInput {
   pubkey: string;
   sourcePubkey?: string;
   now: number;
-  cap: Record<string, any>;
+  cap: Record<string, unknown>;
+  searchQuery?: string;
 }
 
 /**

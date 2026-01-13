@@ -2,52 +2,17 @@ import type {
   PortablePlugin,
   EloInput,
   EloEvaluationResult,
+  BaseContext,
 } from "./plugin-types";
-import type { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import type { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { evaluateElo } from "./EloEvaluator";
+import { setNestedValue } from "../utils/objectPath";
 import { Logger } from "../utils/Logger";
 
 const logger = new Logger({ service: "EloPluginRunner" });
 
-export interface PluginRunnerContext {
-  targetPubkey: string;
-  sourcePubkey?: string;
+export interface PluginRunnerContext extends BaseContext {
   searchQuery?: string;
-  graph?: any;
-  pool?: any;
-  relays?: string[];
-}
-
-/**
- * Helper function to set nested values in an object
- */
-function setNestedValue(
-  obj: Record<string, any>,
-  path: string,
-  value: any,
-): void {
-  const parts = path.split(".");
-  let current = obj;
-
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (!part) continue; // Skip empty parts
-
-    if (
-      !(part in current) ||
-      typeof current[part] !== "object" ||
-      current[part] === null
-    ) {
-      current[part] = {};
-    }
-    current = current[part];
-  }
-
-  const lastPart = parts[parts.length - 1];
-  if (lastPart) {
-    current[lastPart] = value;
-  }
 }
 
 /**
@@ -56,7 +21,6 @@ function setNestedValue(
 export async function runPlugin(
   plugin: PortablePlugin,
   context: PluginRunnerContext,
-  registry: CapabilityRegistry,
   executor: CapabilityExecutor,
   config: {
     eloPluginTimeoutMs: number;
@@ -69,22 +33,15 @@ export async function runPlugin(
     logger.debug(`Running plugin: ${plugin.manifest.name}`);
 
     // Build capability results object with nested structure
-    const capResults: Record<string, any> = {};
+    const capResults: Record<string, unknown> = {};
 
     // Execute each capability declared in the manifest
     for (const cap of plugin.manifest.caps) {
-      if (!registry.isEnabled(cap.name)) {
-        logger.warn(`Capability ${cap.name} is disabled, skipping`);
-        setNestedValue(capResults, cap.name, null);
-        continue;
-      }
-
       // Create capability request
       const request = {
         capName: cap.name,
         args: cap.args,
         timeoutMs: config.capTimeoutMs,
-        cacheKey: `${plugin.id}:${context.targetPubkey}:${cap.name}`,
       };
 
       // Create capability context
@@ -100,7 +57,7 @@ export async function runPlugin(
         relays: context.relays,
       };
 
-      // Execute capability
+      // Execute capability (executor handles enablement checks internally)
       const response = await executor.execute(request, capContext, plugin.id);
 
       if (response.ok) {
@@ -122,7 +79,7 @@ export async function runPlugin(
 
     // Add search query if provided
     if (context.searchQuery) {
-      (eloInput as any).searchQuery = context.searchQuery;
+      eloInput.searchQuery = context.searchQuery;
     }
 
     // Evaluate Elo code
@@ -160,7 +117,6 @@ export async function runPlugin(
 export async function runPlugins(
   plugins: PortablePlugin[],
   context: PluginRunnerContext,
-  registry: CapabilityRegistry,
   executor: CapabilityExecutor,
   config: {
     eloPluginTimeoutMs: number;
@@ -180,7 +136,7 @@ export async function runPlugins(
   // Run plugins sequentially to avoid overwhelming resources
   // In the future, we could add concurrency limits here
   for (const plugin of plugins) {
-    const result = await runPlugin(plugin, context, registry, executor, config);
+    const result = await runPlugin(plugin, context, executor, config);
 
     // Use plugin name as the metric key
     metrics[plugin.manifest.name] = result.score;
@@ -202,7 +158,6 @@ export async function runPlugins(
 export async function runPluginsBatch(
   plugins: PortablePlugin[],
   contexts: PluginRunnerContext[],
-  registry: CapabilityRegistry,
   executor: CapabilityExecutor,
   config: {
     eloPluginTimeoutMs: number;
@@ -217,13 +172,7 @@ export async function runPluginsBatch(
   // Future optimization: collect all capability requests across all plugins and contexts,
   // group by capability name and args, execute once, then fan out results
   for (const context of contexts) {
-    const metrics = await runPlugins(
-      plugins,
-      context,
-      registry,
-      executor,
-      config,
-    );
+    const metrics = await runPlugins(plugins, context, executor, config);
     results.set(context.targetPubkey, metrics);
   }
 

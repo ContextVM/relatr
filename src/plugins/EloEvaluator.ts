@@ -11,14 +11,14 @@ const logger = new Logger({ service: "EloEvaluator" });
 /**
  * Cache for compiled Elo functions
  */
-const compilationCache = new Map<string, (_: any) => any>();
+const compilationCache = new Map<string, (_: EloInput) => unknown>();
 
 /**
  * Compile Elo code to a JavaScript function
  * @param plugin - The portable plugin containing Elo code
  * @returns Compiled function
  */
-function compileElo(plugin: PortablePlugin): (_: any) => any {
+function compileElo(plugin: PortablePlugin): (_: EloInput) => unknown {
   const cacheKey = plugin.id;
 
   // Check compilation cache
@@ -35,7 +35,7 @@ function compileElo(plugin: PortablePlugin): (_: any) => any {
 
     // Compile Elo to JavaScript function
     // The compiled function takes an input object "_" and returns a value
-    const compiled = compile(plugin.content) as (_: any) => any;
+    const compiled = compile(plugin.content) as (_: EloInput) => unknown;
 
     // Cache the compiled function
     compilationCache.set(cacheKey, compiled);
@@ -135,7 +135,7 @@ async function executeWithTimeout<T>(
 /**
  * Clamp score to [0, 1] range
  */
-function clampScore(value: any): number {
+function clampScore(value: unknown): number {
   if (typeof value !== "number") {
     logger.warn(
       `Elo evaluation returned non-numeric value: ${typeof value}, defaulting to 0.0`,

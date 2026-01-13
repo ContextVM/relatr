@@ -10,7 +10,7 @@ const logger = new Logger({ service: "httpNip05Resolve" });
  * Args: [nip05_identifier]
  * Returns: { pubkey: string | null }
  */
-export const httpNip05Resolve: CapabilityHandler = async (args) => {
+export const httpNip05Resolve: CapabilityHandler = async (args, _context) => {
   if (args.length !== 1) {
     throw new Error(
       "http.nip05_resolve requires exactly 1 argument: nip05_identifier",

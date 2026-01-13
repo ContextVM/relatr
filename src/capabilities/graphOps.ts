@@ -1,5 +1,5 @@
 import type { CapabilityHandler } from "./CapabilityRegistry";
-import { SocialGraph } from "../graph/SocialGraph";
+import type { SocialGraph } from "../graph/SocialGraph";
 import { Logger } from "../utils/Logger";
 
 const logger = new Logger({ service: "graphOps" });
@@ -16,7 +16,7 @@ export const graphOps: CapabilityHandler = async (args, context) => {
   }
 
   const operation = args[0];
-  const graph = (context as any).graph as SocialGraph | undefined;
+  const graph = context.graph;
 
   if (!graph) {
     throw new Error("SocialGraph not available in context");
@@ -44,9 +44,6 @@ export const graphOps: CapabilityHandler = async (args, context) => {
       case "are_mutual":
         return await handleAreMutual(graph, args[1] || "", args[2] || "");
 
-      case "degree":
-        return await handleDegree(graph, args[1] || "");
-
       default:
         throw new Error(`Unknown graph operation: ${operation}`);
     }
@@ -72,8 +69,9 @@ async function handleStats(graph: SocialGraph) {
  */
 async function handleAllPubkeys(graph: SocialGraph) {
   // This method might not exist on SocialGraph, return empty array as safe default
-  logger.warn("graph.all_pubkeys not fully implemented, returning empty array");
-  return [];
+  const allPubkeys = await graph.getAllUsersInGraph();
+  logger.debug("All pubkeys in graph:", allPubkeys.length);
+  return allPubkeys;
 }
 
 /**
@@ -83,9 +81,9 @@ async function handlePubkeyExists(graph: SocialGraph, pubkey: string) {
   if (!pubkey) {
     throw new Error("pubkey_exists requires a pubkey argument");
   }
-  // This method might not exist, check if we can determine existence
-  logger.warn("graph.pubkey_exists not fully implemented, returning false");
-  return false;
+  const exists = await graph.isInGraph(pubkey);
+  logger.debug(`${pubkey} exists in graph: ${exists}`);
+  return exists;
 }
 
 /**
@@ -123,21 +121,9 @@ async function handleAreMutual(
 }
 
 /**
- * Get the degree (number of follows) for a pubkey
- */
-async function handleDegree(graph: SocialGraph, pubkey: string) {
-  if (!pubkey) {
-    throw new Error("degree requires a pubkey argument");
-  }
-  // This method might not exist, return safe default
-  logger.warn("graph.degree not fully implemented, returning safe default");
-  return { outDegree: 0, inDegree: 0 };
-}
-
-/**
  * Get safe default values for graph operations when graph is not initialized
  */
-function getSafeDefault(operation: string): any {
+function getSafeDefault(operation: string): unknown {
   switch (operation) {
     case "stats":
       return { totalFollows: 0, uniqueFollowers: 0, uniqueFollowed: 0 };

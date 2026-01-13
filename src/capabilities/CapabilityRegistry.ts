@@ -1,4 +1,5 @@
 import { Logger } from "../utils/Logger";
+import type { BaseContext } from "../plugins/plugin-types";
 
 const logger = new Logger({ service: "CapabilityRegistry" });
 
@@ -8,14 +9,12 @@ const logger = new Logger({ service: "CapabilityRegistry" });
 export type CapabilityHandler = (
   args: string[],
   context: CapabilityContext,
-) => Promise<any>;
+) => Promise<unknown>;
 
 /**
  * Context passed to capability handlers
  */
-export interface CapabilityContext {
-  targetPubkey: string;
-  sourcePubkey?: string;
+export interface CapabilityContext extends BaseContext {
   config: {
     capTimeoutMs: number;
   };
@@ -23,47 +22,16 @@ export interface CapabilityContext {
 
 /**
  * Registry for managing available capabilities
+ *
+ * This registry only stores capability handlers. Enablement policy is managed
+ * by the CapabilityExecutor, which uses the capability catalog and environment
+ * variables to determine which capabilities are enabled.
  */
 export class CapabilityRegistry {
   private handlers = new Map<string, CapabilityHandler>();
-  private enabledCaps = new Set<string>();
-  private disabledCaps = new Set<string>();
 
   constructor() {
-    // Initialize with default enabled state from env
-    this.initializeFromEnv();
-  }
-
-  /**
-   * Initialize capability enablement from environment variables
-   */
-  private initializeFromEnv(): void {
-    const capNames = [
-      "nostr.query",
-      "graph.stats",
-      "graph.all_pubkeys",
-      "graph.pubkey_exists",
-      "graph.is_following",
-      "graph.are_mutual",
-      "graph.degree",
-      "http.nip05_resolve",
-    ];
-
-    for (const capName of capNames) {
-      const envVar = `ENABLE_CAP_${capName.replace(/\./g, "_").toUpperCase()}`;
-      const envValue = process.env[envVar];
-      const enabled = envValue === undefined || envValue === "true"; // Default to enabled if not set, disabled if explicitly "false"
-
-      if (enabled) {
-        this.enabledCaps.add(capName);
-      } else {
-        this.disabledCaps.add(capName);
-      }
-    }
-
-    logger.info(
-      `Capabilities enabled: ${Array.from(this.enabledCaps).join(", ")}`,
-    );
+    logger.debug("CapabilityRegistry initialized");
   }
 
   /**
@@ -73,36 +41,7 @@ export class CapabilityRegistry {
    */
   register(name: string, handler: CapabilityHandler): void {
     this.handlers.set(name, handler);
-    // Only enable if not explicitly disabled by env var
-    if (!this.disabledCaps.has(name)) {
-      this.enabledCaps.add(name);
-    }
     logger.debug(`Registered capability: ${name}`);
-  }
-
-  /**
-   * Check if a capability is enabled
-   * @param name - Capability name
-   * @returns True if enabled
-   */
-  isEnabled(name: string): boolean {
-    // A capability is enabled if it's registered and not explicitly disabled
-    return this.handlers.has(name) && !this.disabledCaps.has(name);
-  }
-
-  /**
-   * Enable or disable a capability
-   * @param name - Capability name
-   * @param enabled - Whether to enable
-   */
-  setEnabled(name: string, enabled: boolean): void {
-    if (enabled) {
-      this.enabledCaps.add(name);
-      this.disabledCaps.delete(name);
-    } else {
-      this.enabledCaps.delete(name);
-      this.disabledCaps.add(name);
-    }
   }
 
   /**
@@ -120,13 +59,5 @@ export class CapabilityRegistry {
    */
   listCapabilities(): string[] {
     return Array.from(this.handlers.keys());
-  }
-
-  /**
-   * List all enabled capabilities
-   * @returns Array of enabled capability names
-   */
-  listEnabledCapabilities(): string[] {
-    return Array.from(this.enabledCaps);
   }
 }
