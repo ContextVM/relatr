@@ -49,6 +49,15 @@ export const RelatrConfigSchema = z.object({
     .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
     .default(false),
 
+  // Elo plugins configuration
+  eloPluginsEnabled: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
+    .default(false),
+  eloPluginsDir: z.string().default("./plugins/elo"),
+  eloPluginTimeoutMs: z.number().positive().default(200),
+  capTimeoutMs: z.number().positive().default(5000),
+
   // MCP server configuration
   isPublicServer: z
     .union([z.boolean(), z.string()])
@@ -109,6 +118,16 @@ export function loadConfig(): RelatrConfig {
       : undefined,
 
     taEnabled: process.env.TA_ENABLED,
+
+    // Elo plugins configuration
+    eloPluginsEnabled: process.env.ELO_PLUGINS_ENABLED,
+    eloPluginsDir: process.env.ELO_PLUGINS_DIR,
+    eloPluginTimeoutMs: process.env.ELO_PLUGIN_TIMEOUT_MS
+      ? parseInt(process.env.ELO_PLUGIN_TIMEOUT_MS, 10)
+      : undefined,
+    capTimeoutMs: process.env.CAP_TIMEOUT_MS
+      ? parseInt(process.env.CAP_TIMEOUT_MS, 10)
+      : undefined,
 
     // MCP server configuration
     isPublicServer: process.env.IS_PUBLIC_SERVER,

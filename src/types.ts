@@ -28,6 +28,14 @@ export interface RelatrConfig {
   taEnabled: boolean;
 
   /**
+   * Elo plugins configuration
+   */
+  eloPluginsEnabled: boolean;
+  eloPluginsDir: string;
+  eloPluginTimeoutMs: number;
+  capTimeoutMs: number;
+
+  /**
    * MCP server configuration
    */
   isPublicServer: boolean;

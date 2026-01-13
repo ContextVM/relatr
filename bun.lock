@@ -5,8 +5,9 @@
     "": {
       "name": "relatr",
       "dependencies": {
-        "@contextvm/sdk": "^0.1.45",
+        "@contextvm/sdk": "^0.1.46",
         "@duckdb/node-api": "^1.4.2-r.1",
+        "@enspirit/elo": "^0.9.5",
         "applesauce-core": "^4.4.2",
         "applesauce-relay": "^4.4.2",
         "nostr-social-duck": "^0.1.24",
@@ -90,6 +91,8 @@
     "@duckdb/node-bindings-linux-x64": ["@duckdb/node-bindings-linux-x64@1.4.2-r.1", "", { "os": "linux", "cpu": "x64" }, "sha512-ed5KiNIu1rqSva5rgo4PRVYSmBolAMVqGFWsYWLoRZ94ka2F/dHwJNkarCTmBFCEDGVZWzWzjRyWTQgYTvQxTg=="],
 
     "@duckdb/node-bindings-win32-x64": ["@duckdb/node-bindings-win32-x64@1.4.2-r.1", "", { "os": "win32", "cpu": "x64" }, "sha512-kIIT8tuoW3mzr9EPcdSoKfv9CgOhTqRryHDI10Z0nuhc9UhqOWPUM/LnSUebfo1mdD9Drm7YrKCKYxNTr5dqBQ=="],
+
+    "@enspirit/elo": ["@enspirit/elo@0.9.5", "", { "dependencies": { "luxon": "^3.5.0" }, "bin": { "elo": "bin/elo", "eloc": "bin/eloc" } }, "sha512-ggBSD9j4da4bE96oqNbKLLDeonJyxzlTpnY70u6wzWq9bO5NET6CK1yHD/rQBqQ9VyWUE1sRDdHydKamfw79dQ=="],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.9.0", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-ayVFHdtZ+hsq1t2Dy24wCmGXGe4q9Gu3smhLYALJrr473ZH27MsnSL+LKUlimp4BWJqMDMLmPpx/Q9R3OAlL4g=="],
 
@@ -438,6 +441,8 @@
     "lodash.merge": ["lodash.merge@4.6.2", "", {}, "sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ=="],
 
     "lodash.startcase": ["lodash.startcase@4.4.0", "", {}, "sha512-+WKqsK294HMSc2jEbNgpHpd0JfIBhp7rEV4aqXWqFr6AlXov+SlcgB1Fv01y2kGe3Gc8nMW7VA0SrGuSkRfIEg=="],
+
+    "luxon": ["luxon@3.7.2", "", {}, "sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew=="],
 
     "math-intrinsics": ["math-intrinsics@1.1.0", "", {}, "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="],
 

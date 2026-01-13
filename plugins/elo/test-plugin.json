@@ -1,0 +1,17 @@
+{
+  "id": "test-plugin-001",
+  "pubkey": "test-plugin-author-pubkey",
+  "created_at": 1704067200,
+  "kind": 31234,
+  "tags": [
+    ["name", "test_reciprocity"],
+    ["title", "Test Reciprocity Plugin"],
+    ["about", "A test plugin that checks for mutual follows"],
+    ["weight", "1.0"],
+    ["cap", "graph.are_mutual"],
+    ["cap_arg", "sourcePubkey"],
+    ["cap_arg", "pubkey"]
+  ],
+  "content": "if _.cap.graph.are_mutual then 1.0 else 0.0",
+  "sig": "test-signature-for-unsafe-mode"
+}
