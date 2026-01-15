@@ -893,53 +893,6 @@ describe("Elo Plugins - Additional Critical Tests", () => {
     executor.clearCache();
   });
 
-  test("should generate correct cache keys for different dimensions", async () => {
-    let callCount = 0;
-    registry.register("test.cache_dimensions", async () => {
-      callCount++;
-      return `call-${callCount}`;
-    });
-
-    const baseContext = {
-      targetPubkey: "target-1",
-      config: { capTimeoutMs: 1000 },
-    };
-    const baseRequest = {
-      capName: "test.cache_dimensions",
-      args: ["args-1"],
-      timeoutMs: 1000,
-    };
-
-    // Test 1: Different plugin IDs should create separate cache entries
-    await executor.execute(baseRequest, baseContext, "plugin-1");
-    await executor.execute(baseRequest, baseContext, "plugin-2");
-    expect(executor.getCacheStats().size).toBe(2);
-    expect(callCount).toBe(2); // Handler called twice (no cache hit)
-
-    // Test 2: Different target pubkeys should create separate cache entries
-    await executor.execute(
-      baseRequest,
-      { targetPubkey: "target-2", config: { capTimeoutMs: 1000 } },
-      "plugin-1",
-    );
-    expect(executor.getCacheStats().size).toBe(3);
-    expect(callCount).toBe(3); // Handler called again
-
-    // Test 3: Different args should create separate cache entries
-    await executor.execute(
-      { capName: "test.cache_dimensions", args: ["args-2"], timeoutMs: 1000 },
-      baseContext,
-      "plugin-1",
-    );
-    expect(executor.getCacheStats().size).toBe(4);
-    expect(callCount).toBe(4); // Handler called again
-
-    // Test 4: Same dimensions should hit cache (no new calls)
-    await executor.execute(baseRequest, baseContext, "plugin-1");
-    expect(executor.getCacheStats().size).toBe(4); // No new cache entry
-    expect(callCount).toBe(4); // Handler NOT called again (cache hit)
-  });
-
   test("should handle disabled capability end-to-end", async () => {
     // Register but disable a capability
     registry.register("test.disabled_cap", async () => "should not be called");

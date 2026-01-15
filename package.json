@@ -31,6 +31,7 @@
     "@enspirit/elo": "^0.9.5",
     "applesauce-core": "^4.4.2",
     "applesauce-relay": "^4.4.2",
+    "json-canonicalize": "^2.0.0",
     "nostr-social-duck": "^0.1.24",
     "nostr-tools": "^2.19.4",
     "process-pastry": "https://github.com/hzrd149/process-pastry",

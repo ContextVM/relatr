@@ -10,6 +10,7 @@ import { CAPABILITY_CATALOG } from "./capability-catalog";
 import { createHash } from "crypto";
 import { Logger } from "../utils/Logger";
 import { withTimeout } from "../utils/utils";
+import { canonicalize } from "json-canonicalize";
 
 const logger = new Logger({ service: "CapabilityExecutor" });
 
@@ -48,7 +49,10 @@ export class CapabilityExecutor {
   private initializeFromEnv(): void {
     for (const cap of CAPABILITY_CATALOG) {
       const envValue = process.env[cap.envVar];
-      const enabled = envValue === undefined || envValue === "true"; // Default to enabled if not set, disabled if explicitly "false"
+      // If env var is set, use its value (explicit override)
+      // Otherwise, use the defaultEnabled from the catalog
+      const enabled =
+        envValue !== undefined ? envValue === "true" : cap.defaultEnabled;
 
       if (!enabled) {
         this.disabledCaps.add(cap.name);
@@ -63,15 +67,33 @@ export class CapabilityExecutor {
 
   /**
    * Generate a cache key for a capability request
-   * Format: pluginId:targetPubkey:capName:capArgsHash
+   * Format: pluginId:targetPubkey:capName:argsHash
+   *
+   * For nostr.query, we canonicalize the JSON filter argument using RFC 8785 (JCS)
+   * to ensure semantically equivalent filters produce the same cache key.
    */
   private generateCacheKey(
     pluginId: string,
     targetPubkey: string,
     request: CapabilityRequest,
   ): string {
-    // Create hash of capability arguments
-    const argsString = [request.capName, ...request.args].join("\n");
+    let argsString: string;
+
+    // For nostr.query, canonicalize the JSON filter for deterministic hashing
+    if (request.capName === "nostr.query" && request.args.length > 0) {
+      try {
+        const filter = JSON.parse(request.args[0]!);
+        const canonFilter = canonicalize(filter);
+        argsString = canonFilter;
+      } catch {
+        // If JSON parsing fails, fall back to raw args
+        argsString = [request.capName, ...request.args].join("\n");
+      }
+    } else {
+      // For other capabilities, use raw args
+      argsString = [request.capName, ...request.args].join("\n");
+    }
+
     const argsHash = createHash("sha256")
       .update(argsString)
       .digest("hex")
