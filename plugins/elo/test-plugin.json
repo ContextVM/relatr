@@ -6,7 +6,7 @@
   "tags": [
     ["name", "test_reciprocity"],
     ["title", "Test Reciprocity Plugin"],
-    ["about", "A test plugin that checks for mutual follows"],
+    ["description", "A test plugin that checks for mutual follows"],
     ["weight", "1.0"],
     ["cap", "graph.are_mutual"],
     ["cap_arg", "sourcePubkey"],

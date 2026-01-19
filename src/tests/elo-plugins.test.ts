@@ -39,7 +39,7 @@ const createTestPlugin = (
   tags: [
     ["name", "test_plugin"],
     ["title", "Test Plugin"],
-    ["about", "A test plugin for unit tests"],
+    ["description", "A test plugin for unit tests"],
     ["weight", "1.0"],
     ...caps.flatMap((cap) => [
       ["cap", cap.name],
@@ -55,7 +55,7 @@ describe("Elo Plugins - Manifest Parsing", () => {
     const tags = [
       ["name", "test_plugin"],
       ["title", "Test Plugin"],
-      ["about", "A test plugin"],
+      ["description", "A test plugin"],
       ["weight", "1.5"],
     ];
 
@@ -63,7 +63,7 @@ describe("Elo Plugins - Manifest Parsing", () => {
 
     expect(manifest.name).toBe("test_plugin");
     expect(manifest.title).toBe("Test Plugin");
-    expect(manifest.about).toBe("A test plugin");
+    expect(manifest.description).toBe("A test plugin");
     expect(manifest.weight).toBe(1.5);
     expect(manifest.caps).toHaveLength(0);
   });
@@ -99,7 +99,7 @@ describe("Elo Plugins - Manifest Parsing", () => {
 
     expect(manifest.name).toBe("minimal_plugin");
     expect(manifest.title).toBeNull();
-    expect(manifest.about).toBeNull();
+    expect(manifest.description).toBeNull();
     expect(manifest.weight).toBeNull();
     expect(manifest.caps).toHaveLength(0);
   });
@@ -109,7 +109,7 @@ describe("Elo Plugins - Manifest Parsing", () => {
 
     expect(manifest.name).toBe("");
     expect(manifest.title).toBeNull();
-    expect(manifest.about).toBeNull();
+    expect(manifest.description).toBeNull();
     expect(manifest.weight).toBeNull();
     expect(manifest.caps).toHaveLength(0);
   });
@@ -265,7 +265,7 @@ describe("Elo Plugins - Capability Executor", () => {
 
   beforeAll(async () => {
     registry = new CapabilityRegistry();
-    executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
+    executor = new CapabilityExecutor(registry); // 1 hour cache TTL
 
     // Register a mock capability
     registry.register("test.echo", async (args) => {
@@ -336,7 +336,7 @@ describe("Elo Plugins - Capability Executor", () => {
     expect(response.error).toContain("timed out"); // Match actual error message
   });
 
-  test("should cache capability results", async () => {
+  test("should use planning store for per-evaluation deduplication", async () => {
     let callCount = 0;
     registry.register("test.counter", async () => {
       callCount++;
@@ -354,19 +354,19 @@ describe("Elo Plugins - Capability Executor", () => {
       config: { capTimeoutMs: 1000 },
     };
 
-    // First call
+    // First call without planning store (no deduplication)
     const response1 = await executor.execute(request, context, "test-plugin");
     expect(response1.ok).toBe(true);
     expect(response1.value).toBe("call-1");
+    expect(callCount).toBe(1);
 
-    // Second call (should be cached)
+    // Second call without planning store (should call again, no cross-evaluation caching)
     const response2 = await executor.execute(request, context, "test-plugin");
     expect(response2.ok).toBe(true);
-    expect(response2.value).toBe("call-1"); // Same value, from cache
-    expect(callCount).toBe(1); // Handler only called once
+    expect(response2.value).toBe("call-2"); // Different value, no cache
+    expect(callCount).toBe(2); // Handler called twice
   });
 });
-
 describe("Elo Plugins - Elo Evaluator", () => {
   test("should compile and evaluate simple Elo expression", async () => {
     const plugin: PortablePlugin = {
@@ -378,7 +378,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       manifest: {
         name: "simple_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -408,7 +408,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       manifest: {
         name: "cap_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -446,7 +446,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       manifest: {
         name: "clamp_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -475,7 +475,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       manifest: {
         name: "invalid_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -505,7 +505,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       manifest: {
         name: "error_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -536,7 +536,7 @@ describe("Elo Plugins - Elo Evaluator", () => {
       manifest: {
         name: "cache_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -573,14 +573,13 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
 
   beforeAll(async () => {
     registry = new CapabilityRegistry();
-    executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
+    executor = new CapabilityExecutor(registry);
 
     // Register test capabilities
     registry.register("test.always_true", async () => true);
     registry.register("test.always_false", async () => false);
     registry.register("test.return_arg", async (args) => args[0] || "no-arg");
   });
-
   test("should run plugin with successful capabilities", async () => {
     const plugin: PortablePlugin = {
       id: "integration-001",
@@ -591,7 +590,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       manifest: {
         name: "integration_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [{ name: "test.always_true", args: [] }],
       },
@@ -623,7 +622,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       manifest: {
         name: "fail_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [{ name: "test.nonexistent", args: [] }],
       },
@@ -653,7 +652,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       manifest: {
         name: "plugin_one",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -669,7 +668,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       manifest: {
         name: "plugin_two",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -701,7 +700,7 @@ describe("Elo Plugins - Plugin Runner Integration", () => {
       manifest: {
         name: "timeout_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [],
       },
@@ -729,7 +728,7 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
 
   beforeAll(async () => {
     registry = new CapabilityRegistry();
-    executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
+    executor = new CapabilityExecutor(registry);
 
     // Register realistic capabilities
     registry.register("graph.are_mutual", async (_, ctx) => {
@@ -750,7 +749,6 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       };
     });
   });
-
   test("should evaluate reciprocity-based trust plugin", async () => {
     const reciprocityPlugin: PortablePlugin = {
       id: "reciprocity-001",
@@ -761,7 +759,7 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       manifest: {
         name: "reciprocity_trust",
         title: "Reciprocity Trust",
-        about: "Scores based on mutual follow status",
+        description: "Scores based on mutual follow status",
         weight: 2.0,
         caps: [{ name: "graph.are_mutual", args: ["sourcePubkey", "pubkey"] }],
       },
@@ -818,7 +816,7 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       manifest: {
         name: "activity_score",
         title: "Activity Score",
-        about: "Scores based on recent activity",
+        description: "Scores based on recent activity",
         weight: 1.5,
         caps: [{ name: "nostr.query", args: ['{"kinds": [1], "limit": 20}'] }],
       },
@@ -850,7 +848,7 @@ describe("Elo Plugins - Real-world Plugin Examples", () => {
       manifest: {
         name: "combined_trust",
         title: "Combined Trust Score",
-        about: "Combines multiple trust signals",
+        description: "Combines multiple trust signals",
         weight: 3.0,
         caps: [
           { name: "graph.are_mutual", args: ["sourcePubkey", "pubkey"] },
@@ -882,17 +880,11 @@ describe("Elo Plugins - Additional Critical Tests", () => {
 
   beforeEach(async () => {
     registry = new CapabilityRegistry();
-    executor = new CapabilityExecutor(registry, 1); // 1 hour cache TTL
+    executor = new CapabilityExecutor(registry);
 
     // Register test capabilities
     registry.register("test.cache_check", async (args) => args[0] || "default");
   });
-
-  afterEach(() => {
-    // Clear cache between tests to avoid cross-contamination
-    executor.clearCache();
-  });
-
   test("should handle disabled capability end-to-end", async () => {
     // Register but disable a capability
     registry.register("test.disabled_cap", async () => "should not be called");
@@ -907,7 +899,7 @@ describe("Elo Plugins - Additional Critical Tests", () => {
       manifest: {
         name: "disabled_cap_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [{ name: "test.disabled_cap", args: [] }],
       },
@@ -944,7 +936,7 @@ describe("Elo Plugins - Additional Critical Tests", () => {
       manifest: {
         name: "nested_cap_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [{ name: "http.nip05_resolve", args: ["valid@example.com"] }],
       },
@@ -964,18 +956,15 @@ describe("Elo Plugins - Additional Critical Tests", () => {
     expect(result.score).toBe(1.0);
   });
 
-  test("should respect cache TTL and expire entries", async () => {
-    // Create executor with very short TTL (1ms)
-    const shortTtlExecutor = new CapabilityExecutor(registry, 0.000001); // ~3.6 seconds
-
+  test("should not cache across evaluations (planning store only)", async () => {
     let callCount = 0;
-    registry.register("test.ttl_check", async () => {
+    registry.register("test.no_cross_cache", async () => {
       callCount++;
       return `call-${callCount}`;
     });
 
     const request = {
-      capName: "test.ttl_check",
+      capName: "test.no_cross_cache",
       args: ["test"],
       timeoutMs: 1000,
     };
@@ -985,32 +974,18 @@ describe("Elo Plugins - Additional Critical Tests", () => {
       config: { capTimeoutMs: 1000 },
     };
 
-    // First call
-    const response1 = await shortTtlExecutor.execute(
-      request,
-      context,
-      "plugin-1",
-    );
+    // First evaluation call
+    const response1 = await executor.execute(request, context, "plugin-1");
     expect(response1.ok).toBe(true);
     expect(response1.value).toBe("call-1");
     expect(callCount).toBe(1);
 
-    // Second call immediately (should hit cache)
-    const response2 = await shortTtlExecutor.execute(
-      request,
-      context,
-      "plugin-1",
-    );
+    // Second evaluation call (should NOT be cached across evaluations)
+    const response2 = await executor.execute(request, context, "plugin-1");
     expect(response2.ok).toBe(true);
-    expect(response2.value).toBe("call-1"); // Same value
-    expect(callCount).toBe(1); // Handler not called again
-
-    // Wait for TTL to expire (3.6 seconds is too long for tests, so we'll just verify the cache entry exists)
-    const stats = shortTtlExecutor.getCacheStats();
-    expect(stats.size).toBe(1);
-    expect(stats.ttlHours).toBeLessThan(0.001); // Very small TTL
+    expect(response2.value).toBe("call-2"); // Different value, no cross-evaluation cache
+    expect(callCount).toBe(2); // Handler called again
   });
-
   test("should generate deterministic unsafe plugin IDs", async () => {
     const pluginData1 = {
       pubkey: "test-pubkey",
@@ -1119,7 +1094,7 @@ describe("Elo Plugins - Additional Critical Tests", () => {
       manifest: {
         name: "multi_cap_plugin",
         title: null,
-        about: null,
+        description: null,
         weight: 1.0,
         caps: [
           { name: "test.first", args: [] },

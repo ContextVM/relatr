@@ -8,6 +8,7 @@ import type { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { evaluateElo } from "./EloEvaluator";
 import { setNestedValue } from "../utils/objectPath";
 import { Logger } from "../utils/Logger";
+import { PlanningStore } from "./PlanningStore";
 
 const logger = new Logger({ service: "EloPluginRunner" });
 
@@ -26,6 +27,7 @@ export async function runPlugin(
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
   },
+  planningStore?: PlanningStore,
 ): Promise<EloEvaluationResult> {
   const startTime = Date.now();
 
@@ -57,8 +59,13 @@ export async function runPlugin(
         relays: context.relays,
       };
 
-      // Execute capability (executor handles enablement checks internally)
-      const response = await executor.execute(request, capContext, plugin.id);
+      // Execute capability (executor handles enablement checks and planning store)
+      const response = await executor.execute(
+        request,
+        capContext,
+        plugin.id,
+        planningStore,
+      );
 
       if (response.ok) {
         setNestedValue(capResults, cap.name, response.value);
@@ -76,11 +83,6 @@ export async function runPlugin(
       now: Date.now(),
       cap: capResults,
     };
-
-    // Add search query if provided
-    if (context.searchQuery) {
-      eloInput.searchQuery = context.searchQuery;
-    }
 
     // Evaluate Elo code
     const result = await evaluateElo(
@@ -133,10 +135,19 @@ export async function runPlugins(
     `Running ${plugins.length} Elo plugins for pubkey: ${context.targetPubkey}`,
   );
 
+  // Create planning store for this evaluation to avoid redundant capability calls
+  const planningStore = new PlanningStore();
+
   // Run plugins sequentially to avoid overwhelming resources
   // In the future, we could add concurrency limits here
   for (const plugin of plugins) {
-    const result = await runPlugin(plugin, context, executor, config);
+    const result = await runPlugin(
+      plugin,
+      context,
+      executor,
+      config,
+      planningStore,
+    );
 
     // Use plugin name as the metric key
     metrics[plugin.manifest.name] = result.score;
@@ -145,6 +156,9 @@ export async function runPlugins(
       logger.warn(`Plugin ${plugin.manifest.name} failed: ${result.error}`);
     }
   }
+
+  // Clear planning store after evaluation to free memory and ensure fresh data next time
+  planningStore.clear();
 
   logger.info(`Completed running ${plugins.length} plugins`);
 

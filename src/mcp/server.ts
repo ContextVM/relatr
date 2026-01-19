@@ -15,10 +15,10 @@ import { logger } from "../utils/Logger.js";
 import { relaySet } from "applesauce-core/helpers";
 
 /**
- * Start the MCP server for Relatr
+ * Start MCP server for Relatr
  *
- * This function initializes the RelatrService, creates and configures the MCP server,
- * registers the required tools, and handles graceful shutdown.
+ * This function initializes RelatrService, creates and configures MCP server,
+ * registers required tools, and handles graceful shutdown.
  */
 export async function startMCPServer(): Promise<void> {
   let relatrService: RelatrService | null = null;
@@ -50,7 +50,7 @@ export async function startMCPServer(): Promise<void> {
     // Setup graceful shutdown
     setupGracefulShutdown(relatrService);
 
-    // Start the server
+    // Start server
     // const transport = new StdioServerTransport();
     const transport = new NostrServerTransport({
       signer: new PrivateKeySigner(config.serverSecretKey),
@@ -86,7 +86,7 @@ export async function startMCPServer(): Promise<void> {
 }
 
 /**
- * Register the calculate_trust_score tool
+ * Register calculate_trust_score tool
  */
 function registerCalculateTrustScoreTool(
   server: McpServer,
@@ -111,7 +111,13 @@ function registerCalculateTrustScoreTool(
       score: z.number().min(0).max(1),
       components: z.object({
         distanceWeight: z.number(),
-        validators: z.record(z.string(), z.number()),
+        validators: z.record(
+          z.string(),
+          z.object({
+            score: z.number(),
+            description: z.string().optional(),
+          }),
+        ),
         socialDistance: z.number(),
         normalizedDistance: z.number(),
       }),
@@ -133,25 +139,14 @@ function registerCalculateTrustScoreTool(
       const startTime = Date.now();
 
       try {
-        // Calculate trust score
+        // Calculate trust score (now includes descriptions)
         const trustScore = await relatrService.calculateTrustScore(params);
         const computationTimeMs = Date.now() - startTime;
 
         return {
           content: [],
           structuredContent: {
-            trustScore: {
-              sourcePubkey: trustScore.sourcePubkey,
-              targetPubkey: trustScore.targetPubkey,
-              score: trustScore.score,
-              components: {
-                distanceWeight: trustScore.components.distanceWeight,
-                validators: trustScore.components.validators,
-                socialDistance: trustScore.components.socialDistance,
-                normalizedDistance: trustScore.components.normalizedDistance,
-              },
-              computedAt: trustScore.computedAt,
-            },
+            trustScore,
             computationTimeMs,
           },
         };
@@ -174,7 +169,7 @@ function registerCalculateTrustScoreTool(
 }
 
 /**
- * Register the calculate_trust_scores tool (batch)
+ * Register calculate_trust_scores tool (batch)
  */
 function registerCalculateTrustScoresTool(
   server: McpServer,
@@ -192,7 +187,13 @@ function registerCalculateTrustScoresTool(
     score: z.number().min(0).max(1),
     components: z.object({
       distanceWeight: z.number(),
-      validators: z.record(z.string(), z.number()),
+      validators: z.record(
+        z.string(),
+        z.object({
+          score: z.number(),
+          description: z.string().optional(),
+        }),
+      ),
       socialDistance: z.number(),
       normalizedDistance: z.number(),
     }),
@@ -247,24 +248,13 @@ function registerCalculateTrustScoresTool(
 
         const computationTimeMs = Date.now() - startTime;
 
-        // Build results in the same order as uniqueDecoded
+        // Build results in same order as uniqueDecoded (now includes descriptions)
         const trustScores = [];
         for (let i = 0; i < uniqueDecoded.length; i++) {
           const decodedHex = uniqueDecoded[i]!;
           const ts = trustScoresMap.get(decodedHex);
           if (ts) {
-            trustScores.push({
-              sourcePubkey: ts.sourcePubkey,
-              targetPubkey: ts.targetPubkey,
-              score: ts.score,
-              components: {
-                distanceWeight: ts.components.distanceWeight,
-                validators: ts.components.validators,
-                socialDistance: ts.components.socialDistance,
-                normalizedDistance: ts.components.normalizedDistance,
-              },
-              computedAt: ts.computedAt,
-            });
+            trustScores.push(ts);
           }
         }
 
@@ -294,7 +284,7 @@ function registerCalculateTrustScoresTool(
 }
 
 /**
- * Register the stats tool
+ * Register stats tool
  */
 function registerStatsTool(
   server: McpServer,
@@ -329,7 +319,7 @@ function registerStatsTool(
     {
       title: "Stats",
       description:
-        "Get comprehensive statistics about the Relatr service including database stats, social graph stats, and the source public key",
+        "Get comprehensive statistics about Relatr service including database stats, social graph stats, and source public key",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
@@ -371,7 +361,7 @@ function registerStatsTool(
 }
 
 /**
- * Register the search_profiles tool
+ * Register search_profiles tool
  */
 function registerSearchProfilesTool(
   server: McpServer,
@@ -396,7 +386,7 @@ function registerSearchProfilesTool(
       .optional()
       .default(false)
       .describe(
-        "Whether to extend the search to Nostr to fill remaining results. Defaults to false. If false, Nostr will only be queried when local DB returns zero results.",
+        "Whether to extend search to Nostr to fill remaining results. Defaults to false. If false, Nostr will only be queried when local DB returns zero results.",
       ),
   });
 
@@ -425,7 +415,7 @@ function registerSearchProfilesTool(
     },
     async (params) => {
       try {
-        // Search profiles - pass through the extendToNostr flag (if provided)
+        // Search profiles - pass through extendToNostr flag (if provided)
         const searchResult = await relatrService.searchProfiles(params);
         const result = {
           results: searchResult.results.map((result: SearchProfileResult) => ({
@@ -461,7 +451,7 @@ function registerSearchProfilesTool(
 }
 
 /**
- * Register the manage_ta tool
+ * Register manage_ta tool
  */
 function registerManageTATool(server: McpServer, taService: TAService): void {
   // Input schema with action parameter

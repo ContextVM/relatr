@@ -18,7 +18,6 @@ export interface ValidationContext {
   pool: RelayPool;
   relays: string[];
   pubkeyKvRepository: PubkeyKvRepository;
-  searchQuery?: string; // For context-aware validations
 }
 
 /**
@@ -26,6 +25,7 @@ export interface ValidationContext {
  */
 export interface ValidationPlugin {
   name: string;
+  description: string;
   validate(context: ValidationContext): Promise<number>;
 }
 
@@ -74,6 +74,7 @@ export class ValidationRegistry {
  */
 export class Nip05Plugin implements ValidationPlugin {
   public name = "nip05Valid";
+  public description = "NIP-05 identifier validation score";
   private timeoutMs: number = 10000;
 
   async validate(ctx: ValidationContext): Promise<number> {
@@ -98,6 +99,7 @@ export class Nip05Plugin implements ValidationPlugin {
  */
 export class LightningPlugin implements ValidationPlugin {
   public name = "lightningAddress";
+  public description = "Lightning address validation score";
 
   async validate(ctx: ValidationContext): Promise<number> {
     if (!ctx.profile) return 0.0;
@@ -195,6 +197,7 @@ export class LightningPlugin implements ValidationPlugin {
  */
 export class EventPlugin implements ValidationPlugin {
   public name = "eventKind10002";
+  public description = "Relay list (kind 10002) validation score";
   private timeoutMs: number = 10000;
 
   async validate(ctx: ValidationContext): Promise<number> {
@@ -226,6 +229,7 @@ export class EventPlugin implements ValidationPlugin {
  */
 export class ReciprocityPlugin implements ValidationPlugin {
   public name = "reciprocity";
+  public description = "Mutual follow relationship validation score";
 
   async validate(ctx: ValidationContext): Promise<number> {
     if (!ctx.sourcePubkey || !ctx.pubkey) {
@@ -256,6 +260,7 @@ export class ReciprocityPlugin implements ValidationPlugin {
  */
 export class RootNip05Plugin implements ValidationPlugin {
   public name = "isRootNip05";
+  public description = "Root NIP-05 identifier validation score";
 
   async validate(ctx: ValidationContext): Promise<number> {
     if (!ctx.profile?.nip05) return 0.0;

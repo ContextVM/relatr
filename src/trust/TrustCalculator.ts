@@ -97,7 +97,7 @@ export class TrustCalculator {
       normalizedDistance: this.roundToDecimalPlaces(normalizedDistance),
     };
 
-    // Add rounded validator components
+    // Add rounded validator components (new format with optional description)
     for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
       // Skip undefined or empty metric names
       if (
@@ -107,8 +107,9 @@ export class TrustCalculator {
       ) {
         continue;
       }
-      components.validators[metricName] =
-        this.roundToDecimalPlaces(metricValue);
+      components.validators[metricName] = {
+        score: this.roundToDecimalPlaces(metricValue),
+      };
     }
 
     // Create trust score object

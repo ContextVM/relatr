@@ -7,39 +7,28 @@ import type {
   CapabilityContext,
 } from "./CapabilityRegistry";
 import { CAPABILITY_CATALOG } from "./capability-catalog";
-import { createHash } from "crypto";
 import { Logger } from "../utils/Logger";
 import { withTimeout } from "../utils/utils";
-import { canonicalize } from "json-canonicalize";
+import type { PlanningStore } from "../plugins/PlanningStore";
 
 const logger = new Logger({ service: "CapabilityExecutor" });
 
 /**
- * Cache entry for capability results
- */
-interface CacheEntry {
-  value: unknown;
-  timestamp: number;
-}
-
-/**
- * Executes capabilities with timeouts, caching, and error handling
+ * Executes capabilities with timeouts and error handling
  *
  * The executor owns the enablement policy for capabilities, using the
  * capability catalog and environment variables to determine which capabilities
  * are enabled. Runtime overrides can be applied for testing purposes.
+ *
+ * Note: This executor uses a per-evaluation planning store for deduplication
+ * within a single plugin evaluation, but does NOT cache results across evaluations.
+ * This ensures fresh capability results when metrics are recomputed.
  */
 export class CapabilityExecutor {
-  private cache = new Map<string, CacheEntry>();
-  private cacheTtlMs: number;
   private disabledCaps = new Set<string>();
   private runtimeOverrides = new Map<string, boolean>();
 
-  constructor(
-    private registry: CapabilityRegistry,
-    cacheTtlHours: number = 72,
-  ) {
-    this.cacheTtlMs = cacheTtlHours * 60 * 60 * 1000;
+  constructor(private registry: CapabilityRegistry) {
     this.initializeFromEnv();
   }
 
@@ -66,78 +55,38 @@ export class CapabilityExecutor {
   }
 
   /**
-   * Generate a cache key for a capability request
-   * Format: pluginId:targetPubkey:capName:argsHash
-   *
-   * For nostr.query, we canonicalize the JSON filter argument using RFC 8785 (JCS)
-   * to ensure semantically equivalent filters produce the same cache key.
-   */
-  private generateCacheKey(
-    pluginId: string,
-    targetPubkey: string,
-    request: CapabilityRequest,
-  ): string {
-    let argsString: string;
-
-    // For nostr.query, canonicalize the JSON filter for deterministic hashing
-    if (request.capName === "nostr.query" && request.args.length > 0) {
-      try {
-        const filter = JSON.parse(request.args[0]!);
-        const canonFilter = canonicalize(filter);
-        argsString = canonFilter;
-      } catch {
-        // If JSON parsing fails, fall back to raw args
-        argsString = [request.capName, ...request.args].join("\n");
-      }
-    } else {
-      // For other capabilities, use raw args
-      argsString = [request.capName, ...request.args].join("\n");
-    }
-
-    const argsHash = createHash("sha256")
-      .update(argsString)
-      .digest("hex")
-      .substring(0, 16);
-
-    return `${pluginId}:${targetPubkey}:${request.capName}:${argsHash}`;
-  }
-
-  /**
-   * Check if a cache entry is still valid
-   */
-  private isCacheValid(entry: CacheEntry): boolean {
-    return Date.now() - entry.timestamp < this.cacheTtlMs;
-  }
-
-  /**
-   * Execute a capability with caching and timeout
+   * Execute a capability with timeout and error handling
    * @param request - Capability request
    * @param context - Execution context
-   * @param pluginId - Plugin ID for caching
+   * @param pluginId - Plugin ID for deduplication
+   * @param planningStore - Optional planning store for per-evaluation deduplication
    * @returns Capability response
    */
   async execute(
     request: CapabilityRequest,
     context: CapabilityContext,
     pluginId: string,
+    planningStore?: PlanningStore,
   ): Promise<CapabilityResponse> {
     const startTime = Date.now();
-    const cacheKey = this.generateCacheKey(
-      pluginId,
-      context.targetPubkey,
-      request,
-    );
 
-    // Check cache first
-    const cached = this.cache.get(cacheKey);
-    if (cached && this.isCacheValid(cached)) {
-      logger.debug(`Cache hit for ${request.capName}`);
-      return {
-        ok: true,
-        value: cached.value,
-        error: null,
-        elapsedMs: Date.now() - startTime,
-      };
+    // Check planning store first (if provided) - this is per-evaluation deduplication
+    if (planningStore) {
+      const planningResult = planningStore.get(
+        pluginId,
+        context.targetPubkey,
+        request.capName,
+        request.args,
+      );
+      if (planningResult !== undefined) {
+        logger.debug(`Planning store hit for ${request.capName}`);
+        return {
+          ok: true,
+          value: planningResult,
+          error: null,
+          elapsedMs: Date.now() - startTime,
+        };
+      }
     }
 
     // Check if capability is enabled
@@ -169,11 +118,16 @@ export class CapabilityExecutor {
         timeoutMs,
       );
 
-      // Cache the result
-      this.cache.set(cacheKey, {
-        value,
-        timestamp: Date.now(),
-      });
+      // Store in planning store if provided (for deduplication within evaluation)
+      if (planningStore) {
+        planningStore.set(
+          pluginId,
+          context.targetPubkey,
+          request.capName,
+          request.args,
+          value,
+        );
+      }
 
       logger.debug(`Capability ${request.capName} executed successfully`);
 
@@ -240,36 +194,20 @@ export class CapabilityExecutor {
    * Execute multiple capabilities concurrently
    * @param requests - Array of capability requests
    * @param context - Execution context
-   * @param pluginId - Plugin ID for caching
+   * @param pluginId - Plugin ID for deduplication
+   * @param planningStore - Optional planning store for per-evaluation deduplication
    * @returns Array of capability responses
    */
   async executeBatch(
     requests: CapabilityRequest[],
     context: CapabilityContext,
     pluginId: string,
+    planningStore?: PlanningStore,
   ): Promise<CapabilityResponse[]> {
     const promises = requests.map((request) =>
-      this.execute(request, context, pluginId),
+      this.execute(request, context, pluginId, planningStore),
     );
 
     return Promise.all(promises);
-  }
-
-  /**
-   * Clear the capability cache
-   */
-  clearCache(): void {
-    this.cache.clear();
-    logger.info("Capability cache cleared");
-  }
-
-  /**
-   * Get cache statistics
-   */
-  getCacheStats(): { size: number; ttlHours: number } {
-    return {
-      size: this.cache.size,
-      ttlHours: this.cacheTtlMs / (60 * 60 * 1000),
-    };
   }
 }

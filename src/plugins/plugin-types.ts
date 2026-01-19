@@ -24,7 +24,7 @@ export interface BaseContext {
 export interface PluginManifest {
   name: string;
   title: string | null;
-  about: string | null;
+  description: string | null;
   weight: number | null;
   caps: Array<{
     name: string;
@@ -73,7 +73,6 @@ export interface EloInput {
   sourcePubkey?: string;
   now: number;
   cap: Record<string, unknown>;
-  searchQuery?: string;
 }
 
 /**

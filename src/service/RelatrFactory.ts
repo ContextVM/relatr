@@ -25,6 +25,8 @@ import { SearchService } from './SearchService';
 import { SchedulerService } from './SchedulerService';
 import { TAService } from './TAService';
 import { dirname } from "path";
+import { EloPluginEngine, type IEloPluginEngine } from '../plugins/EloPluginEngine';
+import { NullEloPluginEngine } from '../plugins/NullEloPluginEngine';
 
 export class RelatrFactory {
     static async createRelatrService(config: RelatrConfig): Promise<{relatrService: RelatrService; taService: TAService | null}> {
@@ -110,6 +112,23 @@ export class RelatrFactory {
             // Step 7: Initialize trust calculation components
             // TrustCalculator uses the canonical default weighting scheme internally.
             const trustCalculator = new TrustCalculator(validatedConfig);
+            
+            // Create Elo plugin engine (always inject, use null-object if disabled)
+            let eloEngine: IEloPluginEngine;
+            if (validatedConfig.eloPluginsEnabled) {
+                logger.info('Elo plugins enabled, creating engine...');
+                eloEngine = new EloPluginEngine(validatedConfig, {
+                    pool,
+                    relays: validatedConfig.nostrRelays,
+                    graph: socialGraph,
+                });
+                await eloEngine.initialize();
+                logger.info(`Elo plugin engine initialized with ${eloEngine.getPluginCount()} plugins`);
+            } else {
+                logger.info('Elo plugins disabled, using null-object engine');
+                eloEngine = new NullEloPluginEngine();
+            }
+            
             const metricsValidator = new MetricsValidator(
                 pool,
                 validatedConfig.nostrRelays,
@@ -119,6 +138,7 @@ export class RelatrFactory {
                 pubkeyKvRepository,
                 validatedConfig.cacheTtlHours * 3600,
                 ALL_PLUGINS,
+                eloEngine,
             );
             
             // Step 8: Initialize specialized services

@@ -19,6 +19,7 @@ const testConfig: RelatrConfig = {
   nostrRelays: ["wss://relay.example.com"],
   serverSecretKey: "test_server_secret_key",
   serverRelays: ["wss://relay.example.com"],
+  taExtraRelays: [],
   decayFactor: 0.5,
   cacheTtlHours: 1,
   numberOfHops: 1,
@@ -26,6 +27,11 @@ const testConfig: RelatrConfig = {
   cleanupIntervalHours: 1,
   validationSyncIntervalHours: 1,
   taEnabled: false,
+  eloPluginsEnabled: false,
+  eloPluginsDir: "/tmp/test-plugins",
+  eloPluginTimeoutMs: 5000,
+  capTimeoutMs: 3000,
+  isPublicServer: false,
 };
 
 /**
@@ -269,10 +275,12 @@ describe("TrustCalculator - Score Rounding", () => {
     };
 
     checkDecimalPlaces(result.components.distanceWeight);
-    checkDecimalPlaces(result.components.validators.nip05Valid || 0);
-    checkDecimalPlaces(result.components.validators.lightningAddress || 0);
-    checkDecimalPlaces(result.components.validators.eventKind10002 || 0);
-    checkDecimalPlaces(result.components.validators.reciprocity || 0);
+    checkDecimalPlaces(result.components.validators.nip05Valid?.score || 0);
+    checkDecimalPlaces(
+      result.components.validators.lightningAddress?.score || 0,
+    );
+    checkDecimalPlaces(result.components.validators.eventKind10002?.score || 0);
+    checkDecimalPlaces(result.components.validators.reciprocity?.score || 0);
     checkDecimalPlaces(result.components.socialDistance);
     checkDecimalPlaces(result.components.normalizedDistance);
   });

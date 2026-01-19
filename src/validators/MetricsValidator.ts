@@ -13,6 +13,9 @@ import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
 import { logger } from "@/utils/Logger";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 import type { PubkeyKvRepository } from "@/database/repositories/PubkeyKvRepository";
+import type { IEloPluginEngine } from "../plugins/EloPluginEngine";
+import { NullEloPluginEngine } from "../plugins/NullEloPluginEngine";
+import { MetricDescriptionRegistry } from "./MetricDescriptionRegistry";
 
 /**
  * Consolidated validator class for all profile metrics
@@ -28,6 +31,8 @@ export class MetricsValidator {
   private registry: ValidationRegistry;
   private metadataRepository: MetadataRepository;
   private pubkeyKvRepository: PubkeyKvRepository;
+  private eloEngine: IEloPluginEngine;
+  private metricDescriptions: MetricDescriptionRegistry;
 
   /**
    * Create a new MetricsValidator instance
@@ -39,6 +44,7 @@ export class MetricsValidator {
    * @param pubkeyKvRepository - Repository for storing pubkey key-value data
    * @param cacheTtlSeconds - Cache time-to-live in seconds
    * @param plugins - Array of validation plugins to register (defaults to all available plugins)
+   * @param eloEngine - IEloPluginEngine for Elo plugin metrics (required, use NullEloPluginEngine if disabled)
    */
   constructor(
     pool: RelayPool,
@@ -49,6 +55,7 @@ export class MetricsValidator {
     pubkeyKvRepository: PubkeyKvRepository,
     cacheTtlSeconds?: number,
     plugins: ValidationPlugin[] = ALL_PLUGINS,
+    eloEngine: IEloPluginEngine = new NullEloPluginEngine(),
   ) {
     if (!pool) {
       throw new ValidationError("RelayPool instance is required");
@@ -83,13 +90,16 @@ export class MetricsValidator {
     this.cacheTtlSeconds = cacheTtlSeconds ?? 60 * 60 * 48;
     this.metadataRepository = metadataRepository;
     this.pubkeyKvRepository = pubkeyKvRepository;
+    this.eloEngine = eloEngine;
 
-    // Create registry
+    // Create registries
     this.registry = new ValidationRegistry();
+    this.metricDescriptions = new MetricDescriptionRegistry();
 
-    // Register provided plugins
+    // Register provided plugins and their descriptions
     for (const plugin of plugins) {
       this.registry.register(plugin);
+      this.metricDescriptions.register(plugin.name, plugin.description);
     }
   }
 
@@ -98,13 +108,11 @@ export class MetricsValidator {
    * Checks cache first, then validates all registered plugins if not cached
    * @param pubkey - Target public key to validate
    * @param sourcePubkey - Optional source pubkey for reciprocity validation
-   * @param searchQuery - Optional search query for context-aware validations
    * @returns Complete ProfileMetrics object with all validation results
    */
   async validateAll(
     pubkey: string,
     sourcePubkey?: string,
-    searchQuery?: string,
   ): Promise<ProfileMetrics> {
     if (!pubkey || typeof pubkey !== "string") {
       throw new ValidationError("Pubkey must be a non-empty string");
@@ -134,7 +142,6 @@ export class MetricsValidator {
       const context: ValidationContext = {
         pubkey,
         sourcePubkey,
-        searchQuery,
         profile,
         graphManager: this.graphManager,
         pool: this.pool,
@@ -142,8 +149,25 @@ export class MetricsValidator {
         pubkeyKvRepository: this.pubkeyKvRepository,
       };
 
-      // Execute all registered plugins
-      const metrics = await this.registry.executeAll(context);
+      // Execute all registered plugins (TS validators)
+      const tsMetrics = await this.registry.executeAll(context);
+
+      // Execute Elo plugins
+      let eloMetrics: Record<string, number> = {};
+      try {
+        eloMetrics = await this.eloEngine.evaluateForPubkey({
+          targetPubkey: pubkey,
+          sourcePubkey,
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.warn(`Elo plugin evaluation failed for ${pubkey}: ${errorMsg}`);
+        // Continue with TS metrics only - don't break validation
+        eloMetrics = {};
+      }
+
+      // Merge TS and Elo metrics
+      const metrics = { ...tsMetrics, ...eloMetrics };
 
       const result: ProfileMetrics = {
         pubkey,
@@ -183,13 +207,11 @@ export class MetricsValidator {
    * Checks cache first for all pubkeys, then validates only those not cached
    * @param pubkeys - Array of target public keys to validate
    * @param sourcePubkey - Optional source pubkey for reciprocity validation
-   * @param searchQuery - Optional search query for context-aware validations
    * @returns Map of pubkey to ProfileMetrics
    */
   async validateAllBatch(
     pubkeys: string[],
     sourcePubkey?: string,
-    searchQuery?: string,
   ): Promise<Map<string, ProfileMetrics>> {
     if (!pubkeys || !Array.isArray(pubkeys)) {
       throw new ValidationError("Pubkeys must be a non-empty array");
@@ -264,7 +286,6 @@ export class MetricsValidator {
             const context: ValidationContext = {
               pubkey: profile.pubkey,
               sourcePubkey,
-              searchQuery,
               profile,
               graphManager: this.graphManager,
               pool: this.pool,
@@ -272,7 +293,27 @@ export class MetricsValidator {
               pubkeyKvRepository: this.pubkeyKvRepository,
             };
 
-            const metrics = await this.registry.executeAll(context);
+            let metrics = await this.registry.executeAll(context);
+
+            // Execute Elo plugins
+            let eloMetrics: Record<string, number> = {};
+            try {
+              eloMetrics = await this.eloEngine.evaluateForPubkey({
+                targetPubkey: profile.pubkey,
+                sourcePubkey,
+              });
+            } catch (error) {
+              const errorMsg =
+                error instanceof Error ? error.message : String(error);
+              logger.warn(
+                `Elo plugin evaluation failed for ${profile.pubkey}: ${errorMsg}`,
+              );
+              // Continue with TS metrics only - don't break validation
+              eloMetrics = {};
+            }
+
+            // Merge TS and Elo metrics
+            metrics = { ...metrics, ...eloMetrics };
 
             const result: ProfileMetrics = {
               pubkey: profile.pubkey,
@@ -340,11 +381,7 @@ export class MetricsValidator {
       const fallbackResults = new Map<string, ProfileMetrics>();
       for (const pubkey of pubkeys) {
         try {
-          const result = await this.validateAll(
-            pubkey,
-            sourcePubkey,
-            searchQuery,
-          );
+          const result = await this.validateAll(pubkey, sourcePubkey);
           fallbackResults.set(pubkey, result);
         } catch (error) {
           logger.warn(
@@ -370,6 +407,7 @@ export class MetricsValidator {
    */
   registerPlugin(plugin: ValidationPlugin): void {
     this.registry.register(plugin);
+    this.metricDescriptions.register(plugin.name, plugin.description);
   }
 
   /**
@@ -378,6 +416,30 @@ export class MetricsValidator {
    */
   getRegisteredPlugins(): ValidationPlugin[] {
     return this.registry.getAll();
+  }
+
+  /**
+   * Get metric descriptions registry (merges TS and Elo descriptions)
+   * @returns MetricDescriptionRegistry instance with all descriptions
+   */
+  getMetricDescriptions(): MetricDescriptionRegistry {
+    // Merge TS and Elo descriptions
+    const eloDescriptions = this.eloEngine.getMetricDescriptions();
+    const mergedDescriptions = new MetricDescriptionRegistry();
+
+    // Add all TS validator descriptions
+    const tsDescriptions = this.metricDescriptions.getAll();
+    for (const [name, description] of Object.entries(tsDescriptions)) {
+      mergedDescriptions.register(name, description);
+    }
+
+    // Add all Elo plugin descriptions
+    const eloDescMap = eloDescriptions.getAll();
+    for (const [name, description] of Object.entries(eloDescMap)) {
+      mergedDescriptions.register(name, description);
+    }
+
+    return mergedDescriptions;
   }
 
   /**

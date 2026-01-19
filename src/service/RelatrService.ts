@@ -5,13 +5,15 @@ import type {
     SearchProfilesParams,
     SearchProfilesResult,
     StatsResult,
-    TrustScore
+    TrustScore,
+    ScoreComponents
 } from '../types';
 import { ValidationError, RelatrError } from '../types';
 import type { RelatrServiceDependencies, IRelatrService } from './ServiceInterfaces';
 import type { TAService } from './TAService';
 import { logger } from '../utils/Logger';
 import { isHexKey } from 'applesauce-core/helpers';
+import { MetricDescriptionRegistry } from '../validators/MetricDescriptionRegistry';
 
 export class RelatrService implements IRelatrService {
     private initialized = false;
@@ -62,7 +64,9 @@ export class RelatrService implements IRelatrService {
             throw new RelatrError('Trust calculation failed: missing trust score result', 'CALCULATE_TRUST');
         }
         
-        return result;
+        // Enrich with metric descriptions
+        const metricDescriptions = this.metricsValidator.getMetricDescriptions();
+        return this.enrichTrustScoreWithDescriptions(result, metricDescriptions);
     }
 
     /**
@@ -120,6 +124,9 @@ export class RelatrService implements IRelatrService {
                 this.metricsValidator.validateAllBatch(decodedTargetPubkeys, decodedSourcePubkey),
             ]);
 
+            // Get metric descriptions once for all trust scores
+            const metricDescriptions = this.metricsValidator.getMetricDescriptions();
+
             const trustScores = new Map<string, TrustScore>();
 
             for (const targetHex of decodedTargetPubkeys) {
@@ -138,7 +145,9 @@ export class RelatrService implements IRelatrService {
                     distance ?? 1000,
                 );
 
-                trustScores.set(targetHex, trustScore);
+                // Enrich trust score with metric descriptions
+                const enrichedTrustScore = this.enrichTrustScoreWithDescriptions(trustScore, metricDescriptions);
+                trustScores.set(targetHex, enrichedTrustScore);
             }
 
             // Trigger lazy TA refresh after trust computation (non-blocking, best-effort)
@@ -271,11 +280,43 @@ export class RelatrService implements IRelatrService {
         }
     }
 
-    getConfig(): RelatrConfig { 
-        return { ...this.config }; 
+    getConfig(): RelatrConfig {
+        return { ...this.config };
     }
     
-    isInitialized(): boolean { 
-        return this.initialized; 
+    isInitialized(): boolean {
+        return this.initialized;
+    }
+
+    /**
+     * Enrich trust score with metric descriptions
+     * Adds description field to validator scores
+     * @param trustScore - Trust score to enrich
+     * @param metricDescriptions - Metric description registry
+     * @returns Enriched trust score with descriptions
+     * @private
+     */
+    private enrichTrustScoreWithDescriptions(
+        trustScore: TrustScore,
+        metricDescriptions: MetricDescriptionRegistry
+    ): TrustScore {
+        const enrichedValidators: ScoreComponents['validators'] = {};
+        
+        for (const [name, validator] of Object.entries(trustScore.components.validators)) {
+            // TrustCalculator now returns { score: number } format
+            // Just add the description field
+            enrichedValidators[name] = {
+                score: validator.score,
+                description: metricDescriptions.get(name),
+            };
+        }
+
+        return {
+            ...trustScore,
+            components: {
+                ...trustScore.components,
+                validators: enrichedValidators,
+            },
+        };
     }
 }

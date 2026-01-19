@@ -5,7 +5,7 @@ import { isValidCapabilityName } from "../capabilities/capability-catalog";
  * Parse Nostr event tags into a structured plugin manifest
  *
  * Tag schema:
- * - name, title, about, weight (single values)
+ * - name, title, description, weight (single values)
  * - cap (repeatable)
  * - cap_arg (repeatable, associated with preceding cap)
  *
@@ -16,7 +16,7 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
   const manifest: PluginManifest = {
     name: "",
     title: null,
-    about: null,
+    description: null,
     weight: null,
     caps: [],
   };
@@ -36,8 +36,8 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
       case "title":
         manifest.title = value || null;
         break;
-      case "about":
-        manifest.about = value || null;
+      case "description":
+        manifest.description = value || null;
         break;
       case "weight":
         manifest.weight = isNaN(parseFloat(value || ""))

@@ -10,7 +10,7 @@ Relatr currently has an Elo portable plugins implementation with distinct module
 - Runtime config: [`RelatrConfigSchema`](src/config.ts:26) including Elo plugin settings
 - Metrics caching: [`MetricsValidator.validateAll()`](src/validators/MetricsValidator.ts:104) caches results via MetricsRepository
 
-The code is working and well-tested, but configuration/context is spread across call sites (runner config object, capability config object, optional fields in base contexts). We want better consistency and integration with Relatr conventions, while keeping the plugin system *decoupled* and portable.
+The code is working and well-tested, but configuration/context is spread across call sites (runner config object, capability config object, optional fields in base contexts). We want better consistency and integration with Relatr conventions, while keeping the plugin system _decoupled_ and portable.
 
 This document proposes the next iteration: a **C1 “Library Facade”** architecture.
 
@@ -21,7 +21,7 @@ This document proposes the next iteration: a **C1 “Library Facade”** archite
 1. **Keep Elo plugins as a “kernel/library”** (easy to extract into a separate package later).
 2. **Single entrypoint** for wiring + invariants (timeouts, enabled caps, relays list, deps).
 3. **Startup-load only** (load plugin files once; no reload loop for now).
-4. **Metrics caching stays in MetricsRepository**: cache *only the final merged* `ProfileMetrics` (TS + Elo).
+4. **Metrics caching stays in MetricsRepository**: cache _only the final merged_ `ProfileMetrics` (TS + Elo).
 5. Reduce redundancy: avoid passing overlapping config fragments through multiple layers.
 
 Non-goals (for this iteration):
@@ -39,7 +39,7 @@ We want decoupling and portability, but also a consistent, centralized wiring po
 
 - Option A (“PluginService in RelatrFactory”) improves lifecycle consistency but increases coupling and makes extraction harder.
 - Option B (“ad-hoc standalone wiring”) keeps decoupling but tends to spread config/dependency wiring across call sites.
-- **Option C refined to C1 (“Library Facade”)** keeps decoupling *and* provides a single integration surface.
+- **Option C refined to C1 (“Library Facade”)** keeps decoupling _and_ provides a single integration surface.
 
 ### Why cache only final merged ProfileMetrics (A)
 
@@ -48,6 +48,7 @@ Using existing caching in [`MetricsValidator`](src/validators/MetricsValidator.t
 We can later add optional caching adapters (e.g. separate Elo metrics cache) without re-architecting.
 
 **Single-layer caching:**
+
 - **MetricsRepository**: Caches final merged ProfileMetrics in DB (pubkey-only key, TTL-based)
 
 During evaluation, a temporary **planning phase store** avoids redundant capability calls within a single evaluation, but is flushed afterward to ensure consistency.
@@ -62,10 +63,12 @@ It also makes it easier to evolve the engine with new settings without refactori
 **Metrics should be intrinsic properties** of a profile (trust, validation, etc.), not dependent on search context.
 
 **Separation of concerns:**
+
 - MetricsValidator: "How trustworthy is this profile?" → intrinsic scores
 - SearchService: "How relevant is this profile to this query?" → contextual boosting
 
 **Benefits:**
+
 - Simpler caching (pubkey-only cache key)
 - Consistent with TS validators (NIP-05, Lightning, etc.)
 - Search can apply different boosting strategies without recomputing metrics
@@ -76,6 +79,7 @@ It also makes it easier to evolve the engine with new settings without refactori
 **For consistency**, we'll rename the Elo plugin manifest field from `about` to `description` to match the same semantics as TS validators.
 
 **MetricDescriptionRegistry:**
+
 - **TS validators**: register descriptions at construction using `plugin.name` and `plugin.description`
 - **Elo plugins**: extract from `manifest.description` at load time
 - **API layer**: merges values with descriptions when serving
@@ -99,7 +103,7 @@ Proposed file:
 
 - `src/plugins/EloPluginEngine.ts` (new)
 
-This should be the *only* module imported by validators/services.
+This should be the _only_ module imported by validators/services.
 
 ### Engine responsibilities
 
@@ -152,7 +156,7 @@ At evaluation time:
 
 - `targetPubkey: string`
 - `sourcePubkey?: string`
-This reduces the “optional grab-bag” feel and makes invariants explicit.
+  This reduces the “optional grab-bag” feel and makes invariants explicit.
 
 ---
 
@@ -193,12 +197,14 @@ This keeps lifecycle consistent (startup-load) without turning the engine into a
 ### Single Layer: MetricsRepository (DB)
 
 **MetricsRepository caches final merged ProfileMetrics**
+
 - Key: pubkey only
 - TTL: 48 hours default (configurable via `cacheTtlSeconds`)
 - Scope: End-to-end (TS + Elo metrics together)
 - Storage: DuckDB
 
 **Pubkey-only for metrics:** Metrics are intrinsic properties, so cache key is simply the pubkey. This provides:
+
 - Simple invalidation
 - Efficient batch operations
 - Acceptable staleness for social graph data
@@ -227,15 +233,82 @@ During Elo plugin evaluation, the engine uses a **temporary in-memory store** to
 **Important:** This is NOT a cache with TTL. When metrics expire in MetricsRepository, the planning store is already empty, ensuring fresh capability results on recomputation. This prevents inconsistencies that would arise from cross-evaluation caching.
 
 **Benefits:**
+
 - Avoids redundant network calls during a single evaluation
 - Reduces memory allocation (store is garbage collected after evaluation)
 - Simpler architecture (no cache invalidation logic needed)
 - Guaranteed consistency (no stale capability data)
 
 **Future optimizations:** The planning phase architecture enables additional optimizations like:
+
 - Merging nostr.query filters across plugins
 - Batch execution of independent capabilities
 - Request deduplication across plugins
+
+---
+
+## Metric Name Namespacing
+
+### Design Rationale
+
+Elo plugin manifests include a `pubkey` field (the plugin author's pubkey). This provides a natural namespace for metrics, preventing collisions between plugins with the same name from different authors.
+
+**Key principle:** Use `<pubkey>:<plugin-name>` format for Elo plugin metrics to ensure uniqueness and maintain decentralization.
+
+### Implementation
+
+**Elo Plugin Metrics:**
+Metrics are namespaced using the plugin author's pubkey:
+
+```ts
+// Example metric names
+"npub123abc...def:trust-score";
+"npub456xyz...uvw:follower-ratio";
+```
+
+**TS Validator Metrics:**
+Keep simple names for built-in validators (will be deprecated once Elo plugins mature):
+
+```ts
+// Current TS validator metrics
+"nip05";
+"lightning";
+```
+
+**Registration:**
+
+```ts
+// In EloPluginEngine
+const namespacedName = `${plugin.manifest.pubkey}:${plugin.manifest.name}`;
+this.metricDescriptions.register(namespacedName, plugin.manifest.description);
+```
+
+**API Response:**
+
+```ts
+{
+  pubkey: "...",
+  metrics: {
+    "nip05": {  // TS validator (legacy, will be deprecated)
+      value: 0.9,
+      description: "NIP-05 identifier validation score"
+    },
+    "npub123abc...def:trust-score": {  // Elo plugin
+      value: 0.7,
+      description: "Trust score based on graph analysis"
+    }
+  }
+}
+```
+
+**Benefits:**
+
+- **No collisions:** Even if two plugins have the same name, their author pubkeys differ
+- **Decentralized:** No central authority needed for name registration
+- **Attributable:** Users can see which author created each metric
+- **Future-proof:** When TS validators are deprecated, all metrics will follow this pattern
+
+**Note:** TS validators are a temporary bridge solution. Once Elo plugins reach maturity, TS validators will be deprecated and all metrics will use the namespaced format.
 
 ---
 
@@ -248,18 +321,20 @@ Users need to understand what each metric means. We provide descriptions alongsi
 ### Implementation
 
 **MetricDescriptionRegistry:**
+
 ```ts
 class MetricDescriptionRegistry {
   private descriptions = new Map<string, string>();
-  
-  register(metricName: string, description: string): void
-  get(metricName: string): string | undefined
-  getAll(): Record<string, string>
+
+  register(metricName: string, description: string): void;
+  get(metricName: string): string | undefined;
+  getAll(): Record<string, string>;
 }
 ```
 
 **TS Validators:**
 Register descriptions in MetricsValidator constructor alongside plugin registration:
+
 ```ts
 // In MetricsValidator constructor (src/validators/MetricsValidator.ts:91)
 for (const plugin of plugins) {
@@ -272,14 +347,17 @@ for (const plugin of plugins) {
 **Note**: The `ValidationPlugin` type (in `src/validators/plugins.ts`) will need to be extended to include a `description: string` property.
 
 **Elo Plugins:**
-Extract from `manifest.description` at plugin load time:
+Extract from `manifest.description` at plugin load time using namespaced names:
+
 ```ts
-// In plugin loader (src/plugins/PortablePluginLoader.ts)
-const description = manifest.description || 'No description available';
-metricDescriptions.register(manifest.name, description);
+// In EloPluginEngine
+const namespacedName = `${plugin.manifest.pubkey}:${plugin.manifest.name}`;
+const description = plugin.manifest.description || "No description available";
+metricDescriptions.register(namespacedName, description);
 ```
 
 **API Response:**
+
 ```ts
 {
   pubkey: "...",
@@ -288,7 +366,7 @@ metricDescriptions.register(manifest.name, description);
       value: 0.9,
       description: "NIP-05 identifier validation score"
     },
-    "elo-example": {
+    "npub123abc...def:elo-example": {
       value: 0.7,
       description: "Example plugin based on graph analysis"
     }
@@ -297,6 +375,7 @@ metricDescriptions.register(manifest.name, description);
 ```
 
 **Benefits:**
+
 - Descriptions loaded once at startup (not per-evaluation)
 - Single source of truth (manifest for Elo, code for TS)
 - No DB schema changes
@@ -323,33 +402,121 @@ This prevents capability wiring from being spread across multiple call sites.
 
 ---
 
-## Refactor Plan (Minimal Diff)
+## Refactor Plan (Completed)
 
-### Phase 1 — Introduce facade
+### Phase 1 — Introduce facade ✅
 
-1. Add `EloPluginEngine` facade.
-2. Add `registerBuiltInCapabilities` helper.
-3. Keep existing runner/contexts working; facade just wires and forwards.
+1. Add `EloPluginEngine` facade. ✅
+2. Add `registerBuiltInCapabilities` helper. ✅
+3. Keep existing runner/contexts working; facade just wires and forwards. ✅
 
-### Phase 2 — Reduce context/config redundancy
+### Phase 2 — Reduce context/config redundancy ✅
 
-1. Move runner `config` object creation into engine.
-2. Reduce call-site usage of [`PluginRunnerContext`](src/plugins/EloPluginRunner.ts:14) to semantic fields only.
-3. Build `CapabilityContext` inside engine (pool/relays/graph injected once).
+1. Move runner `config` object creation into engine. ✅
+2. Reduce call-site usage of [`PluginRunnerContext`](src/plugins/EloPluginRunner.ts:14) to semantic fields only. ✅
+3. Build `CapabilityContext` inside engine (pool/relays/graph injected once). ✅
 
-### Phase 3 — Integrate into MetricsValidator
+### Phase 3 — Integrate into MetricsValidator ✅
 
-1. Add optional `eloEngine` dependency to MetricsValidator.
-2. Merge metrics as `{ ...tsMetrics, ...eloMetrics }`.
-3. Ensure errors in Elo metrics return safe defaults and do not break validation.
+1. Add optional `eloEngine` dependency to MetricsValidator. ✅
+2. Merge metrics as `{ ...tsMetrics, ...eloMetrics }`. ✅
+3. Ensure errors in Elo metrics return safe defaults and do not break validation. ✅
 
-### Phase 4 — Tests and invariants
+### Phase 4 — Tests and invariants ✅
 
 1. Update unit tests to construct engine and assert:
    - plugins load at startup
    - capabilities register once
    - per-pubkey evaluation returns expected metrics
-2. Preserve existing tests for lower-level modules.
+2. Preserve existing tests for lower-level modules. ✅
+
+---
+
+## Fixes Implemented
+
+### Fix 1 — Dependency validation ✅
+
+- Added validation in [`EloPluginEngine.initialize()`](src/plugins/EloPluginEngine.ts:69) to ensure required dependencies (pool, relays, graph) are present.
+
+### Fix 2 — Load Elo metric descriptions at init time ✅
+
+- Elo plugin descriptions are now loaded once during engine initialization, not per-evaluation.
+- Descriptions are registered in [`EloPluginEngine.initialize()`](src/plugins/EloPluginEngine.ts:104) using namespaced names.
+
+### Fix 3 — Remove searchQuery from metrics computation ✅
+
+- Metrics are now intrinsic properties of a profile, not dependent on search context.
+- [`MetricsValidator.validateAll()`](src/validators/MetricsValidator.ts:113) and [`validateAllBatch()`](src/validators/MetricsValidator.ts:212) no longer pass searchQuery to Elo engine.
+
+### Fix 4 — Add Elo support to validateAllBatch() ✅
+
+- [`MetricsValidator.validateAllBatch()`](src/validators/MetricsValidator.ts:212) now includes Elo plugin evaluation for parity with validateAll().
+
+### Fix 5 — Update MetricDescriptionRegistry to merge TS and Elo descriptions ✅
+
+- [`MetricsValidator.getMetricDescriptions()`](src/validators/MetricsValidator.ts:425) merges TS and Elo descriptions into a single registry.
+
+### Fix 6 — Remove cross-evaluation caching from CapabilityExecutor ✅
+
+- Planning phase store is used for per-evaluation deduplication only, not persisted across evaluations.
+
+### Fix 7 — Add startup validation for malformed manifests ✅
+
+- [`PortablePluginLoader`](src/plugins/PortablePluginLoader.ts) validates manifest fields (name, pubkey, description) at load time.
+
+### Fix 8 — Define and enforce metric name collision policy with namespacing ✅
+
+- Elo plugin metrics use `<pubkey>:<name>` format to prevent collisions.
+- Namespacing is applied in [`EloPluginEngine.evaluateForPubkey()`](src/plugins/EloPluginEngine.ts:170).
+
+### Fix 9 — Remove unused methods from IEloPluginEngine ✅
+
+- Removed `getRegistry()`, `getExecutor()`, and `getPluginByName()` from [`IEloPluginEngine`](src/plugins/EloPluginEngine.ts:25) interface and implementations.
+- These methods were never called anywhere in the codebase.
+
+---
+
+## Next Iteration (Completed)
+
+### Phase 1 — Integration-surface invariant + lifecycle simplification (A+B) ✅
+
+**A. Null-object engine pattern:**
+
+- Created [`IEloPluginEngine`](src/plugins/EloPluginEngine.ts:25) interface.
+- [`EloPluginEngine`](src/plugins/EloPluginEngine.ts:47) and [`NullEloPluginEngine`](src/plugins/NullEloPluginEngine.ts:20) both implement this interface.
+- [`MetricsValidator`](src/validators/MetricsValidator.ts:58) always receives an engine (never optional).
+- Eliminates all "if (this.eloEngine)" checks.
+
+**B. Lifecycle simplification:**
+
+- [`RelatrFactory`](src/service/RelatrFactory.ts:116) creates engine once during startup.
+- Engine is passed to [`MetricsValidator`](src/validators/MetricsValidator.ts:58) via constructor.
+- No conditional engine creation or lazy initialization.
+
+### Phase 2 — MCP descriptions integration (E) ✅
+
+**E. Enhanced trust score output with descriptions:**
+
+- Updated [`ScoreComponents.validators`](src/types.ts:70) to use `{ score: number; description?: string }` format.
+- [`TrustCalculator`](src/trust/TrustCalculator.ts:100) returns validators in new format.
+- [`RelatrService`](src/service/RelatrService.ts:307) enriches trust scores with descriptions from [`MetricDescriptionRegistry`](src/validators/MetricDescriptionRegistry.ts:1).
+- [`MCP server`](src/mcp/server.ts:91) returns enriched trust scores directly.
+- Removed pass-through `getMetricDescriptions()` method from [`RelatrService`](src/service/RelatrService.ts) to keep API clean.
+
+### Phase 3 — Metric identity, description precedence, API cleanup (C+D+F) ⏸️
+
+**C. Metric identity:** Pending
+
+- Define clear metric identity rules for TS vs Elo metrics.
+
+**D. Description precedence:** Pending
+
+- Define precedence rules when descriptions conflict.
+
+**F. API cleanup:** Partially complete
+
+- Removed unused methods from [`IEloPluginEngine`](src/plugins/EloPluginEngine.ts:25) interface.
+- Further cleanup opportunities identified but deferred.
 
 ---
 
@@ -381,7 +548,9 @@ export class EloPluginEngine {
 ### Built-in capability registration
 
 ```ts
-export function registerBuiltInCapabilities(registry: CapabilityRegistry): void {
+export function registerBuiltInCapabilities(
+  registry: CapabilityRegistry,
+): void {
   registry.register("nostr.query", nostrQuery);
   registry.register("http.nip05_resolve", httpNip05Resolve);
   registry.register("graph.stats", graphStats);
@@ -394,15 +563,15 @@ export function registerBuiltInCapabilities(registry: CapabilityRegistry): void 
 ```ts
 export class MetricDescriptionRegistry {
   private descriptions = new Map<string, string>();
-  
+
   register(metricName: string, description: string): void {
     this.descriptions.set(metricName, description);
   }
-  
+
   get(metricName: string): string | undefined {
     return this.descriptions.get(metricName);
   }
-  
+
   getAll(): Record<string, string> {
     return Object.fromEntries(this.descriptions);
   }
@@ -444,10 +613,9 @@ validators: z.record(
   z.string(),
   z.object({
     score: z.number(),
-    description: z.string().optional()
-  })
-)
+    description: z.string().optional(),
+  }),
+);
 ```
 
 This provides users with human-readable explanations of what each metric means directly in the MCP tool responses.
-

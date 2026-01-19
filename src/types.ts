@@ -39,10 +39,10 @@ export interface RelatrConfig {
    * MCP server configuration
    */
   isPublicServer: boolean;
-  serverName: string;
-  serverAbout: string;
-  serverWebsite: string;
-  serverPicture: string;
+  serverName?: string;
+  serverAbout?: string;
+  serverWebsite?: string;
+  serverPicture?: string;
 }
 export interface MetricWeights {
   distanceWeight: number;
@@ -67,7 +67,7 @@ export interface TrustScore {
 
 export interface ScoreComponents {
   distanceWeight: number;
-  validators: Record<string, number>;
+  validators: Record<string, { score: number; description?: string }>;
   socialDistance: number;
   normalizedDistance: number;
 }
