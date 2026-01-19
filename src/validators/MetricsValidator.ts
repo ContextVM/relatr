@@ -389,17 +389,11 @@ export class MetricsValidator {
     try {
       const event = await new Promise<NostrEvent | null>((resolve, reject) => {
         const subscription = this.pool
-          .request(
-            this.nostrRelays,
-            {
-              kinds: [0], // Metadata event
-              authors: [pubkey],
-              limit: 1,
-            },
-            {
-              retries: 1,
-            },
-          )
+          .request(this.nostrRelays, {
+            kinds: [0], // Metadata event
+            authors: [pubkey],
+            limit: 1,
+          })
           .subscribe({
             next: (event) => {
               resolve(event);

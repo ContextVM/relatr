@@ -124,7 +124,7 @@ export class SearchService implements ISearchService {
       const nostrEvents = await new Promise<NostrEvent[]>((resolve, reject) => {
         const events: NostrEvent[] = [];
         const subscription = this.pool
-          .request(SEARCH_RELAYS, searchFilter, { retries: 1 })
+          .request(SEARCH_RELAYS, searchFilter)
           .subscribe({
             next: (event) => events.push(event),
             error: (error) => reject(error),

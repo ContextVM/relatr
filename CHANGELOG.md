@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.14
+
+### Patch Changes
+
+- chore(deps): bump dependencies, adapt code
+
 ## 0.1.13
 
 ### Patch Changes

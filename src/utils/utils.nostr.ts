@@ -231,17 +231,11 @@ export async function fetchUserRelayList(
 
     const event = await new Promise<NostrEvent | null>((resolve, reject) => {
       const subscription = pool
-        .request(
-          relaysToQuery,
-          {
-            kinds: [RelayList],
-            authors: [pubkey],
-            limit: 1,
-          },
-          {
-            retries: 1,
-          },
-        )
+        .request(relaysToQuery, {
+          kinds: [RelayList],
+          authors: [pubkey],
+          limit: 1,
+        })
         .subscribe({
           next: (event) => {
             resolve(event);
