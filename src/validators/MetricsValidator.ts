@@ -13,6 +13,7 @@ import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
 import { logger } from "@/utils/Logger";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 import type { PubkeyKvRepository } from "@/database/repositories/PubkeyKvRepository";
+import { nowSeconds } from "@/utils/utils";
 import type { IEloPluginEngine } from "../plugins/EloPluginEngine";
 import { NullEloPluginEngine } from "../plugins/NullEloPluginEngine";
 import { MetricDescriptionRegistry } from "./MetricDescriptionRegistry";
@@ -130,7 +131,7 @@ export class MetricsValidator {
       logger.warn("Cache read failed, proceeding with validation:", error);
     }
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowSeconds();
 
     try {
       // Get profile for validations
@@ -222,7 +223,7 @@ export class MetricsValidator {
     }
 
     const results = new Map<string, ProfileMetrics>();
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowSeconds();
 
     try {
       // Check cache for all pubkeys in batch
@@ -451,17 +452,11 @@ export class MetricsValidator {
     try {
       const event = await new Promise<NostrEvent | null>((resolve, reject) => {
         const subscription = this.pool
-          .request(
-            this.nostrRelays,
-            {
-              kinds: [0], // Metadata event
-              authors: [pubkey],
-              limit: 1,
-            },
-            {
-              retries: 1,
-            },
-          )
+          .request(this.nostrRelays, {
+            kinds: [0], // Metadata event
+            authors: [pubkey],
+            limit: 1,
+          })
           .subscribe({
             next: (event) => {
               resolve(event);

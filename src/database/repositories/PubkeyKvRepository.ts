@@ -4,6 +4,7 @@ import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
 import type { PubkeyKvKey } from "../../constants/pubkeyKv";
+import { nowSeconds } from "@/utils/utils";
 
 /**
  * Repository for the pubkey_kv key-value store.
@@ -65,7 +66,7 @@ export class PubkeyKvRepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
 
           // Use INSERT ... ON CONFLICT DO UPDATE for UPSERT behavior
           await this.writeConnection.run(

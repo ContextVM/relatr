@@ -6,7 +6,7 @@ import type {
   ScoreComponents,
 } from "../types";
 import { SocialGraphError, ValidationError } from "../types";
-import { normalizeDistance } from "../utils/utils";
+import { normalizeDistance, nowSeconds } from "../utils/utils";
 import { DEFAULT_METRIC_WEIGHTS } from "../config";
 
 /**
@@ -118,7 +118,7 @@ export class TrustCalculator {
       targetPubkey,
       score,
       components,
-      computedAt: Math.floor(Date.now() / 1000),
+      computedAt: nowSeconds(),
     };
   }
 

@@ -11,6 +11,7 @@ import type { ISchedulerService } from "./ServiceInterfaces";
 import type { TAService } from "./TAService";
 import { RelatrError } from "../types";
 import { logger } from "../utils/Logger";
+import { nowMs } from "@/utils/utils";
 
 export class SchedulerService implements ISchedulerService {
   private discoveryQueue: Set<string> = new Set();
@@ -100,7 +101,7 @@ export class SchedulerService implements ISchedulerService {
       );
     }
 
-    const startTime = Date.now();
+    const startTime = nowMs();
     const effectiveSourcePubkey =
       sourcePubkey || this.config.defaultSourcePubkey;
     const syncKey = `contact_sync:${effectiveSourcePubkey}`;
@@ -116,7 +117,7 @@ export class SchedulerService implements ISchedulerService {
         if (lastSyncTimeStr) {
           const lastSyncTime = parseInt(lastSyncTimeStr);
           if (
-            Date.now() - lastSyncTime <
+            nowMs() - lastSyncTime <
             this.config.syncIntervalHours * 3600 * 1000
           ) {
             logger.info(`Skipping contact sync - last sync was recent.`);
@@ -139,10 +140,10 @@ export class SchedulerService implements ISchedulerService {
         sourcePubkey: effectiveSourcePubkey,
       });
 
-      const now = Date.now();
+      const now = nowMs();
       await this.settingsRepository.set(syncKey, now.toString());
 
-      logger.info(`Sync completed in ${Date.now() - startTime}ms`);
+      logger.info(`Sync completed in ${nowMs() - startTime}ms`);
     } catch (error) {
       logger.error(
         "Profile sync error:",
@@ -172,7 +173,7 @@ export class SchedulerService implements ISchedulerService {
       );
     }
 
-    const startTime = Date.now();
+    const startTime = nowMs();
     const effectiveSourcePubkey =
       sourcePubkey || this.config.defaultSourcePubkey;
 
@@ -264,7 +265,7 @@ export class SchedulerService implements ISchedulerService {
       }
 
       logger.info(
-        `✅ Validation sync completed in ${Date.now() - startTime}ms. Processed: ${processedCount}, Successful: ${successCount}, Failed: ${errorCount}`,
+        `✅ Validation sync completed in ${nowMs() - startTime}ms. Processed: ${processedCount}, Successful: ${successCount}, Failed: ${errorCount}`,
       );
     } catch (error) {
       logger.error(
@@ -284,7 +285,7 @@ export class SchedulerService implements ISchedulerService {
     logger.info(
       `🔄 Processing discovery queue with ${this.discoveryQueue.size} pubkeys...`,
     );
-    const startTime = Date.now();
+    const startTime = nowMs();
 
     try {
       const pubkeysToProcess = Array.from(this.discoveryQueue);
@@ -317,7 +318,7 @@ export class SchedulerService implements ISchedulerService {
       }
 
       logger.info(
-        `Discovery queue processing completed in ${Date.now() - startTime}ms`,
+        `Discovery queue processing completed in ${nowMs() - startTime}ms`,
       );
     } catch (error) {
       logger.error(

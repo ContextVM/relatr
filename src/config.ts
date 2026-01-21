@@ -75,6 +75,27 @@ export const RelatrConfigSchema = z.object({
     .default(
       "https://image.nostr.build/30d7fdef1b3d3b83d9e33f47b7d15388deeb47428041f0656612d1450cdb1216.jpg",
     ),
+
+  // Rate limiting
+  rateLimitTokens: z
+    .number()
+    .int()
+    .positive()
+    .default(15)
+    .describe("Maximum tokens for rate limiter (burst capacity)"),
+  rateLimitRefillRate: z
+    .number()
+    .positive()
+    .default(2)
+    .describe("Tokens per second to refill"),
+
+  // Relay capping
+  maxStoredRelays: z
+    .number()
+    .int()
+    .positive()
+    .default(15)
+    .describe("Maximum relays to store per user in pubkey_kv"),
 });
 
 /**
@@ -135,6 +156,19 @@ export function loadConfig(): RelatrConfig {
     serverAbout: process.env.SERVER_ABOUT,
     serverWebsite: process.env.SERVER_WEBSITE,
     serverPicture: process.env.SERVER_PICTURE,
+
+    // Rate limiting
+    rateLimitTokens: process.env.RATE_LIMIT_TOKENS
+      ? parseInt(process.env.RATE_LIMIT_TOKENS, 10)
+      : undefined,
+    rateLimitRefillRate: process.env.RATE_LIMIT_REFILL_RATE
+      ? parseFloat(process.env.RATE_LIMIT_REFILL_RATE)
+      : undefined,
+
+    // Relay capping
+    maxStoredRelays: process.env.MAX_STORED_RELAYS
+      ? parseInt(process.env.MAX_STORED_RELAYS, 10)
+      : undefined,
   };
 
   const result = RelatrConfigSchema.safeParse(configData);

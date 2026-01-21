@@ -1,5 +1,23 @@
 # relatr
 
+## 0.1.16
+
+### Patch Changes
+
+- feat: add capping config and update rate limit defaults
+
+## 0.1.15
+
+### Patch Changes
+
+- 51af2ba: chore: bump cvm version
+
+## 0.1.14
+
+### Patch Changes
+
+- chore(deps): bump dependencies, adapt code
+
 ## 0.1.13
 
 ### Patch Changes

@@ -27,6 +27,7 @@ import { TAService } from './TAService';
 import { dirname } from "path";
 import { EloPluginEngine, type IEloPluginEngine } from '../plugins/EloPluginEngine';
 import { NullEloPluginEngine } from '../plugins/NullEloPluginEngine';
+import { nowMs } from '@/utils/utils';
 
 export class RelatrFactory {
     static async createRelatrService(config: RelatrConfig): Promise<{relatrService: RelatrService; taService: TAService | null}> {
@@ -244,6 +245,7 @@ export class RelatrFactory {
      * Ensure data directory exists with proper permissions
      * @private
      */
+    // TODO: we can remove this
     private static async ensureDataDirectory(databasePath: string): Promise<void> {
         try {
             // Extract data directory from database path (default: ./data/relatr.db)
@@ -269,7 +271,7 @@ export class RelatrFactory {
                 // Check if directory is writable by current user
                 try {
                     // Try to create a test file to check write permissions
-                    const testFile = `${dataDir}/.write_test_${Date.now()}`;
+                    const testFile = `${dataDir}/.write_test_${nowMs()}`;
                     await Bun.write(testFile, "test");
                     await Bun.$`rm ${testFile}`;
                 } catch {

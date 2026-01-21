@@ -3,6 +3,7 @@ import { DatabaseError } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
+import { nowSeconds } from "@/utils/utils";
 
 export class SettingsRepository {
   private readConnection: DuckDBConnection;
@@ -43,7 +44,7 @@ export class SettingsRepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
           await this.writeConnection.run(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)",
             { 1: key, 2: value, 3: now },

@@ -3,6 +3,7 @@ import { DatabaseError, type TA } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
+import { nowSeconds } from "@/utils/utils";
 
 export class TARepository {
   private readConnection: DuckDBConnection;
@@ -32,7 +33,7 @@ export class TARepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
 
           await this.writeConnection.run(
             `INSERT INTO ta (pubkey, created_at, computed_at, is_active)
@@ -205,7 +206,7 @@ export class TARepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
 
           // Try to get existing user
           const existingResult = await this.readConnection.run(

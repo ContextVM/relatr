@@ -72,3 +72,24 @@ export function normalizeDistance(
   // Ensure result is in [0,1] range
   return Math.max(0.0, Math.min(1.0, normalized));
 }
+
+/**
+ * Time utility functions for consistent time unit handling.
+ * JavaScript uses milliseconds, Nostr uses Unix seconds.
+ */
+
+/**
+ * Get current time in seconds (Unix timestamp).
+ * Used for Nostr event timestamps (created_at).
+ */
+export function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/**
+ * Get current time in milliseconds.
+ * Used for performance timing and JavaScript APIs.
+ */
+export function nowMs(): number {
+  return Date.now();
+}

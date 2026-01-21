@@ -3,6 +3,7 @@ import { DatabaseError, type ProfileMetrics } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
+import { nowSeconds } from "@/utils/utils";
 
 export class MetricsRepository {
   private readConnection: DuckDBConnection;
@@ -23,7 +24,7 @@ export class MetricsRepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
           const expiresAt = now + this.ttlSeconds;
 
           // Start transaction
@@ -110,7 +111,7 @@ export class MetricsRepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
           const expiresAt = now + this.ttlSeconds;
 
           // Start transaction
@@ -214,7 +215,7 @@ export class MetricsRepository {
   async get(pubkey: string): Promise<ProfileMetrics | null> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        const now = nowSeconds();
         const result = await this.readConnection.run(
           `SELECT metric_key, metric_value, computed_at, expires_at
            FROM profile_metrics
@@ -278,7 +279,7 @@ export class MetricsRepository {
 
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        const now = nowSeconds();
 
         // Create placeholders for IN clause
         const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
@@ -388,7 +389,7 @@ export class MetricsRepository {
   private async getValidPubkeys(): Promise<Set<string>> {
     try {
       return await executeWithRetry(async () => {
-        const now = Math.floor(Date.now() / 1000);
+        const now = nowSeconds();
 
         const result = await this.readConnection.run(
           `SELECT DISTINCT pubkey
@@ -415,7 +416,7 @@ export class MetricsRepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
           const result = await this.writeConnection.run(
             "DELETE FROM profile_metrics WHERE expires_at <= $1",
             { 1: now },
