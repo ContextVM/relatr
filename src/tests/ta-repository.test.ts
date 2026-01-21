@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { TARepository } from "../database/repositories/TARepository";
+import { nowSeconds } from "@/utils/utils";
 
 describe("TARepository", () => {
   let dbManager: DatabaseManager;
@@ -109,7 +110,7 @@ describe("TARepository", () => {
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
       await taRepository.addTA(pubkey);
 
-      const computedAt = Math.floor(Date.now() / 1000);
+      const computedAt = nowSeconds();
       await taRepository.updateLatestRank(pubkey, 75, computedAt);
 
       const user = await taRepository.getTA(pubkey);
@@ -120,8 +121,8 @@ describe("TARepository", () => {
     it("should not throw error for non-existent user", async () => {
       const pubkey =
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-      const computedAt = Math.floor(Date.now() / 1000);
-      await expect(
+      const computedAt = nowSeconds();
+      expect(
         taRepository.updateLatestRank(pubkey, 75, computedAt),
       ).rejects.toThrow();
     });
@@ -213,14 +214,10 @@ describe("TARepository", () => {
       await taRepository.addTA(pubkey3);
 
       // Update pubkey1 to make it fresh
-      await taRepository.updateLatestRank(
-        pubkey1,
-        75,
-        Math.floor(Date.now() / 1000),
-      );
+      await taRepository.updateLatestRank(pubkey1, 75, nowSeconds());
 
       // pubkey2 and pubkey3 remain stale (default computed_at from addTA)
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const staleThreshold = now + 3600; // 1 hour in the future (all are stale)
 
       const staleEntries = await taRepository.getStaleActiveTA(staleThreshold);
@@ -236,13 +233,9 @@ describe("TARepository", () => {
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
       await taRepository.addTA(pubkey);
-      await taRepository.updateLatestRank(
-        pubkey,
-        75,
-        Math.floor(Date.now() / 1000),
-      );
+      await taRepository.updateLatestRank(pubkey, 75, nowSeconds());
 
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const staleThreshold = now - 3600; // 1 hour ago (none are stale)
 
       const staleEntries = await taRepository.getStaleActiveTA(staleThreshold);
@@ -261,7 +254,7 @@ describe("TARepository", () => {
       await taRepository.addTA(pubkey2);
       await taRepository.addTA(pubkey3);
 
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const staleThreshold = now + 3600; // 1 hour in the future (all are stale)
 
       const staleEntries = await taRepository.getStaleActiveTA(staleThreshold);
@@ -286,7 +279,7 @@ describe("TARepository", () => {
       await taRepository.addTA(pubkey2);
       await taRepository.addTA(pubkey3);
 
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const updates = [
         { pubkey: pubkey1, rank: 75, computedAt: now },
         { pubkey: pubkey2, rank: 50, computedAt: now },
@@ -321,7 +314,7 @@ describe("TARepository", () => {
 
       await taRepository.addTA(pubkey1);
 
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const updates = [
         { pubkey: pubkey1, rank: 75, computedAt: now },
         { pubkey: pubkey2, rank: 50, computedAt: now }, // doesn't exist

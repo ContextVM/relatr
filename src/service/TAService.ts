@@ -8,6 +8,8 @@ import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvReposi
 import type { RelatrService } from "./RelatrService";
 import { logger } from "../utils/Logger";
 import { fetchUserRelayList } from "../utils/utils.nostr";
+import { nowSeconds } from "../utils/utils";
+import { MAX_PUBLISH_RELAYS } from "../constants/pubkeyKv";
 import { relaySet } from "applesauce-core/helpers";
 import { COMMON_RELAYS, TA_USER_KIND } from "@/constants/nostr";
 import { PUBKEY_KV_KEYS, type TARelaysValueV1 } from "@/constants/pubkeyKv";
@@ -125,7 +127,7 @@ export class TAService {
         false,
       );
       const newRank = Math.round(trustScore.score * 100);
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
 
       // Persist the computed rank immediately
       await this.taRepository.updateLatestRank(pubkey, newRank, now, {
@@ -225,19 +227,20 @@ export class TAService {
         }
       }
 
-      // Combine user's relays with server relays, special purpose relays, and custom relays (deduplicated)
+      // Prioritize: user inboxes → server relays → extra relays → custom relays
+      // De-duplicate and cap (Phase 1: Relay Capping)
       const allRelays = relaySet([
         ...userRelays,
         ...this.config.serverRelays,
         ...this.config.taExtraRelays,
         ...(customRelays || []),
-      ]);
+      ]).slice(0, MAX_PUBLISH_RELAYS);
 
       // Persist combined TA relay list to pubkey_kv for future use
       if (allRelays.length > 0) {
         const taRelaysValue: TARelaysValueV1 = {
           version: 1,
-          relays: Array.from(allRelays),
+          relays: allRelays,
         };
         await this.pubkeyKvRepository.setJSON(
           targetPubkey,
@@ -253,7 +256,7 @@ export class TAService {
       // Create Kind 30382 event following NIP-85
       const unsignedEvent: UnsignedEvent = {
         kind: TA_USER_KIND,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: nowSeconds(),
         tags: [
           ["d", targetPubkey], // d-tag points to the subject
           ["rank", rank.toString()], // rank value as string
@@ -339,7 +342,7 @@ export class TAService {
     }
 
     try {
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const staleThreshold = now - this.config.cacheTtlHours * 3600;
 
       // Use DuckDB to filter stale active TA directly
@@ -457,7 +460,7 @@ export class TAService {
 
     try {
       const user = await this.taRepository.getTA(targetPubkey);
-      const now = Math.floor(Date.now() / 1000);
+      const now = nowSeconds();
       const staleThreshold = now - this.config.cacheTtlHours * 3600;
 
       const stale =

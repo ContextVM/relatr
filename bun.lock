@@ -5,7 +5,7 @@
     "": {
       "name": "relatr",
       "dependencies": {
-        "@contextvm/sdk": "^0.2.0",
+        "@contextvm/sdk": "^0.2.3",
         "@duckdb/node-api": "^1.4.2-r.1",
         "applesauce-core": "^5.0.3",
         "applesauce-relay": "^5.0.0",
@@ -75,7 +75,7 @@
 
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
-    "@contextvm/sdk": ["@contextvm/sdk@0.2.3", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.25.2", "applesauce-relay": "^5.0.0", "nostr-tools": "~2.18.2", "pino": "^10.2.0", "rxjs": "^7.8.2", "zod": "^3.25.76" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-EbrfkQsVnPP3VrXXDriVzlHPcB6by8kqKNwA7rWVdvlEsg0M424GmU21dsTmUoX/1fi39+WlkyCUOx75IUHQKQ=="],
+    "@contextvm/sdk": ["@contextvm/sdk@0.2.4", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.25.2", "applesauce-relay": "^5.0.0", "nostr-tools": "~2.18.2", "pino": "^10.2.0", "rxjs": "^7.8.2", "zod": "^3.25.76" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-foXidH+M1u6LYTpZeaoHzkOqlnXGnatJqWE0+XjZezc3ffk/lO/fbDdvl1ncoQxgs4tk14HtO7AHvCCI0n9R3Q=="],
 
     "@duckdb/node-api": ["@duckdb/node-api@1.4.2-r.1", "", { "dependencies": { "@duckdb/node-bindings": "1.4.2-r.1" } }, "sha512-8Ef4R/Lq+rXTpcqZIJZe6ALfgMGxy88HmiPvRpWrRw1fUTy85x1U0NnGrqCklZsmWyZUdPwVYj90MQOF2MY/TA=="],
 
@@ -155,7 +155,7 @@
 
     "@types/node": ["@types/node@24.7.2", "", { "dependencies": { "undici-types": "~7.14.0" } }, "sha512-/NbVmcGTP+lj5oa4yiYxxeBjRivKQ5Ns1eSZeB99ExsEQ6rX5XYU1Zy/gGxY/ilqtD4Etx9mKyrPxZRetiahhA=="],
 
-    "@types/react": ["@types/react@19.2.8", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-3MbSL37jEchWZz2p2mjntRZtPt837ij10ApxKfgmXCTuHWagYg7iA5bqPw6C8BMPfwidlvfPI/fxOc42HLhcyg=="],
+    "@types/react": ["@types/react@19.2.9", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-Lpo8kgb/igvMIPeNV2rsYKTgaORYdO1XGVZ4Qz3akwOj0ySGYMPlQWa8BaLn0G63D1aSaAQ5ldR06wCpChQCjA=="],
 
     "@types/react-dom": ["@types/react-dom@19.2.3", "", { "peerDependencies": { "@types/react": "^19.2.0" } }, "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ=="],
 

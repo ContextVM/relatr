@@ -3,6 +3,7 @@ import { DatabaseError, type NostrProfile } from "../../types";
 import { executeWithRetry } from "nostr-social-duck";
 import { logger } from "../../utils/Logger";
 import { dbWriteQueue } from "../DbWriteQueue";
+import { nowSeconds } from "@/utils/utils";
 
 export interface SearchResult {
   pubkey: string;
@@ -33,7 +34,7 @@ export class MetadataRepository {
     try {
       return await executeWithRetry(async () => {
         return await dbWriteQueue.runExclusive(async () => {
-          const now = Math.floor(Date.now() / 1000);
+          const now = nowSeconds();
 
           // Start transaction
           await this.writeConnection.run("BEGIN TRANSACTION");

@@ -31,10 +31,16 @@ export interface RelatrConfig {
    * MCP server configuration
    */
   isPublicServer: boolean;
-  serverName: string;
-  serverAbout: string;
-  serverWebsite: string;
-  serverPicture: string;
+  serverName?: string;
+  serverAbout?: string;
+  serverWebsite?: string;
+  serverPicture?: string;
+
+  /**
+   * Rate limiting configuration (Phase 2)
+   */
+  rateLimitTokens?: number;
+  rateLimitRefillRate?: number;
 }
 export interface MetricWeights {
   distanceWeight: number;

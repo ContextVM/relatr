@@ -6,6 +6,12 @@
  */
 
 /**
+ * Maximum number of relays to publish TA events to
+ * Reduces network traffic and connection overhead (Phase 1: Relay Capping)
+ */
+export const MAX_PUBLISH_RELAYS = 15;
+
+/**
  * All supported keys for the pubkey_kv store.
  * Using `as const` ensures compile-time safety when using these keys.
  */

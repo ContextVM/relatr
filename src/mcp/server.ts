@@ -10,9 +10,11 @@ import { loadConfig } from "../config.js";
 import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
 import { TAService } from "../service/TAService.js";
-import type { SearchProfileResult } from "../types.js";
+import { RelatrError, type SearchProfileResult } from "../types.js";
 import { logger } from "../utils/Logger.js";
 import { relaySet } from "applesauce-core/helpers";
+import { RateLimiter } from "./RateLimiter.js";
+import { nowMs } from "@/utils/utils.js";
 
 /**
  * Start the MCP server for Relatr
@@ -24,6 +26,7 @@ export async function startMCPServer(): Promise<void> {
   let relatrService: RelatrService | null = null;
   let taService: TAService | null = null;
   let server: McpServer | null = null;
+  let rateLimiter: RateLimiter | null = null;
 
   try {
     // Load configuration and initialize RelatrService using factory
@@ -32,19 +35,28 @@ export async function startMCPServer(): Promise<void> {
     relatrService = services.relatrService;
     taService = services.taService;
 
+    // Initialize rate limiter (Phase 2: Rate Limiting)
+    rateLimiter = new RateLimiter(
+      config.rateLimitTokens,
+      config.rateLimitRefillRate,
+    );
+    logger.info(
+      `Rate limiter initialized: ${config.rateLimitTokens} tokens, ${config.rateLimitRefillRate}/sec refill`,
+    );
+
     // Create MCP server
     server = new McpServer({
       name: "relatr",
       version: "1.0.0",
     });
 
-    // Register tools
-    registerCalculateTrustScoreTool(server, relatrService);
-    registerCalculateTrustScoresTool(server, relatrService);
-    registerStatsTool(server, relatrService);
-    registerSearchProfilesTool(server, relatrService);
+    // Register tools with rate limiter
+    registerCalculateTrustScoreTool(server, relatrService, rateLimiter);
+    registerCalculateTrustScoresTool(server, relatrService, rateLimiter);
+    registerStatsTool(server, relatrService, rateLimiter);
+    registerSearchProfilesTool(server, relatrService, rateLimiter);
     if (taService) {
-      registerManageTATool(server, taService);
+      registerManageTATool(server, taService, rateLimiter);
     }
 
     // Setup graceful shutdown
@@ -86,11 +98,82 @@ export async function startMCPServer(): Promise<void> {
 }
 
 /**
+ * Rate-limited wrapper for tool handlers (Phase 2: Rate Limiting)
+ */
+async function withRateLimit<T>(
+  rateLimiter: RateLimiter,
+  toolName: string,
+  handler: () => Promise<T>,
+): Promise<T> {
+  if (!rateLimiter.acquire()) {
+    throw new RelatrError(
+      `Rate limit exceeded for ${toolName}. Try again later.`,
+      "RATE_LIMIT_EXCEEDED",
+    );
+  }
+  return handler();
+}
+
+/**
+ * Convert an error to an MCP response
+ * Centralized error mapping for all tool handlers
+ */
+function toMcpResponse(
+  error: unknown,
+  toolName: string,
+  clientPubkey?: string,
+): {
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError: boolean;
+} {
+  if (error instanceof RelatrError && error.code === "RATE_LIMIT_EXCEEDED") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: error.message,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+  if (toolName === "manage_ta" && clientPubkey) {
+    return {
+      content: [],
+      structuredContent: {
+        success: false,
+        message: errorMessage,
+        pubkey: clientPubkey,
+        isActive: false,
+        createdAt: null,
+        computedAt: null,
+      },
+      isError: true,
+    };
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Error ${toolName}: ${errorMessage}`,
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
  * Register the calculate_trust_score tool
  */
 function registerCalculateTrustScoreTool(
   server: McpServer,
   relatrService: RelatrService,
+  rateLimiter: RateLimiter,
 ): void {
   // Input schema - simplified with only targetPubkey required
   const inputSchema = z.object({
@@ -130,12 +213,15 @@ function registerCalculateTrustScoreTool(
       outputSchema: outputSchema.shape,
     },
     async (params) => {
-      const startTime = Date.now();
+      const startTime = nowMs();
 
       try {
-        // Calculate trust score
-        const trustScore = await relatrService.calculateTrustScore(params);
-        const computationTimeMs = Date.now() - startTime;
+        const trustScore = await withRateLimit(
+          rateLimiter,
+          "calculate_trust_score",
+          () => relatrService.calculateTrustScore(params),
+        );
+        const computationTimeMs = nowMs() - startTime;
 
         return {
           content: [],
@@ -156,18 +242,7 @@ function registerCalculateTrustScoreTool(
           },
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error calculating trust score: ${errorMessage}`,
-            },
-          ],
-          isError: true,
-        };
+        return toMcpResponse(error, "calculate_trust_score");
       }
     },
   );
@@ -179,6 +254,7 @@ function registerCalculateTrustScoreTool(
 function registerCalculateTrustScoresTool(
   server: McpServer,
   relatrService: RelatrService,
+  rateLimiter: RateLimiter,
 ): void {
   const inputSchema = z.object({
     targetPubkeys: z
@@ -214,44 +290,55 @@ function registerCalculateTrustScoresTool(
       outputSchema: outputSchema.shape,
     },
     async (params) => {
-      const startTime = Date.now();
+      const startTime = nowMs();
 
       try {
-        // Deduplicate while preserving first-appearance order.
-        // Decode once per input and use decoded hex as canonical identity.
-        const seen = new Set<string>();
-        const uniqueDecoded: string[] = [];
+        const trustScoresMap = await withRateLimit(
+          rateLimiter,
+          "calculate_trust_scores",
+          async () => {
+            const seen = new Set<string>();
+            const uniqueDecoded: string[] = [];
 
-        for (let i = 0; i < params.targetPubkeys.length; i++) {
-          const decoded = validateAndDecodePubkey(params.targetPubkeys[i]!);
-          if (!decoded) continue;
-          if (seen.has(decoded)) continue;
+            for (let i = 0; i < params.targetPubkeys.length; i++) {
+              const decoded = validateAndDecodePubkey(params.targetPubkeys[i]!);
+              if (!decoded) continue;
+              if (seen.has(decoded)) continue;
 
-          seen.add(decoded);
-          uniqueDecoded.push(decoded);
-        }
+              seen.add(decoded);
+              uniqueDecoded.push(decoded);
+            }
 
-        if (uniqueDecoded.length === 0) {
+            if (uniqueDecoded.length === 0) {
+              return new Map<
+                string,
+                ReturnType<typeof relatrService.calculateTrustScore>
+              >();
+            }
+
+            return await relatrService.calculateTrustScoresBatch({
+              targetPubkeys: uniqueDecoded,
+            });
+          },
+        );
+
+        if (trustScoresMap instanceof Map && trustScoresMap.size === 0) {
           return {
             content: [],
             structuredContent: {
               trustScores: [],
-              computationTimeMs: Date.now() - startTime,
+              computationTimeMs: nowMs() - startTime,
             },
           };
         }
 
-        const trustScoresMap = await relatrService.calculateTrustScoresBatch({
-          targetPubkeys: uniqueDecoded,
-        });
+        const computationTimeMs = nowMs() - startTime;
 
-        const computationTimeMs = Date.now() - startTime;
-
-        // Build results in the same order as uniqueDecoded
         const trustScores = [];
-        for (let i = 0; i < uniqueDecoded.length; i++) {
-          const decodedHex = uniqueDecoded[i]!;
-          const ts = trustScoresMap.get(decodedHex);
+        for (let i = 0; i < params.targetPubkeys.length; i++) {
+          const decoded = validateAndDecodePubkey(params.targetPubkeys[i]!);
+          if (!decoded) continue;
+          const ts = await trustScoresMap.get(decoded);
           if (ts) {
             trustScores.push({
               sourcePubkey: ts.sourcePubkey,
@@ -276,18 +363,7 @@ function registerCalculateTrustScoresTool(
           },
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error calculating trust scores: ${errorMessage}`,
-            },
-          ],
-          isError: true,
-        };
+        return toMcpResponse(error, "calculate_trust_scores");
       }
     },
   );
@@ -299,6 +375,7 @@ function registerCalculateTrustScoresTool(
 function registerStatsTool(
   server: McpServer,
   relatrService: RelatrService,
+  rateLimiter: RateLimiter,
 ): void {
   // Input schema (empty)
   const inputSchema = z.object({});
@@ -335,7 +412,9 @@ function registerStatsTool(
     },
     async () => {
       try {
-        const statsResult = await relatrService.getStats();
+        const statsResult = await withRateLimit(rateLimiter, "stats", () =>
+          relatrService.getStats(),
+        );
 
         return {
           content: [],
@@ -353,18 +432,7 @@ function registerStatsTool(
           },
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error getting stats: ${errorMessage}`,
-            },
-          ],
-          isError: true,
-        };
+        return toMcpResponse(error, "stats");
       }
     },
   );
@@ -376,6 +444,7 @@ function registerStatsTool(
 function registerSearchProfilesTool(
   server: McpServer,
   relatrService: RelatrService,
+  rateLimiter: RateLimiter,
 ): void {
   // Input schema
   const inputSchema = z.object({
@@ -425,8 +494,11 @@ function registerSearchProfilesTool(
     },
     async (params) => {
       try {
-        // Search profiles - pass through the extendToNostr flag (if provided)
-        const searchResult = await relatrService.searchProfiles(params);
+        const searchResult = await withRateLimit(
+          rateLimiter,
+          "search_profiles",
+          () => relatrService.searchProfiles(params),
+        );
         const result = {
           results: searchResult.results.map((result: SearchProfileResult) => ({
             pubkey: result.pubkey,
@@ -443,18 +515,7 @@ function registerSearchProfilesTool(
           structuredContent: result,
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error searching profiles: ${errorMessage}`,
-            },
-          ],
-          isError: true,
-        };
+        return toMcpResponse(error, "search_profiles");
       }
     },
   );
@@ -463,7 +524,11 @@ function registerSearchProfilesTool(
 /**
  * Register the manage_ta tool
  */
-function registerManageTATool(server: McpServer, taService: TAService): void {
+function registerManageTATool(
+  server: McpServer,
+  taService: TAService,
+  rateLimiter: RateLimiter,
+): void {
   // Input schema with action parameter
   const inputSchema = z.object({
     action: z
@@ -535,16 +600,25 @@ function registerManageTATool(server: McpServer, taService: TAService): void {
       }
 
       try {
-        // Validate input
-        const action = params.action;
-        const customRelays = params.customRelays
-          ? relaySet(params.customRelays.split(",").map((url) => url.trim()))
-          : undefined;
+        // Apply rate limiting
+        const result = await withRateLimit(
+          rateLimiter,
+          "manage_ta",
+          async () => {
+            // Validate input
+            const action = params.action;
+            const customRelays = params.customRelays
+              ? relaySet(
+                  params.customRelays.split(",").map((url) => url.trim()),
+                )
+              : undefined;
 
-        const result = await taService.manageTASub(
-          action,
-          clientPubkey,
-          customRelays,
+            return await taService.manageTASub(
+              action,
+              clientPubkey,
+              customRelays,
+            );
+          },
         );
 
         return {
@@ -560,21 +634,7 @@ function registerManageTATool(server: McpServer, taService: TAService): void {
           },
         };
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        return {
-          content: [],
-          structuredContent: {
-            success: false,
-            message: errorMessage,
-            pubkey: clientPubkey,
-            isActive: false,
-            createdAt: null,
-            computedAt: null,
-          },
-          isError: true,
-        };
+        return toMcpResponse(error, "manage_ta", clientPubkey);
       }
     },
   );

@@ -3,7 +3,7 @@ import { TrustCalculator } from "../trust/TrustCalculator";
 import { SocialGraph } from "../graph/SocialGraph";
 import type { RelatrConfig, ProfileMetrics } from "../types";
 import { DatabaseManager } from "../database/DatabaseManager";
-import { normalizeDistance } from "@/utils/utils";
+import { normalizeDistance, nowSeconds } from "@/utils/utils";
 import { DEFAULT_METRIC_WEIGHTS } from "../config";
 
 /**
@@ -26,6 +26,8 @@ const testConfig: RelatrConfig = {
   cleanupIntervalHours: 1,
   validationSyncIntervalHours: 1,
   taEnabled: false,
+  isPublicServer: false,
+  taExtraRelays: [],
 };
 
 /**
@@ -44,8 +46,8 @@ const testMetrics: ProfileMetrics = {
     reciprocity: 0.8,
     isRootNip05: 0.5,
   },
-  computedAt: Math.floor(Date.now() / 1000),
-  expiresAt: Math.floor(Date.now() / 1000) + 1000,
+  computedAt: nowSeconds(),
+  expiresAt: nowSeconds() + 1000,
 };
 
 // Shared instances
@@ -218,8 +220,8 @@ describe("TrustCalculator - Score Calculation", () => {
         reciprocity: 0,
         isRootNip05: 0,
       },
-      computedAt: Math.floor(Date.now() / 1000),
-      expiresAt: Math.floor(Date.now() / 1000) + 1000,
+      computedAt: nowSeconds(),
+      expiresAt: nowSeconds() + 1000,
     };
 
     const sourcePubkey =

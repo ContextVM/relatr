@@ -3,6 +3,7 @@ import { DatabaseManager } from "../database/DatabaseManager";
 import { MetricsRepository } from "../database/repositories/MetricsRepository";
 import { MetadataRepository } from "../database/repositories/MetadataRepository";
 import type { ProfileMetrics, NostrProfile } from "../types";
+import { nowMs, nowSeconds } from "@/utils/utils";
 
 /**
  * Regression test for the "cannot start a transaction within a transaction" failure mode.
@@ -47,8 +48,8 @@ describe("DuckDB concurrency regression", () => {
         eventKind10002: (n % 5) / 4,
         reciprocity: (n % 7) / 6,
       },
-      computedAt: Math.floor(Date.now() / 1000),
-      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      computedAt: nowSeconds(),
+      expiresAt: nowSeconds() + 60,
     });
 
     // Deliberately overlap:
@@ -119,7 +120,7 @@ describe("DuckDB concurrency regression", () => {
     })();
 
     // Concurrent reads should not be blocked
-    const readStartTime = Date.now();
+    const readStartTime = nowMs();
     const readPromise = (async () => {
       const result = await readConnection.run(
         "SELECT * FROM pubkey_metadata WHERE pubkey = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
@@ -129,7 +130,7 @@ describe("DuckDB concurrency regression", () => {
 
     // Wait for both to complete
     await Promise.all([longWritePromise, readPromise]);
-    const readEndTime = Date.now();
+    const readEndTime = nowMs();
     const readDuration = readEndTime - readStartTime;
 
     // Read should complete quickly (not blocked by write)

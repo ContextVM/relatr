@@ -12,6 +12,7 @@ import type { RelatrServiceDependencies, IRelatrService } from './ServiceInterfa
 import type { TAService } from './TAService';
 import { logger } from '../utils/Logger';
 import { isHexKey } from 'applesauce-core/helpers';
+import { nowSeconds } from '@/utils/utils';
 
 export class RelatrService implements IRelatrService {
     private initialized = false;
@@ -187,7 +188,7 @@ export class RelatrService implements IRelatrService {
     }
 
     async getStats(): Promise<StatsResult> {
-        const timestamp = Math.floor(Date.now() / 1000);
+        const timestamp = nowSeconds();
 
         try {
             // Get database stats

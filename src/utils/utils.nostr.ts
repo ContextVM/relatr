@@ -18,6 +18,12 @@ import { PUBKEY_KV_KEYS } from "@/constants/pubkeyKv";
  */
 const DEFAULT_BATCH_SIZE = 500;
 
+/**
+ * Maximum number of relays to store per user
+ * Reduces storage pressure for users with 100+ relays (Phase 1: Relay Capping)
+ */
+export const MAX_STORED_RELAYS = 15;
+
 export async function negSyncFromRelays(
   pool: RelayPool | null,
   relays: string[],
@@ -266,11 +272,15 @@ export async function fetchUserRelayList(
       `Fetched relay list for ${pubkey}: ${inboxes} inboxes, ${outboxes} outboxes`,
     );
 
+    // Cap relays before storage (Phase 1: Relay Capping)
+    const cappedInboxes = inboxes?.slice(0, MAX_STORED_RELAYS) || [];
+    const cappedOutboxes = outboxes?.slice(0, MAX_STORED_RELAYS) || [];
+
     // Persist to DB
     const userRelaysValue: UserRelaysValueV1 = {
       version: 1,
-      inboxes,
-      outboxes,
+      inboxes: cappedInboxes,
+      outboxes: cappedOutboxes,
     };
 
     try {

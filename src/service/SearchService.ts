@@ -14,6 +14,7 @@ import type { ISearchService } from "./ServiceInterfaces";
 import { ValidationError } from "../types";
 import { logger } from "../utils/Logger";
 import { SEARCH_RELAYS } from "@/constants/nostr";
+import { nowMs } from "@/utils/utils";
 
 export class SearchService implements ISearchService {
   private static readonly FIELD_WEIGHTS = {
@@ -44,7 +45,7 @@ export class SearchService implements ISearchService {
       sourcePubkey ||
       this.socialGraph.getCurrentRoot() ||
       this.config.defaultSourcePubkey;
-    const startTime = Date.now();
+    const startTime = nowMs();
 
     // Search local database - returns top N results ranked by text relevance + root distance
     const localResults = await this.metadataRepository.search(
@@ -203,7 +204,7 @@ export class SearchService implements ISearchService {
       exactMatch: item.exactMatch,
     }));
 
-    const endTime = Date.now();
+    const endTime = nowMs();
     logger.info(`Search completed in ${endTime - startTime}ms`);
 
     return {
