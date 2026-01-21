@@ -7,7 +7,6 @@ import { normalizeDistance, nowSeconds } from "@/utils/utils";
 import { DEFAULT_METRIC_WEIGHTS } from "../config";
 
 /**
- * Phase 2 Component Tests
  * Tests for TrustCalculator and SocialGraph core algorithms
  */
 

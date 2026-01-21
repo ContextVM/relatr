@@ -213,6 +213,8 @@ export class TAService {
           this.relayPool,
           COMMON_RELAYS,
           this.pubkeyKvRepository,
+          undefined,
+          this.config.maxStoredRelays,
         );
 
         if (
@@ -228,7 +230,7 @@ export class TAService {
       }
 
       // Prioritize: user inboxes → server relays → extra relays → custom relays
-      // De-duplicate and cap (Phase 1: Relay Capping)
+      // De-duplicate and cap
       const allRelays = relaySet([
         ...userRelays,
         ...this.config.serverRelays,

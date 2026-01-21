@@ -1,7 +1,7 @@
 {
   "name": "relatr",
   "description": "Decentralized trust metric service for the Nostr ecosystem that computes personalized trust scores from the unique perspective of a public key",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "type": "module",
   "private": true,
   "scripts": {
@@ -26,7 +26,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.2.4",
+    "@contextvm/sdk": "^0.2.5",
     "@duckdb/node-api": "^1.4.2-r.1",
     "applesauce-core": "^5.0.3",
     "applesauce-relay": "^5.0.0",

@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.16
+
+### Patch Changes
+
+- feat: add capping config and update rate limit defaults
+
 ## 0.1.15
 
 ### Patch Changes

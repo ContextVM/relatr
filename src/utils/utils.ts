@@ -1,4 +1,3 @@
-import { date } from "zod/v4";
 import type { NostrProfile } from "../types";
 
 export async function withTimeout<T>(

@@ -37,10 +37,15 @@ export interface RelatrConfig {
   serverPicture?: string;
 
   /**
-   * Rate limiting configuration (Phase 2)
+   * Rate limiting configuration
    */
   rateLimitTokens?: number;
   rateLimitRefillRate?: number;
+
+  /**
+   * Relay capping configuration
+   */
+  maxStoredRelays?: number;
 }
 export interface MetricWeights {
   distanceWeight: number;

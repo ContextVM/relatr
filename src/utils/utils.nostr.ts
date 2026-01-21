@@ -20,7 +20,7 @@ const DEFAULT_BATCH_SIZE = 500;
 
 /**
  * Maximum number of relays to store per user
- * Reduces storage pressure for users with 100+ relays (Phase 1: Relay Capping)
+ * Reduces storage pressure for users with 100+ relays
  */
 export const MAX_STORED_RELAYS = 15;
 
@@ -213,7 +213,8 @@ export function validateAndDecodePubkey(identifier: string): string | null {
  * @param pool Relay pool
  * @param relays Relays to query
  * @param pubkeyKvRepository Repository for persisting user relays
- * @param timeoutMs Timeout in milliseconds (default: 10000)
+ * @param timeoutMs Timeout in milliseconds (default: 30000)
+ * @param maxRelays Maximum relays to store (default: 15, configurable via MAX_STORED_RELAYS env var)
  * @returns Array of relay URLs or null if not found
  */
 export async function fetchUserRelayList(
@@ -222,6 +223,7 @@ export async function fetchUserRelayList(
   relays: string[],
   pubkeyKvRepository: PubkeyKvRepository,
   timeoutMs: number = 30000,
+  maxRelays: number = MAX_STORED_RELAYS,
 ): Promise<UserRelaysValueV1 | null> {
   try {
     const previousKnownRelays =
@@ -272,9 +274,9 @@ export async function fetchUserRelayList(
       `Fetched relay list for ${pubkey}: ${inboxes} inboxes, ${outboxes} outboxes`,
     );
 
-    // Cap relays before storage (Phase 1: Relay Capping)
-    const cappedInboxes = inboxes?.slice(0, MAX_STORED_RELAYS) || [];
-    const cappedOutboxes = outboxes?.slice(0, MAX_STORED_RELAYS) || [];
+    // Cap relays before storage
+    const cappedInboxes = inboxes?.slice(0, maxRelays) || [];
+    const cappedOutboxes = outboxes?.slice(0, maxRelays) || [];
 
     // Persist to DB
     const userRelaysValue: UserRelaysValueV1 = {

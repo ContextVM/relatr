@@ -7,7 +7,7 @@
 
 /**
  * Maximum number of relays to publish TA events to
- * Reduces network traffic and connection overhead (Phase 1: Relay Capping)
+ * Reduces network traffic and connection overhead
  */
 export const MAX_PUBLISH_RELAYS = 15;
 

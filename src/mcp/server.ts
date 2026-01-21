@@ -35,7 +35,7 @@ export async function startMCPServer(): Promise<void> {
     relatrService = services.relatrService;
     taService = services.taService;
 
-    // Initialize rate limiter (Phase 2: Rate Limiting)
+    // Initialize rate limiter
     rateLimiter = new RateLimiter(
       config.rateLimitTokens,
       config.rateLimitRefillRate,
@@ -98,7 +98,7 @@ export async function startMCPServer(): Promise<void> {
 }
 
 /**
- * Rate-limited wrapper for tool handlers (Phase 2: Rate Limiting)
+ * Rate-limited wrapper for tool handlers
  */
 async function withRateLimit<T>(
   rateLimiter: RateLimiter,
