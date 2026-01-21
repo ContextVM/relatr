@@ -1,6 +1,6 @@
 # Relatr Portable Plugins — User History (Create, Share, Install, Customize)
 
-This document is a narrative walkthrough of how Relatr users and operators will create, share, install, and customize portable validation plugins using the Elo-based plugin system described in [`plans/elo-plugins-design.md`](plans/elo-plugins-design.md).
+This document is a narrative walkthrough of how Relatr users and operators will create, share, install, and customize portable validation plugins using the Elo-based plugin system.
 
 It intentionally uses concrete examples that mirror today’s built-in TypeScript validators in [`src/validators/plugins.ts`](src/validators/plugins.ts) and shows what they look like as portable Elo plugins.
 

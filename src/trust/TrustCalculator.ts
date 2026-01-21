@@ -5,28 +5,38 @@ import type {
   MetricWeights,
   ScoreComponents,
 } from "../types";
-import { SocialGraphError, ValidationError } from "../types";
+import { SocialGraphError } from "../types";
 import { normalizeDistance, nowSeconds } from "../utils/utils";
-import { DEFAULT_METRIC_WEIGHTS } from "../config";
+import { DEFAULT_DISTANCE_WEIGHT } from "../config";
 
 /**
- * Trust score calculation using distance normalization and weighted metrics
- * Implements the formula: Score = Σ(wᵢ × vᵢ) / Σ(wᵢ)
+ * Trust score calculation using distance normalization and weighted Elo plugin metrics
+ * Implements the formula: Score = distanceWeight * normalizedDistance + Σ(pluginWeight × pluginValue)
+ *
+ * Plugin weights are resolved by EloPluginEngine using a three-tier system:
+ * - Tier 1: Config override (highest priority)
+ * - Tier 2: Manifest default
+ * - Tier 3: Proportional distribution of remaining weight
  */
 export class TrustCalculator {
   private config: RelatrConfig;
-  private static readonly WEIGHT_SUM_TOLERANCE = 0.01;
+  private pluginWeights: Record<string, number>;
 
   /**
    * Create a new TrustCalculator instance
    * @param config - Relatr configuration
+   * @param pluginWeights - Resolved plugin weights from EloPluginEngine
    */
-  constructor(config: RelatrConfig) {
+  constructor(
+    config: RelatrConfig,
+    pluginWeights: Record<string, number> = {},
+  ) {
     if (!config) {
       throw new SocialGraphError("Config is required", "CONSTRUCTOR");
     }
 
     this.config = config;
+    this.pluginWeights = pluginWeights;
   }
 
   /**
@@ -35,7 +45,6 @@ export class TrustCalculator {
    * @param targetPubkey - Target public key
    * @param metrics - Profile metrics for target pubkey
    * @param distance - Social distance between source and target
-   * @param weights - Optional custom weights (overrides profile weights)
    * @returns Complete trust score with all components
    * @throws SocialGraphError if calculation fails
    */
@@ -44,7 +53,6 @@ export class TrustCalculator {
     targetPubkey: string,
     metrics: ProfileMetrics,
     distance: number,
-    weights?: Partial<MetricWeights>,
   ): TrustScore {
     // Validate inputs
     if (!sourcePubkey || typeof sourcePubkey !== "string") {
@@ -56,7 +64,7 @@ export class TrustCalculator {
     if (!targetPubkey || typeof targetPubkey !== "string") {
       throw new SocialGraphError(
         "Target pubkey must be a non-empty string",
-        "CALCULATE",
+        "CALSTRUCTOR",
       );
     }
     if (!metrics) {
@@ -69,9 +77,8 @@ export class TrustCalculator {
       );
     }
 
-    // Merge and validate weights
-    const finalWeights = this.mergeWeights(DEFAULT_METRIC_WEIGHTS, weights);
-    this.validateWeights(finalWeights);
+    // Use default distance weight
+    const distanceWeight = DEFAULT_DISTANCE_WEIGHT;
 
     // Normalize distance
     const normalizedDistance = normalizeDistance(
@@ -83,7 +90,7 @@ export class TrustCalculator {
     const rawScore = this.calculateWeightedScore(
       metrics,
       normalizedDistance,
-      finalWeights,
+      distanceWeight,
     );
 
     // Round final score and components for consistency and readability
@@ -91,15 +98,14 @@ export class TrustCalculator {
 
     // Create score components with rounded values
     const components: ScoreComponents = {
-      distanceWeight: this.roundToDecimalPlaces(finalWeights.distanceWeight),
+      distanceWeight: this.roundToDecimalPlaces(distanceWeight),
       validators: {},
       socialDistance: this.roundToDecimalPlaces(distance),
       normalizedDistance: this.roundToDecimalPlaces(normalizedDistance),
     };
 
-    // Add rounded validator components (new format with optional description)
+    // Add rounded validator components with weights
     for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
-      // Skip undefined or empty metric names
       if (
         !metricName ||
         metricName === "undefined" ||
@@ -107,6 +113,7 @@ export class TrustCalculator {
       ) {
         continue;
       }
+      const weight = this.pluginWeights[metricName];
       components.validators[metricName] = {
         score: this.roundToDecimalPlaces(metricValue),
       };
@@ -123,126 +130,42 @@ export class TrustCalculator {
   }
 
   /**
-   * Calculate weighted score using the formula: Score = Σ(wᵢ × vᵢ) / Σ(wᵢ)
+   * Calculate weighted score using the formula: Score = distanceWeight * normalizedDistance + Σ(wᵢ × vᵢ)
    * @param metrics - Profile metrics
    * @param normalizedDistance - Normalized distance value
-   * @param weights - Metric weights
+   * @param distanceWeight - Weight for distance component
    * @returns Final trust score [0,1]
    * @private
    */
   private calculateWeightedScore(
     metrics: ProfileMetrics,
     normalizedDistance: number,
-    weights: MetricWeights,
+    distanceWeight: number,
   ): number {
     // Calculate weighted sum for distance
-    let weightedSum = weights.distanceWeight * normalizedDistance;
+    let weightedSum = distanceWeight * normalizedDistance;
 
-    // Calculate weighted sum for all validator metrics
+    // Calculate weighted sum for all plugin metrics
     for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
-      const weight = weights.validators[metricName];
-      if (weight !== undefined) {
+      const weight = this.pluginWeights[metricName];
+      if (weight !== undefined && weight > 0) {
         weightedSum += weight * metricValue;
       }
     }
 
-    // Total weight is always 1.0 due to validation, but keep check for safety
-    const totalWeight = 1.0;
-
-    // Calculate final score (no need for division by zero check since weights sum to 1.0)
-    const score = weightedSum / totalWeight;
-
     // Ensure result is in [0,1] range
-    return Math.max(0.0, Math.min(1.0, score));
-  }
-
-  /**
-   * Merge default weights with custom weights
-   * @param defaults - Default weights from active profile
-   * @param custom - Optional custom weights to override defaults
-   * @returns Merged weights
-   * @private
-   */
-  private mergeWeights(
-    defaults: MetricWeights,
-    custom?: Partial<MetricWeights>,
-  ): MetricWeights {
-    if (!custom) {
-      return defaults;
-    }
-
-    return {
-      distanceWeight: custom.distanceWeight ?? defaults.distanceWeight,
-      validators: custom.validators ?? defaults.validators,
-    };
-  }
-
-  /**
-   * Validate that metric weights sum to approximately 1.0
-   * @param weights - Metric weights to validate
-   * @throws ValidationError if weights don't sum to approximately 1.0
-   * @private
-   */
-  /**
-   * Calculate sum of weights
-   * @param weights - Metric weights
-   * @returns Sum of all weights
-   * @private
-   */
-  private sumWeights(weights: MetricWeights): number {
-    let sum = weights.distanceWeight;
-
-    // Sum all validator weights
-    for (const weight of Object.values(weights.validators)) {
-      sum += weight;
-    }
-
-    return sum;
-  }
-
-  /**
-   * Validate that metric weights sum to approximately 1.0
-   * @param weights - Metric weights to validate
-   * @throws ValidationError if weights don't sum to approximately 1.0
-   * @private
-   */
-  private validateWeights(weights: MetricWeights): void {
-    const sum = this.sumWeights(weights);
-    const deviation = Math.abs(sum - 1.0);
-
-    if (deviation > TrustCalculator.WEIGHT_SUM_TOLERANCE) {
-      throw new ValidationError(
-        `Metric weights must sum to 1.0 (±${TrustCalculator.WEIGHT_SUM_TOLERANCE}). Current sum: ${sum.toFixed(4)}`,
-        "weights",
-      );
-    }
+    return Math.max(0.0, Math.min(1.0, weightedSum));
   }
 
   /**
    * Round a number to a specified number of decimal places
    * @param value - The value to round
-   * @param places - Number of decimal places (default: 3)
+   * @param places - Number of decimal places (default: 2)
    * @returns Rounded value
    * @private
    */
   private roundToDecimalPlaces(value: number, places: number = 2): number {
     const multiplier = Math.pow(10, places);
     return Math.round(value * multiplier) / multiplier;
-  }
-
-  /**
-   * Get the current configuration
-   * @returns Current RelatrConfig
-   */
-  getConfig(): RelatrConfig {
-    return { ...this.config };
-  }
-
-  /**
-   * Update the configuration
-   * @param newConfig - New configuration to use
-   */
-  updateConfig(newConfig: Partial<RelatrConfig>): void {
-    this.config = { ...this.config, ...newConfig };
   }
 }

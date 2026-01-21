@@ -1,0 +1,19 @@
+{
+  "id": "dev-has-relays-001",
+  "pubkey": "dev-plugin-author-pubkey",
+  "created_at": 1704067200,
+  "kind": 31234,
+  "tags": [
+    ["name", "has_relays"],
+    ["title", "Relay List Present"],
+    [
+      "description",
+      "Scores 1.0 if the profile has published relay list events (kind 10002)"
+    ],
+    ["weight", "0.10"],
+    ["cap", "nostr.query"],
+    ["cap_arg", "{\"kinds\": [10002], \"limit\": 5}"]
+  ],
+  "content": "let events = _.cap.nostr.query, count = length(events) in if count > 0 then 1.0 else 0.0",
+  "sig": "dev-signature-for-testing"
+}

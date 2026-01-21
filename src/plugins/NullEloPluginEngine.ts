@@ -61,4 +61,20 @@ export class NullEloPluginEngine implements IEloPluginEngine {
   getMetricDescriptions(): MetricDescriptionRegistry {
     return this.metricDescriptions;
   }
+
+  /**
+   * Get resolved plugin weights
+   * Returns empty object for null object
+   */
+  getResolvedWeights(): Record<string, number> {
+    return {};
+  }
+
+  /**
+   * Get plugin names
+   * Returns empty array for null object
+   */
+  getPluginNames(): string[] {
+    return [];
+  }
 }

@@ -31,6 +31,8 @@ export interface IEloPluginEngine {
   getPluginCount(): number;
   isInitialized(): boolean;
   getMetricDescriptions(): MetricDescriptionRegistry;
+  getResolvedWeights(): Record<string, number>;
+  getPluginNames(): string[];
 }
 
 /**
@@ -50,6 +52,7 @@ export class EloPluginEngine implements IEloPluginEngine {
   private executor: CapabilityExecutor;
   private initialized = false;
   private metricDescriptions: MetricDescriptionRegistry;
+  private resolvedWeights: Record<string, number> = {};
 
   constructor(
     private config: RelatrConfig,
@@ -111,6 +114,13 @@ export class EloPluginEngine implements IEloPluginEngine {
         logger.debug(`Registered description for plugin: ${namespacedName}`);
       }
       logger.info(`Registered ${this.plugins.length} plugin descriptions`);
+
+      // Resolve plugin weights (Tier 1: Config override, Tier 2: Manifest default, Tier 3: Proportional distribution)
+      logger.info("Resolving plugin weights");
+      this.resolvedWeights = this.resolvePluginWeights();
+      logger.info(
+        `Resolved weights for ${Object.keys(this.resolvedWeights).length} plugins`,
+      );
 
       this.initialized = true;
       logger.info("EloPluginEngine initialization complete");
@@ -204,5 +214,98 @@ export class EloPluginEngine implements IEloPluginEngine {
    */
   getMetricDescriptions(): MetricDescriptionRegistry {
     return this.metricDescriptions;
+  }
+
+  /**
+   * Resolve plugin weights using three-tier system:
+   * - Tier 1: Config override (highest priority)
+   * - Tier 2: Manifest default
+   * - Tier 3: Proportional distribution of remaining weight
+   * @returns Record mapping namespaced plugin names to their weights
+   */
+  private resolvePluginWeights(): Record<string, number> {
+    const weights: Record<string, number> = {};
+    const configOverrides = this.config.eloPluginWeights || {};
+    const weightedPlugins: Array<{ name: string; weight: number }> = [];
+    const unweightedPlugins: string[] = [];
+
+    for (const plugin of this.plugins) {
+      const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
+
+      // Tier 1: Config override (highest priority)
+      if (configOverrides[namespacedName] !== undefined) {
+        weightedPlugins.push({
+          name: namespacedName,
+          weight: configOverrides[namespacedName],
+        });
+        continue;
+      }
+
+      // Tier 2: Manifest default
+      if (plugin.manifest.weight != null) {
+        weightedPlugins.push({
+          name: namespacedName,
+          weight: plugin.manifest.weight,
+        });
+        continue;
+      }
+
+      // Tier 3: Unweighted (to be distributed)
+      unweightedPlugins.push(namespacedName);
+    }
+
+    // Calculate total allocated weight
+    const totalAllocated = weightedPlugins.reduce(
+      (sum, p) => sum + p.weight,
+      0,
+    );
+    const remainingWeight = Math.max(0, 1.0 - totalAllocated);
+
+    // Validate and handle overallocation
+    if (totalAllocated > 1.0) {
+      logger.warn(
+        `Total configured weights (${totalAllocated}) exceed 1.0, normalizing...`,
+      );
+      // Normalize weighted plugins proportionally
+      const scale = 1.0 / totalAllocated;
+      weightedPlugins.forEach((p) => (p.weight *= scale));
+    }
+
+    // Assign weights to explicitly weighted plugins
+    for (const plugin of weightedPlugins) {
+      weights[plugin.name] = plugin.weight;
+    }
+
+    // Distribute remaining weight among unweighted plugins
+    if (unweightedPlugins.length > 0 && remainingWeight > 0) {
+      const eachWeight = remainingWeight / unweightedPlugins.length;
+      for (const name of unweightedPlugins) {
+        weights[name] = eachWeight;
+      }
+    }
+
+    // Log resolution summary
+    logger.info(
+      `Weight resolution: ${weightedPlugins.length} explicit, ${unweightedPlugins.length} distributed`,
+    );
+    logger.debug("Resolved weights:", weights);
+
+    return weights;
+  }
+
+  /**
+   * Get resolved plugin weights
+   * @returns Record mapping namespaced plugin names to their weights
+   */
+  getResolvedWeights(): Record<string, number> {
+    return { ...this.resolvedWeights };
+  }
+
+  /**
+   * Get namespaced plugin names
+   * @returns Array of namespaced plugin names
+   */
+  getPluginNames(): string[] {
+    return this.plugins.map((p) => `${p.pubkey}:${p.manifest.name}`);
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Registry for metric descriptions that provides human-readable explanations
- * for both TS validators and Elo plugin metrics.
+ * for Elo plugin metrics.
  *
  * Descriptions are loaded once at startup and remain static throughout
  * the application lifecycle.

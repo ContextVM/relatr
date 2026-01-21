@@ -17,7 +17,6 @@ import type { SettingsRepository as ISettingsRepository } from '../database/repo
 import type { RelatrConfig } from '../types';
 import { RelatrError, ValidationError } from '../types';
 import { MetricsValidator } from '../validators/MetricsValidator';
-import { ALL_PLUGINS } from '../validators/plugins';
 import { logger } from '../utils/Logger';
 import type { RelatrServiceDependencies } from './ServiceInterfaces';
 import { RelatrService } from './RelatrService';
@@ -110,11 +109,7 @@ export class RelatrFactory {
             const graphStats = await socialGraph.getStats();
             logger.info('Social graph stats', graphStats);
             
-            // Step 7: Initialize trust calculation components
-            // TrustCalculator uses the canonical default weighting scheme internally.
-            const trustCalculator = new TrustCalculator(validatedConfig);
-            
-            // Create Elo plugin engine (always inject, use null-object if disabled)
+            // Step 7: Create Elo plugin engine first (needed for MetricsValidator and TrustCalculator)
             let eloEngine: IEloPluginEngine;
             if (validatedConfig.eloPluginsEnabled) {
                 logger.info('Elo plugins enabled, creating engine...');
@@ -130,19 +125,21 @@ export class RelatrFactory {
                 eloEngine = new NullEloPluginEngine();
             }
             
+            // Step 8: Initialize trust calculation with resolved plugin weights
+            const trustCalculator = new TrustCalculator(validatedConfig, eloEngine.getResolvedWeights());
+            
+            // Step 9: Initialize MetricsValidator with Elo engine
             const metricsValidator = new MetricsValidator(
                 pool,
                 validatedConfig.nostrRelays,
                 socialGraph,
                 metricsRepository,
                 metadataRepository,
-                pubkeyKvRepository,
-                validatedConfig.cacheTtlHours * 3600,
-                ALL_PLUGINS,
                 eloEngine,
+                validatedConfig.cacheTtlHours * 3600,
             );
             
-            // Step 8: Initialize specialized services
+            // Step 10: Initialize specialized services
             const searchService = new SearchService(
                 validatedConfig,
                 metadataRepository,
@@ -203,7 +200,7 @@ export class RelatrFactory {
             // Update serviceDependencies with the actual schedulerService
             serviceDependencies.schedulerService = schedulerService;
             
-            // Step 9: If this is the first time running, fetch initial metadata
+            // Step 11: If this is the first time running, fetch initial metadata
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {
                 logger.info('Fetching initial profile metadata...');
                 try {
@@ -221,7 +218,7 @@ export class RelatrFactory {
                 }
             }
             
-            // Step 10: Start background processes
+            // Step 12: Start background processes
             await schedulerService.start();
             logger.info('Background processes started');
 
@@ -245,7 +242,6 @@ export class RelatrFactory {
      * Ensure data directory exists with proper permissions
      * @private
      */
-    // TODO: we can remove this
     private static async ensureDataDirectory(databasePath: string): Promise<void> {
         try {
             // Extract data directory from database path (default: ./data/relatr.db)

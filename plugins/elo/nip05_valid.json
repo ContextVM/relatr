@@ -1,0 +1,21 @@
+{
+  "id": "dev-nip05-valid-001",
+  "pubkey": "dev-plugin-author-pubkey",
+  "created_at": 1704067200,
+  "kind": 31234,
+  "tags": [
+    ["name", "nip05_valid"],
+    ["title", "NIP-05 Validation"],
+    [
+      "description",
+      "Scores 1.0 if the profile's NIP-05 identifier is present and resolves correctly"
+    ],
+    ["weight", "0.15"],
+    ["cap", "nostr.query"],
+    ["cap_arg", "{\"kinds\": [0], \"limit\": 3}"],
+    ["cap", "http.nip05_resolve"],
+    ["cap_arg", "alice@example.com"]
+  ],
+  "content": "let events = _.cap.nostr.query, meta = first(events) in if isNull(meta) then 0.0 else let profile = meta.content, resolved = _.cap.http.nip05_resolve.pubkey in if isNull(resolved) then 0.0 else 1.0",
+  "sig": "dev-signature-for-testing"
+}

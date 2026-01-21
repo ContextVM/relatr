@@ -1,26 +1,19 @@
 import type { ProfileMetrics, NostrProfile } from "../types";
 import { ValidationError } from "../types";
 import { SocialGraph } from "../graph/SocialGraph";
-import {
-  ValidationRegistry,
-  type ValidationContext,
-  ALL_PLUGINS,
-  type ValidationPlugin,
-} from "./plugins";
 import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { RelayPool } from "applesauce-relay";
 import { executeWithRetry, type NostrEvent } from "nostr-social-duck";
 import { logger } from "@/utils/Logger";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
-import type { PubkeyKvRepository } from "@/database/repositories/PubkeyKvRepository";
 import { nowSeconds } from "@/utils/utils";
 import type { IEloPluginEngine } from "../plugins/EloPluginEngine";
-import { NullEloPluginEngine } from "../plugins/NullEloPluginEngine";
-import { MetricDescriptionRegistry } from "./MetricDescriptionRegistry";
 
 /**
- * Consolidated validator class for all profile metrics
- * Implements NIP-05, Lightning, Event, and Reciprocity validations
+ * MetricsValidator - Validates profile metrics using Elo plugins only.
+ *
+ * This class is simplified to work exclusively with Elo portable plugins.
+ * TypeScript validators have been deprecated in favor of Elo plugins.
  */
 export class MetricsValidator {
   private pool: RelayPool;
@@ -29,23 +22,18 @@ export class MetricsValidator {
   private metricsRepository: MetricsRepository;
   private timeoutMs: number = 10000;
   private cacheTtlSeconds: number = 3600;
-  private registry: ValidationRegistry;
   private metadataRepository: MetadataRepository;
-  private pubkeyKvRepository: PubkeyKvRepository;
   private eloEngine: IEloPluginEngine;
-  private metricDescriptions: MetricDescriptionRegistry;
 
   /**
    * Create a new MetricsValidator instance
    * @param pool - Shared RelayPool instance for Nostr operations
    * @param nostrRelays - Array of Nostr relay URLs
-   * @param graphManager - SocialGraph instance for reciprocity checks
+   * @param graphManager - SocialGraph instance for graph-based capabilities
    * @param metricsRepository - Repository for storing profile metrics
    * @param metadataRepository - Repository for storing profile metadata
-   * @param pubkeyKvRepository - Repository for storing pubkey key-value data
+   * @param eloEngine - IEloPluginEngine for Elo plugin metrics
    * @param cacheTtlSeconds - Cache time-to-live in seconds
-   * @param plugins - Array of validation plugins to register (defaults to all available plugins)
-   * @param eloEngine - IEloPluginEngine for Elo plugin metrics (required, use NullEloPluginEngine if disabled)
    */
   constructor(
     pool: RelayPool,
@@ -53,10 +41,8 @@ export class MetricsValidator {
     graphManager: SocialGraph,
     metricsRepository: MetricsRepository,
     metadataRepository: MetadataRepository,
-    pubkeyKvRepository: PubkeyKvRepository,
+    eloEngine: IEloPluginEngine,
     cacheTtlSeconds?: number,
-    plugins: ValidationPlugin[] = ALL_PLUGINS,
-    eloEngine: IEloPluginEngine = new NullEloPluginEngine(),
   ) {
     if (!pool) {
       throw new ValidationError("RelayPool instance is required");
@@ -78,8 +64,8 @@ export class MetricsValidator {
       throw new ValidationError("MetadataRepository instance is required");
     }
 
-    if (!pubkeyKvRepository) {
-      throw new ValidationError("PubkeyKvRepository instance is required");
+    if (!eloEngine) {
+      throw new ValidationError("EloPluginEngine instance is required");
     }
 
     this.pool = pool;
@@ -90,25 +76,14 @@ export class MetricsValidator {
     // Keep it in seconds to avoid accidentally producing multi-year TTLs.
     this.cacheTtlSeconds = cacheTtlSeconds ?? 60 * 60 * 48;
     this.metadataRepository = metadataRepository;
-    this.pubkeyKvRepository = pubkeyKvRepository;
     this.eloEngine = eloEngine;
-
-    // Create registries
-    this.registry = new ValidationRegistry();
-    this.metricDescriptions = new MetricDescriptionRegistry();
-
-    // Register provided plugins and their descriptions
-    for (const plugin of plugins) {
-      this.registry.register(plugin);
-      this.metricDescriptions.register(plugin.name, plugin.description);
-    }
   }
 
   /**
    * Validate all metrics for a pubkey
-   * Checks cache first, then validates all registered plugins if not cached
+   * Checks cache first, then evaluates Elo plugins if not cached
    * @param pubkey - Target public key to validate
-   * @param sourcePubkey - Optional source pubkey for reciprocity validation
+   * @param sourcePubkey - Optional source pubkey for context-dependent capabilities
    * @returns Complete ProfileMetrics object with all validation results
    */
   async validateAll(
@@ -139,40 +114,12 @@ export class MetricsValidator {
         (await this.metadataRepository.get(pubkey)) ||
         (await this.fetchProfile(pubkey));
 
-      // Create validation context
-      const context: ValidationContext = {
-        pubkey,
-        sourcePubkey,
-        profile,
-        graphManager: this.graphManager,
-        pool: this.pool,
-        relays: this.nostrRelays,
-        pubkeyKvRepository: this.pubkeyKvRepository,
-      };
-
-      // Execute all registered plugins (TS validators)
-      const tsMetrics = await this.registry.executeAll(context);
-
       // Execute Elo plugins
-      let eloMetrics: Record<string, number> = {};
-      try {
-        eloMetrics = await this.eloEngine.evaluateForPubkey({
-          targetPubkey: pubkey,
-          sourcePubkey,
-        });
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.warn(`Elo plugin evaluation failed for ${pubkey}: ${errorMsg}`);
-        // Continue with TS metrics only - don't break validation
-        eloMetrics = {};
-      }
-
-      // Merge TS and Elo metrics
-      const metrics = { ...tsMetrics, ...eloMetrics };
+      const eloMetrics = await this.evaluateEloPlugins(pubkey, sourcePubkey);
 
       const result: ProfileMetrics = {
         pubkey,
-        metrics,
+        metrics: eloMetrics,
         computedAt: now,
         expiresAt: now + this.cacheTtlSeconds,
       };
@@ -207,7 +154,7 @@ export class MetricsValidator {
    * Validate all metrics for multiple pubkeys in batch
    * Checks cache first for all pubkeys, then validates only those not cached
    * @param pubkeys - Array of target public keys to validate
-   * @param sourcePubkey - Optional source pubkey for reciprocity validation
+   * @param sourcePubkey - Optional source pubkey for context-dependent capabilities
    * @returns Map of pubkey to ProfileMetrics
    */
   async validateAllBatch(
@@ -249,7 +196,6 @@ export class MetricsValidator {
 
       // Process validation in smaller chunks to avoid memory spikes
       const CHUNK_SIZE = 100;
-      const successfulResults: ProfileMetrics[] = [];
 
       for (let i = 0; i < pubkeysToValidate.length; i += CHUNK_SIZE) {
         const chunk = pubkeysToValidate.slice(i, i + CHUNK_SIZE);
@@ -284,41 +230,15 @@ export class MetricsValidator {
         // Validate this chunk in parallel
         const validationPromises = chunkProfiles.map(async (profile) => {
           try {
-            const context: ValidationContext = {
-              pubkey: profile.pubkey,
-              sourcePubkey,
-              profile,
-              graphManager: this.graphManager,
-              pool: this.pool,
-              relays: this.nostrRelays,
-              pubkeyKvRepository: this.pubkeyKvRepository,
-            };
-
-            let metrics = await this.registry.executeAll(context);
-
             // Execute Elo plugins
-            let eloMetrics: Record<string, number> = {};
-            try {
-              eloMetrics = await this.eloEngine.evaluateForPubkey({
-                targetPubkey: profile.pubkey,
-                sourcePubkey,
-              });
-            } catch (error) {
-              const errorMsg =
-                error instanceof Error ? error.message : String(error);
-              logger.warn(
-                `Elo plugin evaluation failed for ${profile.pubkey}: ${errorMsg}`,
-              );
-              // Continue with TS metrics only - don't break validation
-              eloMetrics = {};
-            }
-
-            // Merge TS and Elo metrics
-            metrics = { ...metrics, ...eloMetrics };
+            const eloMetrics = await this.evaluateEloPlugins(
+              profile.pubkey,
+              sourcePubkey,
+            );
 
             const result: ProfileMetrics = {
               pubkey: profile.pubkey,
-              metrics,
+              metrics: eloMetrics,
               computedAt: now,
               expiresAt: now + this.cacheTtlSeconds,
             };
@@ -327,7 +247,7 @@ export class MetricsValidator {
           } catch (error) {
             // Return default metrics on validation errors
             logger.warn(
-              `[MetricsValidator] ️ Validation failed for ${profile.pubkey}:`,
+              `[MetricsValidator] ⚠️ Validation failed for ${profile.pubkey}:`,
               error instanceof Error ? error.message : String(error),
             );
             const errorMetrics: ProfileMetrics = {
@@ -359,16 +279,10 @@ export class MetricsValidator {
         if (chunkSuccessfulResults.length > 0) {
           try {
             await this.metricsRepository.saveBatch(chunkSuccessfulResults);
-            successfulResults.push(...chunkSuccessfulResults);
           } catch (error) {
             logger.warn("Chunk batch cache write failed:", error);
           }
         }
-
-        // Clear arrays to free memory
-        chunkProfiles.length = 0;
-        chunkPubkeysToFetch.length = 0;
-        chunkSuccessfulResults.length = 0;
       }
 
       return results;
@@ -403,44 +317,19 @@ export class MetricsValidator {
   }
 
   /**
-   * Register a custom validation plugin
-   * @param plugin - Validation plugin to register
+   * Get metric descriptions registry
+   * @returns MetricDescriptionRegistry with all Elo plugin descriptions
    */
-  registerPlugin(plugin: ValidationPlugin): void {
-    this.registry.register(plugin);
-    this.metricDescriptions.register(plugin.name, plugin.description);
+  getMetricDescriptions() {
+    return this.eloEngine.getMetricDescriptions();
   }
 
   /**
-   * Get all registered validation plugins
-   * @returns Array of registered plugins
+   * Get resolved plugin weights
+   * @returns Record mapping namespaced plugin names to their weights
    */
-  getRegisteredPlugins(): ValidationPlugin[] {
-    return this.registry.getAll();
-  }
-
-  /**
-   * Get metric descriptions registry (merges TS and Elo descriptions)
-   * @returns MetricDescriptionRegistry instance with all descriptions
-   */
-  getMetricDescriptions(): MetricDescriptionRegistry {
-    // Merge TS and Elo descriptions
-    const eloDescriptions = this.eloEngine.getMetricDescriptions();
-    const mergedDescriptions = new MetricDescriptionRegistry();
-
-    // Add all TS validator descriptions
-    const tsDescriptions = this.metricDescriptions.getAll();
-    for (const [name, description] of Object.entries(tsDescriptions)) {
-      mergedDescriptions.register(name, description);
-    }
-
-    // Add all Elo plugin descriptions
-    const eloDescMap = eloDescriptions.getAll();
-    for (const [name, description] of Object.entries(eloDescMap)) {
-      mergedDescriptions.register(name, description);
-    }
-
-    return mergedDescriptions;
+  getResolvedWeights(): Record<string, number> {
+    return this.eloEngine.getResolvedWeights();
   }
 
   /**
@@ -497,6 +386,29 @@ export class MetricsValidator {
     } catch {
       // Return minimal profile on error
       return { pubkey };
+    }
+  }
+
+  /**
+   * Evaluate Elo plugins for a pubkey
+   * @param pubkey - Target public key
+   * @param sourcePubkey - Optional source pubkey for context-dependent capabilities
+   * @returns Plugin metrics or empty object on error
+   * @private
+   */
+  private async evaluateEloPlugins(
+    pubkey: string,
+    sourcePubkey?: string,
+  ): Promise<Record<string, number>> {
+    try {
+      return await this.eloEngine.evaluateForPubkey({
+        targetPubkey: pubkey,
+        sourcePubkey,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(`Elo plugin evaluation failed for ${pubkey}: ${errorMsg}`);
+      return {};
     }
   }
 }

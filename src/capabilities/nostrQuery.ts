@@ -67,21 +67,19 @@ export const nostrQuery: CapabilityHandler = async (args, context) => {
     const events = await withTimeout(
       new Promise<NostrEvent[]>((resolve, reject) => {
         const collectedEvents: NostrEvent[] = [];
-        const subscription = pool
-          .request(relays, filter, { retries: 1 })
-          .subscribe({
-            next: (event) => {
-              collectedEvents.push(event);
-            },
-            error: (error) => {
-              subscription.unsubscribe();
-              reject(error);
-            },
-            complete: () => {
-              subscription.unsubscribe();
-              resolve(collectedEvents);
-            },
-          });
+        const subscription = pool.request(relays, filter).subscribe({
+          next: (event) => {
+            collectedEvents.push(event);
+          },
+          error: (error) => {
+            subscription.unsubscribe();
+            reject(error);
+          },
+          complete: () => {
+            subscription.unsubscribe();
+            resolve(collectedEvents);
+          },
+        });
       }),
       timeoutMs,
     );

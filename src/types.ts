@@ -34,6 +34,7 @@ export interface RelatrConfig {
   eloPluginsDir: string;
   eloPluginTimeoutMs: number;
   capTimeoutMs: number;
+  eloPluginWeights: Record<string, number>;
 
   /**
    * MCP server configuration
@@ -57,7 +58,7 @@ export interface RelatrConfig {
 }
 export interface MetricWeights {
   distanceWeight: number;
-  validators: Record<string, number>; // Dynamic validator weights
+  validators: Record<string, number>; // Dynamic plugin weights (namespaced)
 }
 
 // Data types
@@ -139,21 +140,6 @@ export interface NostrProfile {
   nip05?: string;
   lud16?: string;
   about?: string;
-}
-
-// Validation types
-export interface ValidationResult {
-  valid: boolean;
-  score: number;
-  reason?: string;
-  details?: Record<string, unknown>;
-}
-
-export interface ValidationMetrics {
-  nip05: ValidationResult;
-  lightning: ValidationResult;
-  event: ValidationResult;
-  reciprocity: ValidationResult;
 }
 
 // Error types

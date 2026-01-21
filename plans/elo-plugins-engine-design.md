@@ -18,10 +18,10 @@ This document proposes the next iteration: a **C1 “Library Facade”** archite
 
 ## Goals
 
-1. **Keep Elo plugins as a “kernel/library”** (easy to extract into a separate package later).
+1. **Keep Elo plugins as a "kernel/library"** (easy to extract into a separate package later).
 2. **Single entrypoint** for wiring + invariants (timeouts, enabled caps, relays list, deps).
 3. **Startup-load only** (load plugin files once; no reload loop for now).
-4. **Metrics caching stays in MetricsRepository**: cache _only the final merged_ `ProfileMetrics` (TS + Elo).
+4. **Metrics caching stays in MetricsRepository**: cache _only the final merged_ `ProfileMetrics` (Elo-only after TS deprecation).
 5. Reduce redundancy: avoid passing overlapping config fragments through multiple layers.
 
 Non-goals (for this iteration):
@@ -164,26 +164,21 @@ At evaluation time:
 
 ### MetricsValidator
 
-`MetricsValidator` becomes the owner of merging TS metrics + Elo metrics.
+**After TS deprecation**, `MetricsValidator` works exclusively with Elo plugins.
 
 Pseudo-code (illustrative):
 
 ```ts
-const tsMetrics = await this.registry.executeAll(context);
+// Execute Elo plugins only
+const eloMetrics = await this.eloEngine.evaluateForPubkey({
+  targetPubkey: pubkey,
+  sourcePubkey,
+});
 
-let eloMetrics: Record<string, number> = {};
-if (this.config.eloPluginsEnabled) {
-  eloMetrics = await this.eloEngine.evaluateForPubkey({
-    targetPubkey: pubkey,
-    sourcePubkey,
-    searchQuery,
-  });
-}
-
-const metrics = { ...tsMetrics, ...eloMetrics };
+const metrics = eloMetrics; // No TS metrics merge needed
 ```
 
-Caching remains unchanged: `ProfileMetrics` is cached as a whole (current behavior).
+Caching remains unchanged: `ProfileMetrics` is cached as a whole.
 
 ### RelatrFactory
 
@@ -200,7 +195,7 @@ This keeps lifecycle consistent (startup-load) without turning the engine into a
 
 - Key: pubkey only
 - TTL: 48 hours default (configurable via `cacheTtlSeconds`)
-- Scope: End-to-end (TS + Elo metrics together)
+- Scope: End-to-end (Elo-only metrics after TS deprecation)
 - Storage: DuckDB
 
 **Pubkey-only for metrics:** Metrics are intrinsic properties, so cache key is simply the pubkey. This provides:
@@ -253,7 +248,7 @@ During Elo plugin evaluation, the engine uses a **temporary in-memory store** to
 
 Elo plugin manifests include a `pubkey` field (the plugin author's pubkey). This provides a natural namespace for metrics, preventing collisions between plugins with the same name from different authors.
 
-**Key principle:** Use `<pubkey>:<plugin-name>` format for Elo plugin metrics to ensure uniqueness and maintain decentralization.
+**Key principle:** Use `<pubkey>:<plugin-name>` format for all metrics to ensure uniqueness and maintain decentralization.
 
 ### Implementation
 
@@ -266,14 +261,7 @@ Metrics are namespaced using the plugin author's pubkey:
 "npub456xyz...uvw:follower-ratio";
 ```
 
-**TS Validator Metrics:**
-Keep simple names for built-in validators (will be deprecated once Elo plugins mature):
-
-```ts
-// Current TS validator metrics
-"nip05";
-"lightning";
-```
+**All metrics now use namespaced format** (TS validators have been deprecated).
 
 **Registration:**
 
@@ -289,10 +277,6 @@ this.metricDescriptions.register(namespacedName, plugin.manifest.description);
 {
   pubkey: "...",
   metrics: {
-    "nip05": {  // TS validator (legacy, will be deprecated)
-      value: 0.9,
-      description: "NIP-05 identifier validation score"
-    },
     "npub123abc...def:trust-score": {  // Elo plugin
       value: 0.7,
       description: "Trust score based on graph analysis"
@@ -306,9 +290,7 @@ this.metricDescriptions.register(namespacedName, plugin.manifest.description);
 - **No collisions:** Even if two plugins have the same name, their author pubkeys differ
 - **Decentralized:** No central authority needed for name registration
 - **Attributable:** Users can see which author created each metric
-- **Future-proof:** When TS validators are deprecated, all metrics will follow this pattern
-
-**Note:** TS validators are a temporary bridge solution. Once Elo plugins reach maturity, TS validators will be deprecated and all metrics will use the namespaced format.
+- **Consistent:** All metrics follow the same namespaced format
 
 ---
 
@@ -332,28 +314,14 @@ class MetricDescriptionRegistry {
 }
 ```
 
-**TS Validators:**
-Register descriptions in MetricsValidator constructor alongside plugin registration:
-
-```ts
-// In MetricsValidator constructor (src/validators/MetricsValidator.ts:91)
-for (const plugin of plugins) {
-  this.registry.register(plugin);
-  // NEW: Register metric description
-  this.metricDescriptions.register(plugin.name, plugin.description);
-}
-```
-
-**Note**: The `ValidationPlugin` type (in `src/validators/plugins.ts`) will need to be extended to include a `description: string` property.
-
 **Elo Plugins:**
 Extract from `manifest.description` at plugin load time using namespaced names:
 
 ```ts
-// In EloPluginEngine
+// In EloPluginEngine.initialize()
 const namespacedName = `${plugin.manifest.pubkey}:${plugin.manifest.name}`;
 const description = plugin.manifest.description || "No description available";
-metricDescriptions.register(namespacedName, description);
+this.metricDescriptions.register(namespacedName, description);
 ```
 
 **API Response:**
@@ -362,10 +330,6 @@ metricDescriptions.register(namespacedName, description);
 {
   pubkey: "...",
   metrics: {
-    "nip05": {
-      value: 0.9,
-      description: "NIP-05 identifier validation score"
-    },
     "npub123abc...def:elo-example": {
       value: 0.7,
       description: "Example plugin based on graph analysis"
@@ -377,9 +341,66 @@ metricDescriptions.register(namespacedName, description);
 **Benefits:**
 
 - Descriptions loaded once at startup (not per-evaluation)
-- Single source of truth (manifest for Elo, code for TS)
+- Single source of truth (plugin manifest)
 - No DB schema changes
 - Backward compatible (descriptions optional)
+
+---
+
+## Plugin Weight Resolution
+
+### Design Rationale
+
+Plugin weights determine how much each metric contributes to the final trust score. We support three tiers of weight specification:
+
+1. **Tier 1 - Config override (highest priority)**: Operator can override any plugin's weight via `eloPluginWeights` config
+2. **Tier 2 - Manifest default**: Plugin author declares a default weight in the manifest
+3. **Tier 3 - Proportional distribution**: Unweighted plugins share remaining weight equally
+
+### Implementation
+
+**Configuration:**
+
+```typescript
+// In RelatrConfig
+eloPluginWeights: Record<string, number>; // "pubkey:pluginName" -> weight
+```
+
+**Environment variable:**
+
+```bash
+ELO_PLUGIN_WEIGHTS='{"npub1abc...xyz:my_plugin": 0.2, "npub1abc...xyz:other": 0.3}'
+```
+
+**Manifest:**
+
+```json
+{
+  "name": "my_plugin",
+  "weight": 0.5,
+  ...
+}
+```
+
+**Resolution Algorithm:**
+
+```typescript
+// In EloPluginEngine.resolvePluginWeights()
+1. Separate plugins into: weighted (config/manifest) and unweighted
+2. Calculate total allocated weight from weighted plugins
+3. If total > 1.0, normalize proportionally
+4. Distribute remaining weight among unweighted plugins equally
+
+// Example: A(0.5 manifest), B(0.2 config), C(unweighted)
+// Result: A=0.5, B=0.2, C=0.3 (remaining)
+```
+
+### Benefits
+
+- Operators have full control via config overrides
+- Plugin authors can suggest default weights
+- Unweighted plugins automatically adapt to the ecosystem
+- Weights always sum to 1.0
 
 ---
 

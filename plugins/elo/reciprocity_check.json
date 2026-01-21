@@ -1,0 +1,20 @@
+{
+  "id": "dev-reciprocity-check-001",
+  "pubkey": "dev-plugin-author-pubkey",
+  "created_at": 1704067200,
+  "kind": 31234,
+  "tags": [
+    ["name", "reciprocity_check"],
+    ["title", "Reciprocity Check"],
+    [
+      "description",
+      "Scores 1.0 if the source and target pubkeys mutually follow each other"
+    ],
+    ["weight", "0.10"],
+    ["cap", "graph.are_mutual"],
+    ["cap_arg", "sourcePubkey"],
+    ["cap_arg", "pubkey"]
+  ],
+  "content": "if _.cap.graph.are_mutual then 1.0 else 0.0",
+  "sig": "dev-signature-for-testing"
+}

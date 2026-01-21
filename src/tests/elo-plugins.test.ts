@@ -1123,6 +1123,296 @@ describe("Elo Plugins - Additional Critical Tests", () => {
   });
 });
 
+describe("Elo Plugins - Weight Resolution", () => {
+  /**
+   * Helper to create a mock plugin with specific weight
+   */
+  const createMockPlugin = (
+    pubkey: string,
+    name: string,
+    weight: number | null,
+  ): PortablePlugin => ({
+    id: `plugin-${pubkey}-${name}`,
+    pubkey,
+    createdAt: 1704067200,
+    kind: 31234,
+    content: "0.5",
+    manifest: {
+      name,
+      title: null,
+      description: null,
+      weight,
+      caps: [],
+    },
+    rawEvent: {} as any,
+  });
+
+  /**
+   * Helper to create a mock EloPluginEngine for testing weight resolution
+   */
+  const createMockEngine = (
+    plugins: PortablePlugin[],
+    configWeights?: Record<string, number>,
+  ): {
+    plugins: PortablePlugin[];
+    config: { eloPluginWeights?: Record<string, number> };
+  } => ({
+    plugins,
+    config: { eloPluginWeights: configWeights },
+  });
+
+  /**
+   * Helper to extract resolved weights from a set of plugins and config
+   * This simulates the resolvePluginWeights algorithm
+   */
+  const simulateWeightResolution = (
+    plugins: PortablePlugin[],
+    configOverrides?: Record<string, number>,
+  ): Record<string, number> => {
+    const weights: Record<string, number> = {};
+    const weightedPlugins: Array<{ name: string; weight: number }> = [];
+    const unweightedPlugins: string[] = [];
+
+    for (const plugin of plugins) {
+      const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
+
+      // Tier 1: Config override (highest priority)
+      if (configOverrides && configOverrides[namespacedName] !== undefined) {
+        weightedPlugins.push({
+          name: namespacedName,
+          weight: configOverrides[namespacedName],
+        });
+        continue;
+      }
+
+      // Tier 2: Manifest default
+      if (plugin.manifest.weight != null) {
+        weightedPlugins.push({
+          name: namespacedName,
+          weight: plugin.manifest.weight,
+        });
+        continue;
+      }
+
+      // Tier 3: Unweighted (to be distributed)
+      unweightedPlugins.push(namespacedName);
+    }
+
+    // Calculate total allocated weight
+    const totalAllocated = weightedPlugins.reduce(
+      (sum, p) => sum + p.weight,
+      0,
+    );
+    const remainingWeight = Math.max(0, 1.0 - totalAllocated);
+
+    // Validate and handle overallocation
+    if (totalAllocated > 1.0) {
+      // Normalize weighted plugins proportionally
+      const scale = 1.0 / totalAllocated;
+      weightedPlugins.forEach((p) => (p.weight *= scale));
+    }
+
+    // Assign weights to explicitly weighted plugins
+    for (const plugin of weightedPlugins) {
+      weights[plugin.name] = plugin.weight;
+    }
+
+    // Distribute remaining weight among unweighted plugins
+    if (unweightedPlugins.length > 0 && remainingWeight > 0) {
+      const eachWeight = remainingWeight / unweightedPlugins.length;
+      for (const name of unweightedPlugins) {
+        weights[name] = eachWeight;
+      }
+    }
+
+    return weights;
+  };
+
+  test("should use config override over manifest default", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.5),
+      createMockPlugin("pk1", "plugin_b", 0.3),
+    ];
+
+    const configOverrides = {
+      "pk1:plugin_a": 0.8, // Config override
+    };
+
+    const weights = simulateWeightResolution(plugins, configOverrides);
+
+    // Plugin A should use config override (0.8) not manifest (0.5)
+    // Total is 0.8 + 0.3 = 1.1, which exceeds 1.0, so both are normalized
+    expect(weights["pk1:plugin_a"]).toBeCloseTo(0.8 / 1.1, 10);
+    // Plugin B should use manifest default (0.3), normalized
+    expect(weights["pk1:plugin_b"]).toBeCloseTo(0.3 / 1.1, 10);
+  });
+
+  test("should use manifest default when no config override", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.5),
+      createMockPlugin("pk2", "plugin_b", 0.3),
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    expect(weights["pk1:plugin_a"]).toBe(0.5);
+    expect(weights["pk2:plugin_b"]).toBe(0.3);
+  });
+
+  test("should distribute remaining weight among unweighted plugins", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.5),
+      createMockPlugin("pk2", "plugin_b", null), // Unweighted
+      createMockPlugin("pk3", "plugin_c", null), // Unweighted
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    // Plugin A should use manifest default (0.5)
+    expect(weights["pk1:plugin_a"]).toBe(0.5);
+    // Plugins B and C should split remaining 0.5 equally
+    expect(weights["pk2:plugin_b"]).toBe(0.25);
+    expect(weights["pk3:plugin_c"]).toBe(0.25);
+    // Total should be 1.0
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0);
+    expect(total).toBeCloseTo(1.0, 10);
+  });
+
+  test("should normalize weights when total exceeds 1.0", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.5),
+      createMockPlugin("pk2", "plugin_b", 0.8),
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    // Both should be scaled down proportionally
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0);
+    expect(total).toBeCloseTo(1.0, 10);
+    expect(weights["pk1:plugin_a"]).toBeCloseTo(0.5 / 1.3, 10);
+    expect(weights["pk2:plugin_b"]).toBeCloseTo(0.8 / 1.3, 10);
+  });
+
+  test("should handle all plugins having config overrides", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.5),
+      createMockPlugin("pk2", "plugin_b", 0.3),
+    ];
+
+    const configOverrides = {
+      "pk1:plugin_a": 0.4,
+      "pk2:plugin_b": 0.2,
+    };
+
+    const weights = simulateWeightResolution(plugins, configOverrides);
+
+    // Both should use config overrides
+    expect(weights["pk1:plugin_a"]).toBeCloseTo(0.4, 10);
+    expect(weights["pk2:plugin_b"]).toBeCloseTo(0.2, 10);
+    // Remaining 0.4 should not be distributed since no unweighted plugins
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0);
+    expect(total).toBeCloseTo(0.6, 10);
+  });
+
+  test("should handle all plugins being unweighted", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", null),
+      createMockPlugin("pk2", "plugin_b", null),
+      createMockPlugin("pk3", "plugin_c", null),
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    // All should split weight equally
+    expect(weights["pk1:plugin_a"]).toBeCloseTo(1 / 3, 10);
+    expect(weights["pk2:plugin_b"]).toBeCloseTo(1 / 3, 10);
+    expect(weights["pk3:plugin_c"]).toBeCloseTo(1 / 3, 10);
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0);
+    expect(total).toBeCloseTo(1.0, 10);
+  });
+
+  test("should handle empty plugin list", () => {
+    const weights = simulateWeightResolution([]);
+    expect(Object.keys(weights)).toHaveLength(0);
+  });
+
+  test("should handle single unweighted plugin", () => {
+    const plugins = [createMockPlugin("pk1", "plugin_a", null)];
+
+    const weights = simulateWeightResolution(plugins);
+
+    // Single unweighted plugin should get all weight
+    expect(weights["pk1:plugin_a"]).toBe(1.0);
+  });
+
+  test("should handle mixed config overrides and manifest defaults", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.5),
+      createMockPlugin("pk2", "plugin_b", 0.2),
+      createMockPlugin("pk3", "plugin_c", null),
+      createMockPlugin("pk4", "plugin_d", null),
+    ];
+
+    const configOverrides = {
+      "pk1:plugin_a": 0.6, // Config override
+    };
+
+    const weights = simulateWeightResolution(plugins, configOverrides);
+
+    // Plugin A uses config override (0.6)
+    expect(weights["pk1:plugin_a"]).toBeCloseTo(0.6, 10);
+    // Plugin B uses manifest default (0.2)
+    expect(weights["pk2:plugin_b"]).toBeCloseTo(0.2, 10);
+    // Plugins C and D split remaining 0.2
+    expect(weights["pk3:plugin_c"]).toBeCloseTo(0.1, 10);
+    expect(weights["pk4:plugin_d"]).toBeCloseTo(0.1, 10);
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0);
+    expect(total).toBeCloseTo(1.0, 10);
+  });
+
+  test("should handle undefined manifest weight correctly", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", undefined as any),
+      createMockPlugin("pk2", "plugin_b", 0.4),
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    // Plugin A should be treated as unweighted (undefined -> null via != null check)
+    expect(weights["pk1:plugin_a"]).toBeCloseTo(0.6, 10);
+    expect(weights["pk2:plugin_b"]).toBe(0.4);
+  });
+
+  test("should preserve floating point precision in distribution", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.333333),
+      createMockPlugin("pk2", "plugin_b", 0.333333),
+      createMockPlugin("pk3", "plugin_c", 0.333334),
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0);
+    expect(total).toBeCloseTo(1.0, 10);
+  });
+
+  test("should handle zero-weight plugins", () => {
+    const plugins = [
+      createMockPlugin("pk1", "plugin_a", 0.0),
+      createMockPlugin("pk2", "plugin_b", null),
+      createMockPlugin("pk3", "plugin_c", null),
+    ];
+
+    const weights = simulateWeightResolution(plugins);
+
+    // Zero-weight plugin counts as weighted
+    expect(weights["pk1:plugin_a"]).toBe(0.0);
+    // Remaining weight distributed among unweighted
+    expect(weights["pk2:plugin_b"]).toBeCloseTo(0.5, 10);
+    expect(weights["pk3:plugin_c"]).toBeCloseTo(0.5, 10);
+  });
+});
+
 describe("Elo Plugins - Utility Functions", () => {
   test("setNestedValue should create nested structure correctly", () => {
     const obj: Record<string, any> = {};

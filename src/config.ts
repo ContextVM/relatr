@@ -1,22 +1,14 @@
 import { normalizeToPubkey } from "applesauce-core/helpers";
-import type { MetricWeights, RelatrConfig } from "./types";
+import type { RelatrConfig } from "./types";
 import { z } from "zod";
 import { COMMON_RELAYS, CVM_RELAY } from "./constants/nostr";
 
 /**
- * Canonical default metric weighting scheme used by trust scoring.
- * Keep this as the single source of truth (tests + runtime).
+ * Default weights for the distance component in trust scoring.
+ * This is kept for backward compatibility - the distance weight is
+ * applied separately from plugin weights.
  */
-export const DEFAULT_METRIC_WEIGHTS: MetricWeights = {
-  distanceWeight: 0.5,
-  validators: {
-    nip05Valid: 0.15,
-    lightningAddress: 0.1,
-    eventKind10002: 0.1,
-    reciprocity: 0.1,
-    isRootNip05: 0.05,
-  },
-};
+export const DEFAULT_DISTANCE_WEIGHT = 0.5;
 
 const GIGI_PUBKEY =
   "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93";
@@ -55,8 +47,14 @@ export const RelatrConfigSchema = z.object({
     .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
     .default(false),
   eloPluginsDir: z.string().default("./plugins/elo"),
-  eloPluginTimeoutMs: z.number().positive().default(200),
+  eloPluginTimeoutMs: z.number().positive().default(5000),
   capTimeoutMs: z.number().positive().default(5000),
+  eloPluginWeights: z
+    .record(z.string(), z.number().min(0).max(1))
+    .default({})
+    .describe(
+      "Override weights for Elo plugins (namespaced names: pubkey:pluginName)",
+    ),
 
   // MCP server configuration
   isPublicServer: z
@@ -148,6 +146,9 @@ export function loadConfig(): RelatrConfig {
       : undefined,
     capTimeoutMs: process.env.CAP_TIMEOUT_MS
       ? parseInt(process.env.CAP_TIMEOUT_MS, 10)
+      : undefined,
+    eloPluginWeights: process.env.ELO_PLUGIN_WEIGHTS
+      ? JSON.parse(process.env.ELO_PLUGIN_WEIGHTS)
       : undefined,
 
     // MCP server configuration
