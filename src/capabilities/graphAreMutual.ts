@@ -14,11 +14,13 @@ export const graphAreMutual: CapabilityHandler = async (args, context) => {
     throw new Error("SocialGraph not available in context");
   }
 
-  const pubkey1 = args[0];
-  const pubkey2 = args[1];
+  const pubkey1 = args?.a;
+  const pubkey2 = args?.b;
 
   if (!pubkey1 || !pubkey2) {
-    throw new Error("are_mutual requires pubkey1 and pubkey2 arguments");
+    throw new Error(
+      "are_mutual requires 'a' and 'b' fields in arguments object",
+    );
   }
 
   if (!graph.isInitialized()) {

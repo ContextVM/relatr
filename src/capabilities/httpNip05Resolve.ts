@@ -7,17 +7,11 @@ const logger = new Logger({ service: "httpNip05Resolve" });
 
 /**
  * HTTP NIP-05 resolution capability
- * Args: [nip05_identifier]
+ * Args: { nip05: string }
  * Returns: { pubkey: string | null }
  */
 export const httpNip05Resolve: CapabilityHandler = async (args, _context) => {
-  if (args.length !== 1) {
-    throw new Error(
-      "http.nip05_resolve requires exactly 1 argument: nip05_identifier",
-    );
-  }
-
-  const nip05 = args[0];
+  const nip05 = args?.nip05;
   if (!nip05 || typeof nip05 !== "string") {
     return { pubkey: null };
   }

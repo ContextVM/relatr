@@ -1,4 +1,5 @@
 import { compile } from "@enspirit/elo";
+import { DateTime, Duration } from "luxon";
 import type {
   PortablePlugin,
   EloInput,
@@ -15,40 +16,56 @@ const compilationCache = new Map<string, (_: EloInput) => unknown>();
 
 /**
  * Compile Elo code to a JavaScript function
- * @param plugin - The portable plugin containing Elo code
+ * @param source - The Elo source code
+ * @param cacheKey - Optional cache key
  * @returns Compiled function
  */
-function compileElo(plugin: PortablePlugin): (_: EloInput) => unknown {
-  const cacheKey = plugin.id;
-
+export function compileElo(
+  source: string,
+  cacheKey?: string,
+): (_: EloInput) => unknown {
   // Check compilation cache
-  const cached = compilationCache.get(cacheKey);
-  if (cached) {
-    logger.debug(
-      `Using cached compilation for plugin: ${plugin.manifest.name}`,
-    );
-    return cached;
+  if (cacheKey) {
+    const cached = compilationCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
   }
 
   try {
-    logger.debug(`Compiling Elo for plugin: ${plugin.manifest.name}`);
-
     // Compile Elo to JavaScript function
-    // The compiled function takes an input object "_" and returns a value
-    const compiled = compile(plugin.content) as (_: EloInput) => unknown;
+    // Provide runtime dependencies required by Elo for DateTime/Duration.
+    // Without these, evaluating expressions can throw errors like:
+    //   "undefined is not an object (evaluating 'Duration.isDuration')"
+    // even if the user expression doesn't explicitly reference them.
+    const compiled = compile(source, {
+      runtime: { DateTime, Duration },
+    }) as any;
 
     // Cache the compiled function
-    compilationCache.set(cacheKey, compiled);
+    if (cacheKey) {
+      compilationCache.set(cacheKey, compiled);
+    }
 
-    logger.debug(
-      `Successfully compiled Elo for plugin: ${plugin.manifest.name}`,
-    );
-    return compiled;
+    return (_: EloInput) => {
+      try {
+        // `compile()` returns a function that takes `_` as its argument.
+        // (See docs excerpt in `plans/elo-reference.md`.)
+        if (typeof compiled === "function") return compiled(_);
+
+        // Some builds may return an object with an evaluate method.
+        if (compiled && typeof compiled.evaluate === "function")
+          return compiled.evaluate(_);
+
+        return compiled;
+      } catch (e) {
+        logger.error(`Elo execution error: ${e}`);
+        throw e;
+      }
+    };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    logger.error(
-      `Failed to compile Elo for plugin ${plugin.manifest.name}: ${errorMsg}`,
-    );
+    logger.error(`Failed to compile Elo: ${errorMsg}`);
     throw new Error(`Elo compilation failed: ${errorMsg}`);
   }
 }
@@ -64,12 +81,18 @@ export async function evaluateElo(
   plugin: PortablePlugin,
   input: EloInput,
   timeoutMs: number = 200,
+  sourceOverride?: string,
 ): Promise<EloEvaluationResult> {
   const startTime = Date.now();
 
   try {
     // Compile the Elo code (or get from cache)
-    const compiledFn = compileElo(plugin);
+    // If sourceOverride is provided, we don't use the plugin ID as cache key
+    // because the rewritten source might change per evaluation.
+    const compiledFn = compileElo(
+      sourceOverride || plugin.content,
+      sourceOverride ? undefined : plugin.id,
+    );
 
     // Execute with timeout
     const result = await executeWithTimeout(() => compiledFn(input), timeoutMs);
@@ -123,8 +146,21 @@ async function executeWithTimeout<T>(
 
     try {
       const result = fn();
-      clearTimeout(timer);
-      resolve(result);
+      if (result instanceof Promise) {
+        result.then(
+          (val) => {
+            clearTimeout(timer);
+            resolve(val);
+          },
+          (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        );
+      } else {
+        clearTimeout(timer);
+        resolve(result);
+      }
     } catch (error) {
       clearTimeout(timer);
       reject(error);

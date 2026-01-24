@@ -1,5 +1,3 @@
-import { canonicalize } from "json-canonicalize";
-
 /**
  * PlanningStore - Temporary in-memory store for capability results during evaluation
  *
@@ -10,88 +8,37 @@ import { canonicalize } from "json-canonicalize";
  * Key characteristics:
  * - Scope: Single evaluation only (not persisted across evaluations)
  * - Lifecycle: Created at start, flushed after completion
- * - Key format: pluginId:targetPubkey:capName:argsHash
- * - Purpose: Deduplicate capability requests across plugins during planning
- *
- * This is NOT a cache with TTL. When metrics expire in MetricsRepository,
- * the planning store is already empty, ensuring fresh capability results on recomputation.
+ * - Key format: RequestKey (capName + "\n" + canonicalArgsJson)
+ * - Purpose: Deduplicate capability requests across all plugins during planning
  */
 export class PlanningStore {
   private store = new Map<string, unknown>();
 
   /**
-   * Generate a cache key for a capability request
-   * @param pluginId - The plugin ID
-   * @param targetPubkey - The target pubkey
-   * @param capName - The capability name
-   * @param args - The capability arguments
-   * @returns A deterministic cache key
-   */
-  private generateKey(
-    pluginId: string,
-    targetPubkey: string,
-    capName: string,
-    args: string[],
-  ): string {
-    // Use json-canonicalize for deterministic serialization
-    // This ensures that objects with the same keys/values in different orders produce the same hash
-    const argsHash = args.length > 0 ? canonicalize(args) : "[]";
-    return `${pluginId}:${targetPubkey}:${capName}:${argsHash}`;
-  }
-
-  /**
    * Check if a capability result exists in the store
-   * @param pluginId - The plugin ID
-   * @param targetPubkey - The target pubkey
-   * @param capName - The capability name
-   * @param args - The capability arguments
+   * @param requestKey - The RequestKey
    * @returns true if the result exists
    */
-  has(
-    pluginId: string,
-    targetPubkey: string,
-    capName: string,
-    args: string[],
-  ): boolean {
-    const key = this.generateKey(pluginId, targetPubkey, capName, args);
-    return this.store.has(key);
+  has(requestKey: string): boolean {
+    return this.store.has(requestKey);
   }
 
   /**
    * Get a capability result from the store
-   * @param pluginId - The plugin ID
-   * @param targetPubkey - The target pubkey
-   * @param capName - The capability name
-   * @param args - The capability arguments
+   * @param requestKey - The RequestKey
    * @returns The stored result, or undefined if not found
    */
-  get(
-    pluginId: string,
-    targetPubkey: string,
-    capName: string,
-    args: string[],
-  ): unknown {
-    const key = this.generateKey(pluginId, targetPubkey, capName, args);
-    return this.store.get(key);
+  get(requestKey: string): unknown {
+    return this.store.get(requestKey);
   }
 
   /**
    * Store a capability result
-   * @param pluginId - The plugin ID
-   * @param targetPubkey - The target pubkey
-   * @param capName - The capability name
-   * @param args - The capability arguments
+   * @param requestKey - The RequestKey
    * @param value - The result value to store
    */
-  set(
-    pluginId: string,
-    targetPubkey: string,
-    capName: string,
-    args: string[],
-    value: unknown,
-  ): void {
-    const key = this.generateKey(pluginId, targetPubkey, capName, args);
-    this.store.set(key, value);
+  set(requestKey: string, value: unknown): void {
+    this.store.set(requestKey, value);
   }
 
   /**
@@ -115,5 +62,12 @@ export class PlanningStore {
    */
   getKeys(): string[] {
     return Array.from(this.store.keys());
+  }
+
+  /**
+   * Get all entries as a record
+   */
+  getAll(): Record<string, unknown> {
+    return Object.fromEntries(this.store.entries());
   }
 }

@@ -6,8 +6,7 @@ import { isValidCapabilityName } from "../capabilities/capability-catalog";
  *
  * Tag schema:
  * - name, title, description, weight (single values)
- * - cap (repeatable)
- * - cap_arg (repeatable, associated with preceding cap)
+ * - cap (repeatable) - capability allowlist
  *
  * @param tags - Nostr event tags (string[][])
  * @returns Parsed plugin manifest
@@ -20,9 +19,6 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
     weight: null,
     caps: [],
   };
-
-  // Simple state machine to associate cap_arg with the most recent cap
-  let currentCap: { name: string; args: string[] } | null = null;
 
   for (const tag of tags) {
     if (tag.length < 2) continue; // Skip invalid tags
@@ -45,25 +41,11 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
           : parseFloat(value || "");
         break;
       case "cap":
-        // If we have a current cap being built, push it to the list
-        if (currentCap) {
-          manifest.caps.push(currentCap);
-        }
-        // Start a new cap
-        currentCap = { name: value || "", args: [] };
-        break;
-      case "cap_arg":
-        // Associate with current cap if one is active
-        if (currentCap) {
-          currentCap.args.push(value || "");
+        if (value && !manifest.caps.includes(value)) {
+          manifest.caps.push(value);
         }
         break;
     }
-  }
-
-  // Push the last cap if it exists
-  if (currentCap) {
-    manifest.caps.push(currentCap);
   }
 
   return manifest;
@@ -91,9 +73,9 @@ export function validateManifest(manifest: PluginManifest): {
   }
 
   // Validate cap names using the centralized catalog
-  for (const cap of manifest.caps) {
-    if (!isValidCapabilityName(cap.name)) {
-      errors.push(`Unknown capability: ${cap.name}`);
+  for (const capName of manifest.caps) {
+    if (!isValidCapabilityName(capName)) {
+      errors.push(`Unknown capability: ${capName}`);
     }
   }
 

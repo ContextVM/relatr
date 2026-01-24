@@ -65,19 +65,14 @@ export class CapabilityExecutor {
   async execute(
     request: CapabilityRequest,
     context: CapabilityContext,
-    pluginId: string,
     planningStore?: PlanningStore,
+    requestKey?: string,
   ): Promise<CapabilityResponse> {
     const startTime = Date.now();
 
     // Check planning store first (if provided) - this is per-evaluation deduplication
-    if (planningStore) {
-      const planningResult = planningStore.get(
-        pluginId,
-        context.targetPubkey,
-        request.capName,
-        request.args,
-      );
+    if (planningStore && requestKey) {
+      const planningResult = planningStore.get(requestKey);
       if (planningResult !== undefined) {
         logger.debug(`Planning store hit for ${request.capName}`);
         return {
@@ -114,19 +109,13 @@ export class CapabilityExecutor {
       // Execute with timeout
       const timeoutMs = request.timeoutMs || context.config.capTimeoutMs;
       const value = await withTimeout(
-        handler(request.args, context),
+        handler(request.argsJson, context),
         timeoutMs,
       );
 
       // Store in planning store if provided (for deduplication within evaluation)
-      if (planningStore) {
-        planningStore.set(
-          pluginId,
-          context.targetPubkey,
-          request.capName,
-          request.args,
-          value,
-        );
+      if (planningStore && requestKey) {
+        planningStore.set(requestKey, value);
       }
 
       logger.debug(`Capability ${request.capName} executed successfully`);
@@ -199,13 +188,12 @@ export class CapabilityExecutor {
    * @returns Array of capability responses
    */
   async executeBatch(
-    requests: CapabilityRequest[],
+    requests: Array<{ request: CapabilityRequest; requestKey: string }>,
     context: CapabilityContext,
-    pluginId: string,
     planningStore?: PlanningStore,
   ): Promise<CapabilityResponse[]> {
-    const promises = requests.map((request) =>
-      this.execute(request, context, pluginId, planningStore),
+    const promises = requests.map(({ request, requestKey }) =>
+      this.execute(request, context, planningStore, requestKey),
     );
 
     return Promise.all(promises);

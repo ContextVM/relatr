@@ -26,10 +26,7 @@ export interface PluginManifest {
   title: string | null;
   description: string | null;
   weight: number | null;
-  caps: Array<{
-    name: string;
-    args: string[];
-  }>;
+  caps: string[];
 }
 
 /**
@@ -51,7 +48,7 @@ export interface PortablePlugin {
  */
 export interface CapabilityRequest {
   capName: string;
-  args: string[];
+  argsJson: unknown;
   timeoutMs: number;
 }
 
@@ -69,10 +66,10 @@ export interface CapabilityResponse {
  * Elo evaluation input (the "_" object)
  */
 export interface EloInput {
-  pubkey: string;
-  sourcePubkey?: string;
+  targetPubkey: string;
+  sourcePubkey: string | null;
   now: number;
-  cap: Record<string, unknown>;
+  provisioned: Record<string, unknown>;
 }
 
 /**

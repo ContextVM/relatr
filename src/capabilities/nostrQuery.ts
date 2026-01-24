@@ -10,7 +10,7 @@ const logger = new Logger({ service: "nostrQuery" });
  * Queries Nostr relays for events matching a filter
  *
  * Args:
- * - args[0]: JSON string representing Nostr filter
+ * - args: Nostr filter object
  *
  * Returns: Array of NostrEvent objects (max 1000 events, sorted deterministically)
  *
@@ -19,7 +19,7 @@ const logger = new Logger({ service: "nostrQuery" });
  */
 export const nostrQuery: CapabilityHandler = async (args, context) => {
   // Validate arguments
-  if (args.length === 0) {
+  if (!args) {
     logger.warn("nostr.query called without filter argument");
     return [];
   }
@@ -38,16 +38,8 @@ export const nostrQuery: CapabilityHandler = async (args, context) => {
     return [];
   }
 
-  // Parse filter from JSON string
-  let filter: Filter;
-  try {
-    filter = JSON.parse(args[0]!) as Filter;
-  } catch (error) {
-    logger.warn(
-      `Invalid filter JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return [];
-  }
+  // args is already a JSON object (Filter)
+  const filter = args as Filter;
 
   // Enforce deterministic constraints
   // Max limit of 1000 events
@@ -83,6 +75,19 @@ export const nostrQuery: CapabilityHandler = async (args, context) => {
       }),
       timeoutMs,
     );
+
+    // Ensure deterministic ordering for plugin evaluation.
+    // We sort by created_at desc, then id asc as a stable tiebreaker.
+    // This makes `first(events)` consistently refer to the newest event.
+    events.sort((a, b) => {
+      const ca = a.created_at ?? 0;
+      const cb = b.created_at ?? 0;
+      if (ca !== cb) return cb - ca;
+
+      const ida = a.id ?? "";
+      const idb = b.id ?? "";
+      return ida < idb ? -1 : ida > idb ? 1 : 0;
+    });
 
     logger.debug(`nostr.query returned ${events.length} events`);
     return events;

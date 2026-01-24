@@ -1,0 +1,16 @@
+{
+  "kind": 765,
+  "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": 1760000000,
+  "tags": [
+    ["name", "nip05_valid"],
+    ["title", "NIP-05 valid"],
+    [
+      "description",
+      "Scores 1.0 if a known NIP-05 identifier resolves to the target pubkey (fixed nip05 string for deterministic planning)."
+    ],
+    ["cap", "nostr.query"],
+    ["cap", "http.nip05_resolve"]
+  ],
+  "content": "--RELATR\ncap meta = nostr.query {kinds: [0], authors: [_.targetPubkey], limit: 1}\ncap nip05_res = http.nip05_resolve {nip05: '_@dergigi.com'}\n--RELATR\n\nlet\n  res = fetch(_.provisioned, .nip05_res),\n  pubkey = fetch(res, .pubkey) | null\nin\nif lower(pubkey | '') == lower(_.targetPubkey) then 1.0 else 0.0\n"
+}

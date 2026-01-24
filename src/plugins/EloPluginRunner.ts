@@ -6,9 +6,9 @@ import type {
 } from "./plugin-types";
 import type { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { evaluateElo } from "./EloEvaluator";
-import { setNestedValue } from "../utils/objectPath";
 import { Logger } from "../utils/Logger";
 import { PlanningStore } from "./PlanningStore";
+import { planRelatrDeclarations } from "./relatrPlanner";
 
 const logger = new Logger({ service: "EloPluginRunner" });
 
@@ -28,67 +28,108 @@ export async function runPlugin(
     capTimeoutMs: number;
   },
   planningStore?: PlanningStore,
+  now?: number,
 ): Promise<EloEvaluationResult> {
   const startTime = Date.now();
 
   try {
     logger.debug(`Running plugin: ${plugin.manifest.name}`);
 
-    // Build capability results object with nested structure
-    const capResults: Record<string, unknown> = {};
-
-    // Execute each capability declared in the manifest
-    for (const cap of plugin.manifest.caps) {
-      // Create capability request
-      const request = {
-        capName: cap.name,
-        args: cap.args,
-        timeoutMs: config.capTimeoutMs,
-      };
-
-      // Create capability context
-      const capContext = {
-        targetPubkey: context.targetPubkey,
-        sourcePubkey: context.sourcePubkey,
-        config: {
-          capTimeoutMs: config.capTimeoutMs,
-        },
-        // Pass additional context for capabilities that need it
-        graph: context.graph,
-        pool: context.pool,
-        relays: context.relays,
-      };
-
-      // Execute capability (executor handles enablement checks and planning store)
-      const response = await executor.execute(
-        request,
-        capContext,
-        plugin.id,
-        planningStore,
-      );
-
-      if (response.ok) {
-        setNestedValue(capResults, cap.name, response.value);
-        logger.debug(`Capability ${cap.name} executed successfully`);
-      } else {
-        logger.warn(`Capability ${cap.name} failed: ${response.error}`);
-        setNestedValue(capResults, cap.name, null);
-      }
-    }
-
-    // Build Elo input object
+    // 1. Build initial Elo input for planning
+    // Use provided now for determinism across plugins in a single evaluation run,
+    // otherwise compute it (for standalone plugin runs).
+    const nowValue = now ?? Math.floor(Date.now() / 1000);
     const eloInput: EloInput = {
-      pubkey: context.targetPubkey,
-      sourcePubkey: context.sourcePubkey,
-      now: Date.now(),
-      cap: capResults,
+      targetPubkey: context.targetPubkey,
+      sourcePubkey: context.sourcePubkey || null,
+      now: nowValue,
+      provisioned: {},
     };
 
-    // Evaluate Elo code
+    // Planning store scope:
+    // - If provided (runPlugins), it's shared across plugins for dedupe.
+    // - If not provided (runPlugin), create one for this single evaluation.
+    const effectivePlanningStore = planningStore ?? new PlanningStore();
+
+    // 2. Plan: extract RELATR blocks and evaluate args_expr sequentially
+    const { strippedSource, plannedDecls } = planRelatrDeclarations(
+      plugin.content,
+      eloInput,
+    );
+
+    // 3. Provision: collect and batch execute deduped requests
+    // Build list of requests to execute (filtering by allowlist first)
+    const requestsToExecute: Array<{
+      request: { capName: string; argsJson: unknown; timeoutMs: number };
+      requestKey: string;
+    }> = [];
+
+    for (const decl of plannedDecls) {
+      if (!decl.requestKey) continue;
+
+      // Enforce allowlist
+      if (!plugin.manifest.caps.includes(decl.capName)) {
+        logger.warn(
+          `Plugin ${plugin.manifest.name} requested capability ${decl.capName} which is not in its allowlist`,
+        );
+        // We don't execute it, it will resolve to null during scoring
+        continue;
+      }
+
+      // We already evaluated args_expr and validated JSON-only during planning
+      const argsJson = decl.argsJsonOrNull;
+      if (argsJson === null) continue;
+
+      requestsToExecute.push({
+        request: {
+          capName: decl.capName,
+          argsJson,
+          timeoutMs: config.capTimeoutMs,
+        },
+        requestKey: decl.requestKey,
+      });
+    }
+
+    // Create capability context (used for all requests in this plugin)
+    const capContext = {
+      targetPubkey: context.targetPubkey,
+      sourcePubkey: context.sourcePubkey,
+      config: {
+        capTimeoutMs: config.capTimeoutMs,
+      },
+      graph: context.graph,
+      pool: context.pool,
+      relays: context.relays,
+    };
+
+    // Execute all requests in batch for better performance
+    if (requestsToExecute.length > 0) {
+      await executor.executeBatch(
+        requestsToExecute,
+        capContext,
+        effectivePlanningStore,
+      );
+    }
+
+    // 4. Build provisioned by id for scoring.
+    // Missing/failed/unplannable requests resolve to null.
+    const provisionedById: Record<string, unknown | null> = {};
+    for (const decl of plannedDecls) {
+      if (!decl.requestKey) {
+        provisionedById[decl.id] = null;
+        continue;
+      }
+      const v = effectivePlanningStore.get(decl.requestKey);
+      provisionedById[decl.id] = v === undefined ? null : (v as any);
+    }
+    eloInput.provisioned = provisionedById;
+
+    // 5. Score: evaluate Elo after stripping RELATR blocks
     const result = await evaluateElo(
       plugin,
       eloInput,
       config.eloPluginTimeoutMs,
+      strippedSource,
     );
 
     logger.debug(
@@ -138,8 +179,11 @@ export async function runPlugins(
   // Create planning store for this evaluation to avoid redundant capability calls
   const planningStore = new PlanningStore();
 
+  // Compute now once for determinism across all plugins in this evaluation run
+  // This ensures _.now is constant for a single evaluation run per spec §3
+  const now = Math.floor(Date.now() / 1000);
+
   // Run plugins sequentially to avoid overwhelming resources
-  // In the future, we could add concurrency limits here
   for (const plugin of plugins) {
     const result = await runPlugin(
       plugin,
@@ -147,6 +191,7 @@ export async function runPlugins(
       executor,
       config,
       planningStore,
+      now,
     );
 
     // Use plugin name as the metric key
@@ -157,7 +202,7 @@ export async function runPlugins(
     }
   }
 
-  // Clear planning store after evaluation to free memory and ensure fresh data next time
+  // Clear planning store after evaluation
   planningStore.clear();
 
   logger.info(`Completed running ${plugins.length} plugins`);
@@ -167,7 +212,6 @@ export async function runPlugins(
 
 /**
  * Run plugins in batch mode for multiple pubkeys
- * This enables potential optimizations like batching capability requests
  */
 export async function runPluginsBatch(
   plugins: PortablePlugin[],
@@ -182,9 +226,6 @@ export async function runPluginsBatch(
 
   logger.info(`Running plugins in batch mode for ${contexts.length} pubkeys`);
 
-  // For now, run sequentially for each context
-  // Future optimization: collect all capability requests across all plugins and contexts,
-  // group by capability name and args, execute once, then fan out results
   for (const context of contexts) {
     const metrics = await runPlugins(plugins, context, executor, config);
     results.set(context.targetPubkey, metrics);
