@@ -23,10 +23,10 @@ export interface BaseContext {
  */
 export interface PluginManifest {
   name: string;
+  relatrVersion: string;
   title: string | null;
   description: string | null;
   weight: number | null;
-  caps: string[];
 }
 
 /**

@@ -18,6 +18,7 @@ describe("Elo Plugins v0 - Manifest Parsing", () => {
   test("should parse basic manifest tags correctly", () => {
     const tags = [
       ["name", "test_plugin"],
+      ["relatr-version", "v0"],
       ["title", "Test Plugin"],
       ["description", "A test plugin"],
       ["weight", "1.5"],
@@ -26,37 +27,20 @@ describe("Elo Plugins v0 - Manifest Parsing", () => {
     const manifest = parseManifestTags(tags);
 
     expect(manifest.name).toBe("test_plugin");
+    expect(manifest.relatrVersion).toBe("v0");
     expect(manifest.title).toBe("Test Plugin");
     expect(manifest.description).toBe("A test plugin");
     expect(manifest.weight).toBe(1.5);
-    expect(manifest.caps).toHaveLength(0);
   });
 
-  test("should parse capability tags as allowlist", () => {
-    const tags = [
-      ["name", "reciprocity_plugin"],
-      ["cap", "graph.are_mutual"],
-      ["cap", "nostr.query"],
-    ];
-
-    const manifest = parseManifestTags(tags);
-
-    expect(manifest.name).toBe("reciprocity_plugin");
-    expect(manifest.caps).toHaveLength(2);
-    expect(manifest.caps).toContain("graph.are_mutual");
-    expect(manifest.caps).toContain("nostr.query");
-  });
-
-  test("should ignore cap_arg tags", () => {
+  test("should validate relatr-version", () => {
     const tags = [
       ["name", "test_plugin"],
-      ["cap", "graph.are_mutual"],
-      ["cap_arg", "some_arg"],
+      ["relatr-version", "v0"],
     ];
 
     const manifest = parseManifestTags(tags);
-    expect(manifest.caps).toHaveLength(1);
-    expect(manifest.caps[0]).toBe("graph.are_mutual");
+    expect(manifest.relatrVersion).toBe("v0");
   });
 });
 
@@ -101,10 +85,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "v0_plugin",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.echo", "test.add"],
       },
       rawEvent: {} as any,
     };
@@ -145,10 +129,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "p1",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.echo"],
       },
       rawEvent: {} as any,
     };
@@ -166,10 +150,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `, // Same args
       manifest: {
         name: "p2",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.echo"],
       },
       rawEvent: {} as any,
     };
@@ -185,7 +169,7 @@ describe("Elo Plugins v0 - Runner Integration", () => {
     expect(callCount).toBe(1);
   });
 
-  test("should return null for capabilities not in allowlist", async () => {
+  test("should execute capabilities without manifest allowlist tags", async () => {
     const plugin: PortablePlugin = {
       id: "test-allowlist",
       pubkey: "pk",
@@ -195,14 +179,14 @@ describe("Elo Plugins v0 - Runner Integration", () => {
         --RELATR
         cap echo = test.echo {x: 1}
         --RELATR
-        if fetch(_.provisioned, .echo) == null then 1.0 else 0.0
+        if fetch(_.provisioned, .echo).x == 1 then 1.0 else 0.0
       `,
       manifest: {
         name: "allowlist_test",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: [], // Empty allowlist
       },
       rawEvent: {} as any,
     };
@@ -213,7 +197,7 @@ describe("Elo Plugins v0 - Runner Integration", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.score).toBe(1.0); // cap() returned null
+    expect(result.score).toBe(1.0);
   });
 
   test("should handle unplannable args_expr", async () => {
@@ -230,10 +214,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "unplannable_test",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.echo"],
       },
       rawEvent: {} as any,
     };
@@ -271,10 +255,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "input_convention_test",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.capture"],
       },
       rawEvent: {} as any,
     };
@@ -314,10 +298,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "now_seconds_test",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.time"],
       },
       rawEvent: {} as any,
     };
@@ -354,10 +338,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "non_json_test",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.any"],
       },
       rawEvent: {} as any,
     };
@@ -395,10 +379,10 @@ describe("Elo Plugins v0 - Runner Integration", () => {
       `,
       manifest: {
         name: "planned_chaining_test",
+        relatrVersion: "v0",
         title: null,
         description: null,
         weight: 1.0,
-        caps: ["test.capture"],
       },
       rawEvent: {} as any,
     };

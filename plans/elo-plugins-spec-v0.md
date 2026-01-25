@@ -23,6 +23,7 @@ Non-goals (v0):
 ### 2.1 Required tags
 
 - `name`: `snake_case` or `kebab-case` identifier (lowercase `a-z0-9_-`)
+- `relatr-version`: plugin protocol version understood by the host (for this spec: `v0`)
 
 ### 2.2 Optional tags
 
@@ -30,13 +31,11 @@ Non-goals (v0):
 - `description`: short text description
 - `weight`: numeric default weight
 
-### 2.3 Capability allowlist tags
-
-- `cap`: dotted capability name, e.g. `nostr.query`, `graph.are_mutual`, `http.nip05_resolve`
-
 Notes:
 
-- `cap` tags are for **filtering/permissioning only**.
+- The `relatr-version` tag exists to keep plugins portable across Relatr instances.
+  It versions the **RELATR planning protocol** (block markers, declaration syntax, args JSON rules,
+  request key scheme), not the host's capability catalog.
 
 ## 3. Inputs (`_`)
 
@@ -119,10 +118,6 @@ During scoring, provisioned results are available by id:
 - `_.provisioned: { [id: string]: <jsonOrNull> }`
 
 Missing/failed/unplannable requests resolve to `null`.
-
-### 4.5 Manifest allowlist tags
-
-Plugins must still declare capabilities via `cap` tags (allowlist / permissioning). `cap` tags enumerate capability **names**, not ids.
 
 ## 5. Argument rules (JSON-only)
 
@@ -222,9 +217,8 @@ Implementation guidance:
 Enablement and permissioning:
 
 - The host MUST refuse to execute capabilities that are disabled.
-- The host SHOULD refuse to execute capabilities that are not present in the plugin's `cap` allowlist tags.
-  - This makes `cap` tags an explicit "capabilities requested" manifest.
-  - The host may still use `cap` tags for coarse filtering before evaluation.
+- The host MUST refuse to execute capabilities that are unknown.
+- The host SHOULD provide operator-configurable allow/deny policy for capability execution.
 
 Timeouts and limits:
 
@@ -367,7 +361,7 @@ flowchart TD
 ## 12. Capability naming
 
 - Capabilities use dotted names: `nostr.query`, `graph.*`, `http.*`.
-- Plugins must declare required capabilities via `cap` tags for filtering/permissioning.
+- Plugins declare capability usage via RELATR blocks only.
 
 ## 13. References
 

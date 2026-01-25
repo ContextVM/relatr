@@ -15,7 +15,6 @@ export interface EloPluginDebugPlan {
     id: string;
     capName: string;
     requestKey: string | null; // null if unplannable
-    allowlisted: boolean;
   }[];
 
   /** Set of unique RequestKeys that were provisioned */
@@ -51,7 +50,6 @@ export function buildDebugPlan(
   scoringSuccess: boolean,
   score: number,
   elapsedMs: number,
-  manifest: PluginManifest,
 ): EloPluginDebugPlan {
   const uniqueRequestKeys = new Set<string>();
 
@@ -63,7 +61,6 @@ export function buildDebugPlan(
       id: decl.id,
       capName: decl.capName,
       requestKey: decl.requestKey,
-      allowlisted: manifest.caps.includes(decl.capName),
     };
   });
 

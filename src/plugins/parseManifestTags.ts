@@ -1,12 +1,11 @@
 import type { PluginManifest } from "./plugin-types";
-import { isValidCapabilityName } from "../capabilities/capability-catalog";
 
 /**
  * Parse Nostr event tags into a structured plugin manifest
  *
  * Tag schema:
- * - name, title, description, weight (single values)
- * - cap (repeatable) - capability allowlist
+ * - name, relatr-version (single values)
+ * - title, description, weight (single values)
  *
  * @param tags - Nostr event tags (string[][])
  * @returns Parsed plugin manifest
@@ -14,10 +13,10 @@ import { isValidCapabilityName } from "../capabilities/capability-catalog";
 export function parseManifestTags(tags: string[][]): PluginManifest {
   const manifest: PluginManifest = {
     name: "",
+    relatrVersion: "",
     title: null,
     description: null,
     weight: null,
-    caps: [],
   };
 
   for (const tag of tags) {
@@ -29,6 +28,9 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
       case "name":
         manifest.name = value || "";
         break;
+      case "relatr-version":
+        manifest.relatrVersion = value || "";
+        break;
       case "title":
         manifest.title = value || null;
         break;
@@ -39,11 +41,6 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
         manifest.weight = isNaN(parseFloat(value || ""))
           ? null
           : parseFloat(value || "");
-        break;
-      case "cap":
-        if (value && !manifest.caps.includes(value)) {
-          manifest.caps.push(value);
-        }
         break;
     }
   }
@@ -72,11 +69,15 @@ export function validateManifest(manifest: PluginManifest): {
     );
   }
 
-  // Validate cap names using the centralized catalog
-  for (const capName of manifest.caps) {
-    if (!isValidCapabilityName(capName)) {
-      errors.push(`Unknown capability: ${capName}`);
-    }
+  if (!manifest.relatrVersion || manifest.relatrVersion.trim() === "") {
+    errors.push("Manifest must have a 'relatr-version' tag");
+  }
+
+  // v0-only for now
+  if (manifest.relatrVersion && manifest.relatrVersion !== "v0") {
+    errors.push(
+      `Unsupported relatr-version: ${manifest.relatrVersion} (expected 'v0')`,
+    );
   }
 
   return {

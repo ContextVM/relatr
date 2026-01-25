@@ -4,12 +4,12 @@
   "created_at": 1760000000,
   "tags": [
     ["name", "activity_notes"],
+    ["relatr-version", "v0"],
     ["title", "Activity score (notes)"],
     [
       "description",
       "Scores higher for more recent notes by targetPubkey (simple heuristic)."
-    ],
-    ["cap", "nostr.query"]
+    ]
   ],
   "content": "--RELATR\ncap notes = nostr.query {kinds: [1], authors: [_.targetPubkey], limit: 20}\n--RELATR\n\nlet\n  events = fetch(_.provisioned, .notes) | [],\n  n = length(events)\nin\nif n > 10 then 0.9\nelse if n > 5 then 0.7\nelse if n > 0 then 0.4\nelse 0.0\n"
 }

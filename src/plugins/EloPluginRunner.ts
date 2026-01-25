@@ -67,15 +67,6 @@ export async function runPlugin(
     for (const decl of plannedDecls) {
       if (!decl.requestKey) continue;
 
-      // Enforce allowlist
-      if (!plugin.manifest.caps.includes(decl.capName)) {
-        logger.warn(
-          `Plugin ${plugin.manifest.name} requested capability ${decl.capName} which is not in its allowlist`,
-        );
-        // We don't execute it, it will resolve to null during scoring
-        continue;
-      }
-
       // We already evaluated args_expr and validated JSON-only during planning
       const argsJson = decl.argsJsonOrNull;
       if (argsJson === null) continue;

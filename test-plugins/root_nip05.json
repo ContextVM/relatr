@@ -4,12 +4,12 @@
   "created_at": 1760000000,
   "tags": [
     ["name", "root_nip05"],
+    ["relatr-version", "v0"],
     ["title", "Root NIP-05"],
     [
       "description",
       "Scores 1.0 if profile nip05 normalizes to '_@domain' (root)."
-    ],
-    ["cap", "nostr.query"]
+    ]
   ],
   "content": "--RELATR\ncap meta = nostr.query {kinds: [0], authors: [_.targetPubkey], limit: 1}\n--RELATR\n\nlet\n  events = fetch(_.provisioned, .meta) | [],\n  meta = first(events),\n  profile = Data(fetch(meta, .content) | '{}'),\n  nip05 = fetch(profile, .nip05) | null,\n  normalized =\n    if nip05 == null then null\n    else if contains(nip05, '@') then nip05\n    else '_@' + nip05,\n  username =\n    if normalized == null then null\n    else first(split(normalized, '@'))\nin\nif username == '_' then 1.0 else 0.0\n"
 }
