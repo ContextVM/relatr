@@ -58,6 +58,30 @@ export function compilePluginProgram(source: string): CompiledPluginProgram {
     throw new Error("Invalid plugin: 'do' is not permitted in score");
   }
 
+  // Ensure 'do' only appears as the whole RHS of a binding.
+  // Reject nested do-calls (e.g. inside if/object/function args) to keep planning
+  // semantics simple and make failures legible.
+  for (let roundIndex = 0; roundIndex < program.rounds.length; roundIndex++) {
+    const round = program.rounds[roundIndex]!;
+    for (const binding of round.bindings) {
+      if (binding.value.type === "do_call") {
+        // Also reject nested do inside args expression (a do-call must be a single request).
+        if (exprContainsDoCall(binding.value.argsExpr)) {
+          throw new Error(
+            `Invalid plugin: nested 'do' is not permitted inside args for binding '${binding.name}' (round ${roundIndex})`,
+          );
+        }
+        continue;
+      }
+
+      if (exprContainsDoCall(binding.value)) {
+        throw new Error(
+          `Invalid plugin: 'do' must be the entire value of a binding (found nested 'do' in binding '${binding.name}' in round ${roundIndex})`,
+        );
+      }
+    }
+  }
+
   return { program };
 }
 
@@ -175,10 +199,4 @@ export function isDoCallExpr(
   expr: Expr,
 ): expr is Extract<Expr, { type: "do_call" }> {
   return expr.type === "do_call";
-}
-
-export function safeLogPlanWarning(message: string, error: unknown): void {
-  logger.warn(
-    `${message}: ${error instanceof Error ? error.message : String(error)}`,
-  );
 }

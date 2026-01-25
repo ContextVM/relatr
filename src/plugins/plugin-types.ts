@@ -69,7 +69,6 @@ export interface EloInput {
   targetPubkey: string;
   sourcePubkey: string | null;
   now: number;
-  provisioned: Record<string, unknown>;
 }
 
 /**

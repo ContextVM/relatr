@@ -4,7 +4,7 @@
   "created_at": 1760000000,
   "tags": [
     ["name", "reciprocity_mutual"],
-    ["relatr-version", "v1"],
+    ["relatr-version", "^0.1.16"],
     ["title", "Reciprocity / Mutual follow"],
     [
       "description",

@@ -122,7 +122,6 @@ async function runPluginInternal(
       targetPubkey: context.targetPubkey,
       sourcePubkey: context.sourcePubkey || null,
       now: nowValue,
-      provisioned: {},
     };
 
     // Planning store scope:
@@ -182,16 +181,27 @@ async function runPluginInternal(
         // Evaluate bindings in order
         for (const binding of round.bindings) {
           if (isDoCallExpr(binding.value)) {
-            // Evaluate args at plan-time
-            const argsValue = evalExprAtPlanTime(
-              binding.value.argsExpr,
-              eloInput,
-              env,
-            );
-            const requestKey = generateRequestKey(
-              binding.value.capName,
-              argsValue,
-            );
+            // Evaluate args at plan-time.
+            // Spec semantics: if args evaluation fails or yields a non-JSON value,
+            // treat the request as unplannable and bind null (non-fatal).
+            let argsValue: unknown;
+            let requestKey: string | null = null;
+            try {
+              argsValue = evalExprAtPlanTime(
+                binding.value.argsExpr,
+                eloInput,
+                env,
+              );
+              requestKey = generateRequestKey(binding.value.capName, argsValue);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              logger.warn(
+                `Plugin ${plugin.manifest.name}: args evaluation failed for do '${binding.value.capName}' binding '${binding.name}': ${msg}`,
+              );
+              // Unplannable => bind null and continue.
+              requestKey = null;
+              argsValue = null;
+            }
 
             if (opts.includeDebug) {
               plannedDecls.push({
@@ -273,10 +283,6 @@ async function runPluginInternal(
       }
 
       // Score execution: compile a wrapper so score can reference round bindings.
-      // Also mirror v0's _.provisioned behavior as a v1 convenience:
-      // - expose all do-binding values by name under _.provisioned
-      // (Note: this is not required by the v1 spec, but keeps host input stable.)
-      eloInput.provisioned = { ...env };
       const scoreValue = evalExprAtPlanTime(program.score, eloInput, env);
 
       return typeof scoreValue === "number" ? scoreValue : 0.0;

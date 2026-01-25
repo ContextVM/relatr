@@ -9,6 +9,7 @@
     "mcp": "bun run src/mcp/server.ts",
     "lint": "eslint src/",
     "format": "prettier --write .",
+    "generate:version": "bun run scripts/generate-version.ts",
     "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\"",
     "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\""
   },

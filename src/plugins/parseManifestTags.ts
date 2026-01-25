@@ -1,4 +1,5 @@
 import type { PluginManifest } from "./plugin-types";
+import { HOST_VERSION } from "../version";
 
 /**
  * Parse Nostr event tags into a structured plugin manifest
@@ -58,6 +59,7 @@ export function validateManifest(manifest: PluginManifest): {
   errors: string[];
 } {
   const errors: string[] = [];
+  const hostVersion = HOST_VERSION;
 
   if (!manifest.name || manifest.name.trim() === "") {
     errors.push("Manifest must have a 'name' tag");
@@ -73,11 +75,22 @@ export function validateManifest(manifest: PluginManifest): {
     errors.push("Manifest must have a 'relatr-version' tag");
   }
 
-  // v0 and v1 are supported during migration.
-  if (manifest.relatrVersion && manifest.relatrVersion !== "v1") {
-    errors.push(
-      `Unsupported relatr-version: ${manifest.relatrVersion} (expected 'v1')`,
-    );
+  // relatr-version is a semver range (e.g. ^0.1.16) that must match the host.
+  // Minimal implementation: support caret ranges only.
+  if (manifest.relatrVersion) {
+    const v = manifest.relatrVersion.trim();
+    if (!v.startsWith("^")) {
+      errors.push(
+        `Unsupported relatr-version: ${manifest.relatrVersion} (expected caret semver like '^${hostVersion}')`,
+      );
+    } else {
+      const base = v.slice(1);
+      if (base !== hostVersion) {
+        errors.push(
+          `Unsupported relatr-version: ${manifest.relatrVersion} (host is ${hostVersion})`,
+        );
+      }
+    }
   }
 
   return {

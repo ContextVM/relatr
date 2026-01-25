@@ -1,240 +1,202 @@
-# Elo Plugin Writer's Guide (Relatr v0)
+# Elo Plugin Writer's Guide (Relatr plugin-program format)
 
-**Write portable scoring plugins for Relatr using the Elo language.**
+**Write portable scoring plugins for Relatr using the Elo language + the plugin-program format.**
 
-This guide teaches you how to create plugins that compute trust scores by combining on-chain data, social graph information, and external APIs.
+This guide focuses on the _portable_ plugin content format (what you publish) and the _runtime semantics_ you should rely on.
 
----
+Authoritative references:
 
-## What is an Elo Plugin?
-
-An **Elo plugin** is a small program that calculates a trust score (0.0 to 1.0) for a Nostr pubkey. Plugins run in a sandboxed environment and can request external data through **capabilities**.
-
-**Key idea**: You write pure scoring logic. Relatr handles the rest (fetching data, timeouts, and failures, etc).
+- [`plans/relatr-plugins-spec-v1.md`](plans/relatr-plugins-spec-v1.md)
+- [`plans/relatr-plugins-v0-to-v1-migration-and-host-policy.md`](plans/relatr-plugins-v0-to-v1-migration-and-host-policy.md)
 
 ---
 
-## Your First Plugin: Always Return 0.5
+## What is an Elo plugin?
 
-Let's start with the simplest possible plugin:
+An **Elo plugin** is a small program that computes a score in **[0.0, 1.0]** for a Nostr pubkey. Plugins run in a sandbox and may request external data via **capabilities**.
+
+**Key idea**: your score expression is pure. The host handles provisioning, timeouts, retries, caching/deduplication, and failure mapping.
+
+---
+
+## Inputs you can use
+
+Your plugin sees a single input object named `_`.
+
+Common fields:
+
+- `_.targetPubkey`: the pubkey being scored
+- `_.sourcePubkey`: the scorer identity (or `null` if absent)
+- `_.now`: current time (seconds) for this evaluation run
+
+---
+
+## The plugin-program structure
+
+Relatr uses an explicit **round-based** program:
 
 ```text
-0.5
+plan <bindings> in
+then <bindings> in
+then <bindings> in
+<score>
 ```
 
-This plugin always returns a neutral score. Not useful, but valid.
-
-Now let's make it respond to input:
+Where each round has comma-separated bindings:
 
 ```text
-if _.targetPubkey == "abc123..." then 1.0 else 0.0
+plan a = 1, b = 2 in a + b
 ```
 
-The `_` object contains:
+Rules of thumb:
 
-- `_.targetPubkey` - the pubkey being scored
-- `_.sourcePubkey` - your pubkey (or `null` if not available)
-- `_.now` - current time in seconds
+- **Bindings evaluate left-to-right** within a round.
+- **No forward references** within a round (a binding cannot use a later binding).
+- After each round, all `do` requests from that round are provisioned, and results become available to later rounds.
 
 ---
 
-## Requesting External Data
+## Requesting external data with `do`
 
-Most plugins need data. Use **RELATR blocks** to declare what you need:
+Use `do` as the _entire value_ of a binding:
 
 ```text
---RELATR
-cap notes = nostr.query {kinds: [1], authors: [_.targetPubkey], limit: 20}
---RELATR
-
+plan notes = do 'nostr.query' {kinds: [1], authors: [_.targetPubkey], limit: 20} in
 let
-  events = fetch(_.provisioned, .notes) | [],
-  count = length(events)
+  events = notes | [],
+  n = length(events)
 in
-if count > 10 then 0.9 else if count > 5 then 0.7 else 0.4
+if n > 10 then 0.9 else if n > 5 then 0.7 else 0.4
 ```
 
-**What happens:**
+Important constraints:
 
-1. Relatr sees your `nostr.query` request
-2. It fetches the data once (even if multiple plugins request the same thing)
-3. Your scoring code receives the results in `_.provisioned.notes`
-4. If the request fails, you get `null`
+- `do` is only permitted in `plan`/`then` bindings (never in the final score expression).
+- `do` cannot be nested inside another expression (e.g. inside `if`, object literals, function args).
+  - Relatr enforces this at compile-time in [`compilePluginProgram()`](src/plugins/relatrPlanner.ts:53).
 
-### Common Capability Patterns
+### JSON boundary for `do` args
 
-**Check if two users follow each other:**
+`do` args must evaluate to **strict JSON** (objects, arrays, strings, numbers, booleans, `null`). Non-JSON values (e.g. `undefined`, `NaN`, `Infinity`, functions) are treated as unplannable.
+
+Good:
 
 ```text
---RELATR
-cap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}
---RELATR
+plan res = do 'test.echo' {x: 1, tags: ["a", "b"], ok: true} in 0.0
+```
 
+Bad (becomes unplannable → `null`):
+
+```text
+plan res = do 'test.echo' _.missing in 0.0
+```
+
+---
+
+## Multi-step planning (chaining across rounds)
+
+If request B depends on the _result_ of request A, use multiple rounds:
+
+```text
+plan profile = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey], limit: 1} in
+then
+  nip05 = fetch(first(profile | []), .nip05) | null,
+  nip05_res = do 'http.nip05_resolve' {nip05: nip05}
+in
+if fetch(nip05_res, .pubkey) == _.targetPubkey then 1.0 else 0.0
+```
+
+How to think about it:
+
+- Round 1 requests `profile`.
+- Provisioning happens.
+- Round 2 can read `profile` and build args for the next `do`.
+
+---
+
+## Failure semantics (design for `null`)
+
+Relatr maps all capability-level failures to `null`:
+
+- unknown/disabled capability
+- handler exception
+- timeout
+- unplannable args (non-JSON)
+- args evaluation exception (treated as unplannable in [`runPluginInternal()`](src/plugins/EloPluginRunner.ts:95))
+
+Write your scoring so `null` is safe:
+
+```text
+plan res = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey} in
 if _.sourcePubkey == null then 0.0
-else if fetch(_.provisioned, .mutual) == true then 1.0
+else if res == true then 1.0
 else 0.0
 ```
 
-**Verify NIP-05 identifier:**
+Practical patterns:
+
+- `value | []` for lists
+- `value | {}` for objects
+- `value | null` for optional values
+
+---
+
+## Deduplication (write idempotent requests)
+
+Within a single evaluation run, Relatr deduplicates requests by `(capName, argsJson)`.
+
+Implications:
+
+- Prefer stable, minimal args.
+- Order of object keys does not matter (canonicalization makes `{a: 1, b: 2}` equivalent to `{b: 2, a: 1}`).
+- If a request fails, that failure is cached as `null` for the rest of the evaluation run.
+
+---
+
+## Host policy limits (keep plugins bounded)
+
+The host may enforce limits such as:
+
+- maximum rounds per plugin
+- maximum `do` calls per round
+- maximum `do` calls per plugin
+
+Write plugins that:
+
+- keep chains short
+- cap query sizes (`limit`)
+- avoid unbounded loops / recursion
+
+---
+
+## Packaging your plugin (Nostr event)
+
+Plugins are published as Nostr events, containing:
+
+- `content`: the plugin program text (the `plan/then/.../score` program)
+- tags/metadata describing the plugin
+
+At minimum, include:
+
+- `name`: stable identifier (`snake_case` or `kebab-case`)
+- `relatr-version`: a **caret semver range** describing which Relatr versions this plugin is compatible with (e.g. `^0.1.16`)
+
+Recommended:
+
+- `title`
+- `description`
+- `weight` (0.0 to 1.0)
+
+---
+
+## Common patterns
+
+### Pattern: tiered activity scoring
 
 ```text
---RELATR
-cap meta = nostr.query {kinds: [0], authors: [_.targetPubkey], limit: 1}
---RELATR
-
+plan notes = do 'nostr.query' {kinds: [1], authors: [_.targetPubkey], limit: 20} in
 let
-  events = fetch(_.provisioned, .meta) | [],
-  profile = first(events)
-in
-if profile == null then 0.0
-else 1.0
-```
-
----
-
-## Understanding RELATR Blocks
-
-RELATR blocks are special comments that declare data dependencies:
-
-```text
---RELATR
-cap <id> = <capability> <arguments>
---RELATR
-```
-
-**Rules:**
-
-- Each declaration needs a unique ID (lowercase, `a-z0-9_-`)
-- Arguments must be **valid JSON** (objects, arrays, strings, numbers, booleans, null)
-- Use `_` to reference the input object
-- For multi-step planning, see [Multi-Step Planning with `_.planned`](#multi-step-planning-with-_planned)
-
-**Good arguments:**
-
-```text
-cap notes = nostr.query {kinds: [1], authors: [_.targetPubkey], limit: 20}
-cap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}
-```
-
-**Bad arguments (will fail):**
-
-```text
-cap bad = nostr.query {time: DateTime.now()}  -- DateTime is not JSON
-cap bad = nostr.query undefined_var           -- undefined is not JSON
-```
-
----
-
-## Multi-Step Planning with `_.planned`
-
-During planning, you can chain capability requests where later requests depend on earlier ones. Use `_.planned` to access the planned args of previous declarations.
-
-**How it works:**
-
-- `_.planned` is a map of `<id>` → `argsJsonOrNull` from earlier declarations
-- Only available during planning (inside RELATR blocks)
-- Enables building request args from previous planned values
-
-**Example: Deriving a second request from the first**
-
-```text
---RELATR
-cap profile = nostr.query {kinds: [0], authors: [_.targetPubkey], limit: 1}
-cap nip05_check = http.nip05_resolve {nip05: fetch(_.planned, .profile).nip05}
---RELATR
-
-let
-  res = fetch(_.provisioned, .nip05_check),
-  pubkey = fetch(res, .pubkey) | null
-in
-if pubkey == null then 0.0 else 1.0
-```
-
-**Important notes:**
-
-- `_.planned.<id>` returns the **planned args JSON**, not the provisioned result
-- If a previous declaration is unplannable, its value is `null`
-- Always handle `null` gracefully when chaining
-- Keep chains short and deterministic
-
-**Safe pattern for chaining:**
-
-```text
---RELATR
-cap first = some.cap {x: 1}
-cap second = another.cap {y: fetch(_.planned, .first).y | 0}
---RELATR
-```
-
----
-
-## Handling Failures Gracefully
-
-Always assume requests can fail. Use the `| default` pattern:
-
-```text
-let
-  events = fetch(_.provisioned, .notes) | [],  -- If null, use empty list
-  profile = fetch(_.provisioned, .meta) | null  -- If null, use null
-in
--- your scoring logic
-```
-
-**Safe patterns:**
-
-- `fetch(_.provisioned, .id) | []` - for lists
-- `fetch(_.provisioned, .id) | null` - for single values
-- `fetch(_.provisioned, .id) | {}` - for objects
-
-If a capability is disabled, unknown, or times out, you'll get `null`. Design your scoring to degrade safely.
-
----
-
-## Packaging Your Plugin
-
-Plugins are Nostr events. Required tags:
-
-- `name`: your plugin identifier (`snake_case` or `kebab-case`)
-- `relatr-version`: `v0`
-
-Recommended tags:
-
-- `title`: human-readable name
-- `description`: what it does
-- `weight`: default importance (0.0 to 1.0)
-
-Example event structure:
-
-```json
-{
-  "kind": 765,
-  "pubkey": "your-pubkey",
-  "created_at": 1234567890,
-  "tags": [
-    ["name", "activity_score"],
-    ["relatr-version", "v0"],
-    ["title", "Activity Score"],
-    ["description", "Scores based on recent note activity"]
-  ],
-  "content": "--RELATR\ncap notes = nostr.query {...}\n--RELATR\n\nlet ... in ..."
-}
-```
-
----
-
-## Common Patterns
-
-### Pattern 1: Tiered Scoring
-
-When you have clear thresholds:
-
-```text
---RELATR
-cap notes = nostr.query {kinds: [1], authors: [_.targetPubkey], limit: 20}
---RELATR
-
-let
-  events = fetch(_.provisioned, .notes) | [],
+  events = notes | [],
   n = length(events)
 in
 if n > 10 then 0.9
@@ -243,126 +205,42 @@ else if n > 0 then 0.4
 else 0.0
 ```
 
-### Pattern 2: Boolean Check
-
-For yes/no signals:
+### Pattern: combine multiple signals
 
 ```text
---RELATR
-cap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}
---RELATR
-
-if fetch(_.provisioned, .mutual) == true then 1.0 else 0.0
-```
-
-### Pattern 3: Combined Signals
-
-Mix multiple factors:
-
-```text
---RELATR
-cap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}
-cap notes = nostr.query {kinds: [1], authors: [_.targetPubkey], limit: 20}
---RELATR
-
-let
-  mutual = fetch(_.provisioned, .mutual),
-  events = fetch(_.provisioned, .notes) | [],
-  activity = if length(events) > 10 then 0.9 else 0.4
+plan
+  mutual = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey},
+  notes = do 'nostr.query' {kinds: [1], authors: [_.targetPubkey], limit: 20}
 in
-if mutual == true then 1.0
-else activity
-```
-
-### Pattern 4: Profile Field Check
-
-Parse kind-0 metadata:
-
-```text
---RELATR
-cap meta = nostr.query {kinds: [0], authors: [_.targetPubkey], limit: 1}
---RELATR
-
 let
-  events = fetch(_.provisioned, .meta) | [],
-  meta = first(events),
-  content = fetch(meta, .content) | '{}',
-  profile = Data(content)
+  activity = if length(notes | []) > 10 then 0.9 else 0.4
 in
-if fetch(profile, .name) != null then 0.5 else 0.0
+if _.sourcePubkey != null and mutual == true then 1.0 else activity
 ```
 
 ---
 
-## Best Practices
+## Debugging checklist
 
-**Do:**
+If your plugin fails:
 
-- ✅ Start simple and add complexity gradually
-- ✅ Test with pubkeys you know (friends, your own)
-- ✅ Use explicit defaults (`| []`, `| null`)
-- ✅ Return 0.0 when data is missing
-- ✅ Keep scoring pure and deterministic
-- ✅ Use clear, descriptive IDs in RELATR blocks
-- ✅ Comment your scoring logic
+1. **Validate program structure**
+   - `plan ... in then ... in <score>` is well-formed
+   - no `do` in score
+   - no nested `do`
 
-**Don't:**
+2. **Validate args**
+   - args evaluate to strict JSON
+   - handle `null` everywhere
 
-- ❌ Depend on external APIs not exposed as capabilities
-- ❌ Use non-JSON values in RELATR arguments
-- ❌ Assume requests always succeed
-- ❌ Write overly complex expressions
-- ❌ Hardcode pubkeys (use `_.targetPubkey`)
-- ❌ Return values outside [0.0, 1.0]
+3. **Minimize**
+   - reduce to a single round
+   - reduce to a single `do`
+   - then expand step-by-step
 
 ---
 
-## Debugging Checklist
+## Next steps
 
-When your plugin doesn't work:
-
-1. **Check RELATR syntax**
-   - Are markers exactly `--RELATR`?
-   - Is there a matching closing marker?
-   - Is the `cap` line format correct?
-
-2. **Validate arguments**
-   - Do your args evaluate to JSON?
-   - Are you using `_` correctly?
-
-3. **Test provisioned values**
-   - Add debug output (if your environment supports it)
-   - Check if you're getting `null` (means request failed)
-
-4. **Simplify**
-   - Reduce to one RELATR declaration
-   - Hardcode a simple score first
-   - Add complexity back step by step
-
----
-
-## Capability Reference
-
-Common capabilities you can use:
-
-| Capability           | Purpose                  | Example Args                                   |
-| -------------------- | ------------------------ | ---------------------------------------------- |
-| `nostr.query`        | Query relay events       | `{kinds: [1], authors: ["pubkey"], limit: 20}` |
-| `graph.are_mutual`   | Check mutual follows     | `{a: "pubkey1", b: "pubkey2"}`                 |
-| `http.nip05_resolve` | Verify NIP-05 identifier | `{nip05: "_@example.com"}`                     |
-
-Check your Relatr instance for available capabilities and their exact argument formats.
-
----
-
-## Next Steps
-
-1. **Read the spec**: [`plans/elo-plugins-spec-v0.md`](plans/elo-plugins-spec-v0.md) for full details
-2. **Study examples**: Look at plugins in [`test-plugins/`](test-plugins/)
-3. **Start writing**: Begin with a simple pattern from this guide
-4. **Test locally**: Use the test runner to verify your plugin
-5. **Share**: Publish your plugin as a Nostr event for others to use
-
----
-
-**Remember**: The best plugins are simple, robust, and degrade gracefully. Start small!
+1. Read the v1 spec: [`plans/relatr-plugins-spec-v1.md`](plans/relatr-plugins-spec-v1.md)
+2. Review host policy and migration notes: [`plans/relatr-plugins-v0-to-v1-migration-and-host-policy.md`](plans/relatr-plugins-v0-to-v1-migration-and-host-policy.md)

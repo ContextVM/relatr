@@ -86,6 +86,11 @@ export class CapabilityExecutor {
 
     // Check if capability is enabled
     if (!this.isEnabled(request.capName)) {
+      // Cache failures as null within this evaluation so repeated requests
+      // dedupe correctly (v1 failure semantics => null).
+      if (planningStore && requestKey) {
+        planningStore.set(requestKey, null);
+      }
       return {
         ok: false,
         value: null,
@@ -97,6 +102,11 @@ export class CapabilityExecutor {
     // Get handler
     const handler = this.registry.getHandler(request.capName);
     if (!handler) {
+      // Cache failures as null within this evaluation so repeated requests
+      // dedupe correctly (v1 failure semantics => null).
+      if (planningStore && requestKey) {
+        planningStore.set(requestKey, null);
+      }
       return {
         ok: false,
         value: null,
@@ -129,6 +139,12 @@ export class CapabilityExecutor {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.warn(`Capability ${request.capName} failed: ${errorMsg}`);
+
+      // Cache failures as null within this evaluation so repeated requests
+      // dedupe correctly (v1 failure semantics => null).
+      if (planningStore && requestKey) {
+        planningStore.set(requestKey, null);
+      }
 
       return {
         ok: false,

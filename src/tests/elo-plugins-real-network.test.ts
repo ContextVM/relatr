@@ -68,9 +68,9 @@ describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
         ].sort(),
       );
 
-      // v1-only enforcement: ensure fixtures declare relatr-version=v1
+      // Ensure fixtures declare relatr-version as a compatible caret range.
       for (const p of plugins) {
-        expect(p.manifest.relatrVersion).toBe("v1");
+        expect(p.manifest.relatrVersion).toBe("^0.1.16");
       }
     },
     30_000,

@@ -36,3 +36,6 @@ relatr.db
 introducing*
 data
 docs
+
+# generated version module
+src/version.ts
