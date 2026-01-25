@@ -1,4 +1,4 @@
-import type { Expr, PluginProgram } from "@enspirit/elo";
+ import type { Expr, PluginProgram } from "@contextvm/elo";
 import {
   parsePluginProgram,
   compileToJavaScriptWithMeta,
@@ -7,7 +7,7 @@ import {
   variable,
   memberAccess,
   dataPath,
-} from "@enspirit/elo";
+} from "@contextvm/elo";
 import { DateTime, Duration } from "luxon";
 import type { EloInput } from "./plugin-types";
 import { Logger } from "../utils/Logger";

@@ -1102,7 +1102,7 @@ Install the CLI
 
 To run Elo locally, install the command-line tools via npm:
 
-npm install -g @enspirit/elo
+npm install -g @contextvm/elo
 
 This gives you two commands:
 
@@ -1134,13 +1134,13 @@ JavaScript API
 
 For Node.js or browser projects, install the library:
 
-npm install @enspirit/elo
+npm install @contextvm/elo
 
 compile()
 
 Every Elo expression compiles to a function that takes \_ (the implicit input) as parameter.
 
-import { compile } from '@enspirit/elo';
+import { compile } from '@contextvm/elo';
 import { DateTime, Duration } from 'luxon';
 
 const double = compile('\_ \* 2', { runtime: { DateTime, Duration } });
@@ -1148,7 +1148,7 @@ double(21); // => 42
 
 Lower-Level API
 
-import { parse, compileToJavaScript, compileToRuby, compileToSQL } from '@enspirit/elo';
+import { parse, compileToJavaScript, compileToRuby, compileToSQL } from '@contextvm/elo';
 
 const ast = parse('2 + 3 _ 4');
 compileToJavaScript(ast); // => "2 + 3 _ 4"

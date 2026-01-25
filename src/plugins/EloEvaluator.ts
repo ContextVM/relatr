@@ -1,4 +1,4 @@
-import { compile } from "@enspirit/elo";
+import { compile } from "@contextvm/elo";
 import { DateTime, Duration } from "luxon";
 import type {
   PortablePlugin,

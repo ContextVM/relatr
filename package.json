@@ -27,9 +27,9 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@contextvm/elo": "^0.10.0",
     "@contextvm/sdk": "^0.2.5",
     "@duckdb/node-api": "^1.4.2-r.1",
-    "@enspirit/elo": "file:./elo",
     "@types/luxon": "^3.7.1",
     "applesauce-core": "^5.0.3",
     "applesauce-relay": "^5.0.0",
