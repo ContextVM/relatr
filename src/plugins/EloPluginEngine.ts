@@ -89,15 +89,13 @@ export class EloPluginEngine implements IEloPluginEngine {
         throw new Error("SocialGraph dependency is required");
       }
 
-      // Load plugins from configured directory if enabled
-      if (this.config.eloPluginsEnabled && this.config.eloPluginsDir) {
-        logger.info(`Loading plugins from ${this.config.eloPluginsDir}`);
-        this.plugins = await loadPlugins(this.config.eloPluginsDir);
-        logger.info(`Loaded ${this.plugins.length} plugins`);
-      } else {
-        logger.info("Elo plugins disabled or no directory configured");
-        this.plugins = [];
+      // Load plugins from configured directory.
+      if (!this.config.eloPluginsDir) {
+        throw new Error("Elo plugins directory is required (eloPluginsDir)");
       }
+      logger.info(`Loading plugins from ${this.config.eloPluginsDir}`);
+      this.plugins = await loadPlugins(this.config.eloPluginsDir);
+      logger.info(`Loaded ${this.plugins.length} plugins`);
 
       // Register built-in capabilities (nostr, graph, http)
       logger.info("Registering built-in capabilities");
@@ -174,6 +172,9 @@ export class EloPluginEngine implements IEloPluginEngine {
       {
         eloPluginTimeoutMs: this.config.eloPluginTimeoutMs || 30000,
         capTimeoutMs: this.config.capTimeoutMs || 10000,
+        maxRoundsPerPlugin: this.config.eloMaxRoundsPerPlugin,
+        maxRequestsPerRound: this.config.eloMaxRequestsPerRound,
+        maxTotalRequestsPerPlugin: this.config.eloMaxTotalRequestsPerPlugin,
       },
     );
 

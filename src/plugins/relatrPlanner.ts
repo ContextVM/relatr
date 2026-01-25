@@ -1,116 +1,184 @@
-import { compile } from "@enspirit/elo";
+import type { Expr, PluginProgram } from "@enspirit/elo";
+import {
+  parsePluginProgram,
+  compileToJavaScriptWithMeta,
+  letExpr,
+  functionCall,
+  variable,
+  memberAccess,
+  dataPath,
+} from "@enspirit/elo";
 import { DateTime, Duration } from "luxon";
 import type { EloInput } from "./plugin-types";
-import { generateRequestKey } from "./requestKey";
 import { Logger } from "../utils/Logger";
-import { extractRelatrBlocks } from "./relatrBlocks";
 
 const logger = new Logger({ service: "RelatrPlanner" });
 
-export interface PlannedDecl {
-  id: string;
-  capName: string;
-  argsExpr: string;
-  requestKey: string | null;
-  /**
-   * Planned args value, if plannable and JSON-only; otherwise null.
-   * This is what is exposed at plan-time as _.planned[id].
-   */
-  argsJsonOrNull: unknown | null;
+export type CompiledPluginProgram = {
+  program: PluginProgram;
+};
+
+function runCompiled(compiled: unknown, input: unknown): unknown {
+  if (typeof compiled === "function") {
+    return (compiled as (_: unknown) => unknown)(input);
+  }
+
+  if (
+    compiled &&
+    typeof compiled === "object" &&
+    "evaluate" in compiled &&
+    typeof (compiled as { evaluate?: unknown }).evaluate === "function"
+  ) {
+    return (compiled as { evaluate: (_: unknown) => unknown }).evaluate(input);
+  }
+
+  return compiled;
 }
 
-export interface PlanRelatrResult {
-  strippedSource: string;
-  plannedDecls: PlannedDecl[];
+function compileAstToFn(expr: Expr): (_: unknown) => unknown {
+  const js = compileToJavaScriptWithMeta(expr, { asFunction: true });
+  // The compiled code references DateTime/Duration when temporal literals/keywords are used.
+  // Inject them via function scope.
+  const factory = new Function(
+    "DateTime",
+    "Duration",
+    `return ${js.code};`,
+  ) as (
+    DateTimeCtor: unknown,
+    DurationCtor: unknown,
+  ) => (_: unknown) => unknown;
+  return factory(DateTime, Duration);
 }
 
-function parseDeclLine(
-  line: string,
-): { id: string; capName: string; argsExpr: string } | null {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.startsWith("--")) return null; // allow comments inside blocks
+export function compilePluginProgram(source: string): CompiledPluginProgram {
+  const program = parsePluginProgram(source);
 
-  const m = trimmed.match(/^cap\s+([a-z0-9_-]+)\s*=\s*([a-z0-9_.-]+)\s+(.+)$/);
-  if (!m) return null;
-  const [, id, capName, argsExpr] = m;
-  if (!id || !capName || !argsExpr) return null;
-  return { id, capName, argsExpr: argsExpr.trim() };
+  // Ensure score is compute-only (no do calls).
+  if (exprContainsDoCall(program.score)) {
+    throw new Error("Invalid plugin: 'do' is not permitted in score");
+  }
+
+  return { program };
+}
+
+export function exprContainsDoCall(expr: Expr): boolean {
+  switch (expr.type) {
+    case "do_call":
+      return true;
+
+    case "literal":
+    case "null":
+    case "string":
+    case "variable":
+    case "date":
+    case "datetime":
+    case "duration":
+    case "datapath":
+      return false;
+
+    case "temporal_keyword":
+      return false;
+
+    case "unary":
+      return exprContainsDoCall(expr.operand);
+
+    case "binary":
+      return exprContainsDoCall(expr.left) || exprContainsDoCall(expr.right);
+
+    case "member_access":
+      return exprContainsDoCall(expr.object);
+
+    case "function_call":
+      return expr.args.some(exprContainsDoCall);
+
+    case "apply":
+      return exprContainsDoCall(expr.fn) || expr.args.some(exprContainsDoCall);
+
+    case "if":
+      return (
+        exprContainsDoCall(expr.condition) ||
+        exprContainsDoCall(expr.then) ||
+        exprContainsDoCall(expr.else)
+      );
+
+    case "lambda":
+      return exprContainsDoCall(expr.body);
+
+    case "object":
+      return expr.properties.some((p) => exprContainsDoCall(p.value));
+
+    case "array":
+      return expr.elements.some(exprContainsDoCall);
+
+    case "alternative":
+      return expr.alternatives.some(exprContainsDoCall);
+
+    case "let":
+      return (
+        expr.bindings.some((b) => exprContainsDoCall(b.value)) ||
+        exprContainsDoCall(expr.body)
+      );
+
+    case "typedef":
+      return exprContainsDoCall(expr.body);
+
+    case "guard":
+      return (
+        expr.constraints.some((c) => exprContainsDoCall(c.condition)) ||
+        exprContainsDoCall(expr.body)
+      );
+  }
 }
 
 /**
- * Plan RELATR declarations:
- * - Extract + strip RELATR blocks from source
- * - Parse `cap <id> = <capName> <args_expr>` declarations (single-line)
- * - Evaluate args_expr sequentially with access to _.planned
+ * Evaluate an Elo expression AST at plan-time with direct access to previously
+ * bound plugin-program variables.
+ *
+ * Implementation detail:
+ * Elo compilation rejects undefined variables for safety. To allow bindings,
+ * we compile a wrapper `let` that defines each bound name by reading from
+ * `_.__env` via `fetch`.
  */
-export function planRelatrDeclarations(
-  source: string,
+export function evalExprAtPlanTime(
+  expr: Expr,
   input: EloInput,
-): PlanRelatrResult {
-  const { strippedSource, blocks } = extractRelatrBlocks(source);
+  env: Record<string, unknown>,
+): unknown {
+  const envKeys = Object.keys(env);
 
-  const declsInOrder: Array<{ id: string; capName: string; argsExpr: string }> =
-    [];
-  const seenIds = new Set<string>();
-
-  for (const blockText of blocks) {
-    const blockLines = blockText.split(/\r?\n/);
-    for (const line of blockLines) {
-      const parsed = parseDeclLine(line);
-      if (!parsed) continue;
-
-      if (seenIds.has(parsed.id)) {
-        logger.warn(`Duplicate RELATR cap id '${parsed.id}' ignored`);
-        continue;
-      }
-      seenIds.add(parsed.id);
-      declsInOrder.push(parsed);
-    }
+  if (envKeys.length === 0) {
+    const fn = compileAstToFn(expr);
+    return runCompiled(fn, input);
   }
 
-  const plannedDecls: PlannedDecl[] = [];
-  const planned: Record<string, unknown | null> = {};
+  // Build an AST wrapper so we never need to serialize Expr -> code.
+  // Example wrapper:
+  // let a = fetch(_.__env, .a), b = fetch(_.__env, .b) in <expr>
+  const envObjExpr = memberAccess(variable("_"), "__env");
+  const wrappedAst = letExpr(
+    envKeys.map((k) => ({
+      name: k,
+      value: functionCall("fetch", [envObjExpr, dataPath([k])]),
+    })),
+    expr,
+  );
 
-  for (const decl of declsInOrder) {
-    let requestKey: string | null = null;
-    let argsJsonOrNull: unknown | null = null;
+  const fn = compileAstToFn(wrappedAst);
+  const planInput = {
+    ...(input as unknown as Record<string, unknown>),
+    __env: env,
+  };
+  return runCompiled(fn, planInput);
+}
 
-    try {
-      // Match EloEvaluator runtime injection so planning doesn't fail for
-      // runtime type checks (DateTime/Duration) even when user expressions
-      // don't explicitly reference them.
-      const compiledArgs = compile(decl.argsExpr, {
-        runtime: { DateTime, Duration },
-      }) as any;
-      const planTimeInput = { ...(input as any), planned };
-      const argsValue =
-        typeof compiledArgs === "function"
-          ? compiledArgs(planTimeInput)
-          : compiledArgs && typeof compiledArgs.evaluate === "function"
-            ? compiledArgs.evaluate(planTimeInput)
-            : compiledArgs;
+export function isDoCallExpr(
+  expr: Expr,
+): expr is Extract<Expr, { type: "do_call" }> {
+  return expr.type === "do_call";
+}
 
-      requestKey = generateRequestKey(decl.capName, argsValue);
-      if (requestKey) {
-        argsJsonOrNull = argsValue as any;
-      }
-    } catch (error) {
-      logger.warn(
-        `Failed to plan RELATR declaration '${decl.id}' (${decl.capName}): ${error}`,
-      );
-    }
-
-    planned[decl.id] = requestKey ? (argsJsonOrNull as any) : null;
-
-    plannedDecls.push({
-      id: decl.id,
-      capName: decl.capName,
-      argsExpr: decl.argsExpr,
-      requestKey,
-      argsJsonOrNull: requestKey ? (argsJsonOrNull as any) : null,
-    });
-  }
-
-  return { strippedSource, plannedDecls };
+export function safeLogPlanWarning(message: string, error: unknown): void {
+  logger.warn(
+    `${message}: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }

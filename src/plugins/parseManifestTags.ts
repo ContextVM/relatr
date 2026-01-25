@@ -73,10 +73,10 @@ export function validateManifest(manifest: PluginManifest): {
     errors.push("Manifest must have a 'relatr-version' tag");
   }
 
-  // v0-only for now
-  if (manifest.relatrVersion && manifest.relatrVersion !== "v0") {
+  // v0 and v1 are supported during migration.
+  if (manifest.relatrVersion && manifest.relatrVersion !== "v1") {
     errors.push(
-      `Unsupported relatr-version: ${manifest.relatrVersion} (expected 'v0')`,
+      `Unsupported relatr-version: ${manifest.relatrVersion} (expected 'v1')`,
     );
   }
 

@@ -42,13 +42,13 @@ export const RelatrConfigSchema = z.object({
     .default(false),
 
   // Elo plugins configuration
-  eloPluginsEnabled: z
-    .union([z.boolean(), z.string()])
-    .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
-    .default(false),
   eloPluginsDir: z.string().default("./plugins/elo"),
   eloPluginTimeoutMs: z.number().positive().default(5000),
   capTimeoutMs: z.number().positive().default(5000),
+  // Host policy limits
+  eloMaxRoundsPerPlugin: z.number().int().positive().default(8),
+  eloMaxRequestsPerRound: z.number().int().positive().default(32),
+  eloMaxTotalRequestsPerPlugin: z.number().int().positive().default(128),
   eloPluginWeights: z
     .record(z.string(), z.number().min(0).max(1))
     .default({})
@@ -139,13 +139,21 @@ export function loadConfig(): RelatrConfig {
     taEnabled: process.env.TA_ENABLED,
 
     // Elo plugins configuration
-    eloPluginsEnabled: process.env.ELO_PLUGINS_ENABLED,
     eloPluginsDir: process.env.ELO_PLUGINS_DIR,
     eloPluginTimeoutMs: process.env.ELO_PLUGIN_TIMEOUT_MS
       ? parseInt(process.env.ELO_PLUGIN_TIMEOUT_MS, 10)
       : undefined,
     capTimeoutMs: process.env.CAP_TIMEOUT_MS
       ? parseInt(process.env.CAP_TIMEOUT_MS, 10)
+      : undefined,
+    eloMaxRoundsPerPlugin: process.env.ELO_MAX_ROUNDS_PER_PLUGIN
+      ? parseInt(process.env.ELO_MAX_ROUNDS_PER_PLUGIN, 10)
+      : undefined,
+    eloMaxRequestsPerRound: process.env.ELO_MAX_REQUESTS_PER_ROUND
+      ? parseInt(process.env.ELO_MAX_REQUESTS_PER_ROUND, 10)
+      : undefined,
+    eloMaxTotalRequestsPerPlugin: process.env.ELO_MAX_TOTAL_REQUESTS_PER_PLUGIN
+      ? parseInt(process.env.ELO_MAX_TOTAL_REQUESTS_PER_PLUGIN, 10)
       : undefined,
     eloPluginWeights: process.env.ELO_PLUGIN_WEIGHTS
       ? JSON.parse(process.env.ELO_PLUGIN_WEIGHTS)

@@ -31,6 +31,7 @@ if _.targetPubkey == "abc123..." then 1.0 else 0.0
 ```
 
 The `_` object contains:
+
 - `_.targetPubkey` - the pubkey being scored
 - `_.sourcePubkey` - your pubkey (or `null` if not available)
 - `_.now` - current time in seconds
@@ -54,6 +55,7 @@ if count > 10 then 0.9 else if count > 5 then 0.7 else 0.4
 ```
 
 **What happens:**
+
 1. Relatr sees your `nostr.query` request
 2. It fetches the data once (even if multiple plugins request the same thing)
 3. Your scoring code receives the results in `_.provisioned.notes`
@@ -62,6 +64,7 @@ if count > 10 then 0.9 else if count > 5 then 0.7 else 0.4
 ### Common Capability Patterns
 
 **Check if two users follow each other:**
+
 ```text
 --RELATR
 cap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}
@@ -73,6 +76,7 @@ else 0.0
 ```
 
 **Verify NIP-05 identifier:**
+
 ```text
 --RELATR
 cap meta = nostr.query {kinds: [0], authors: [_.targetPubkey], limit: 1}
@@ -99,18 +103,21 @@ cap <id> = <capability> <arguments>
 ```
 
 **Rules:**
+
 - Each declaration needs a unique ID (lowercase, `a-z0-9_-`)
 - Arguments must be **valid JSON** (objects, arrays, strings, numbers, booleans, null)
 - Use `_` to reference the input object
 - For multi-step planning, see [Multi-Step Planning with `_.planned`](#multi-step-planning-with-_planned)
 
 **Good arguments:**
+
 ```text
 cap notes = nostr.query {kinds: [1], authors: [_.targetPubkey], limit: 20}
 cap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}
 ```
 
 **Bad arguments (will fail):**
+
 ```text
 cap bad = nostr.query {time: DateTime.now()}  -- DateTime is not JSON
 cap bad = nostr.query undefined_var           -- undefined is not JSON
@@ -123,6 +130,7 @@ cap bad = nostr.query undefined_var           -- undefined is not JSON
 During planning, you can chain capability requests where later requests depend on earlier ones. Use `_.planned` to access the planned args of previous declarations.
 
 **How it works:**
+
 - `_.planned` is a map of `<id>` → `argsJsonOrNull` from earlier declarations
 - Only available during planning (inside RELATR blocks)
 - Enables building request args from previous planned values
@@ -143,6 +151,7 @@ if pubkey == null then 0.0 else 1.0
 ```
 
 **Important notes:**
+
 - `_.planned.<id>` returns the **planned args JSON**, not the provisioned result
 - If a previous declaration is unplannable, its value is `null`
 - Always handle `null` gracefully when chaining
@@ -172,6 +181,7 @@ in
 ```
 
 **Safe patterns:**
+
 - `fetch(_.provisioned, .id) | []` - for lists
 - `fetch(_.provisioned, .id) | null` - for single values
 - `fetch(_.provisioned, .id) | {}` - for objects
@@ -188,11 +198,13 @@ Plugins are Nostr events. Required tags:
 - `relatr-version`: `v0`
 
 Recommended tags:
+
 - `title`: human-readable name
 - `description`: what it does
 - `weight`: default importance (0.0 to 1.0)
 
 Example event structure:
+
 ```json
 {
   "kind": 765,
@@ -285,6 +297,7 @@ if fetch(profile, .name) != null then 0.5 else 0.0
 ## Best Practices
 
 **Do:**
+
 - ✅ Start simple and add complexity gradually
 - ✅ Test with pubkeys you know (friends, your own)
 - ✅ Use explicit defaults (`| []`, `| null`)
@@ -294,6 +307,7 @@ if fetch(profile, .name) != null then 0.5 else 0.0
 - ✅ Comment your scoring logic
 
 **Don't:**
+
 - ❌ Depend on external APIs not exposed as capabilities
 - ❌ Use non-JSON values in RELATR arguments
 - ❌ Assume requests always succeed
@@ -331,11 +345,11 @@ When your plugin doesn't work:
 
 Common capabilities you can use:
 
-| Capability | Purpose | Example Args |
-|------------|---------|--------------|
-| `nostr.query` | Query relay events | `{kinds: [1], authors: ["pubkey"], limit: 20}` |
-| `graph.are_mutual` | Check mutual follows | `{a: "pubkey1", b: "pubkey2"}` |
-| `http.nip05_resolve` | Verify NIP-05 identifier | `{nip05: "_@example.com"}` |
+| Capability           | Purpose                  | Example Args                                   |
+| -------------------- | ------------------------ | ---------------------------------------------- |
+| `nostr.query`        | Query relay events       | `{kinds: [1], authors: ["pubkey"], limit: 20}` |
+| `graph.are_mutual`   | Check mutual follows     | `{a: "pubkey1", b: "pubkey2"}`                 |
+| `http.nip05_resolve` | Verify NIP-05 identifier | `{nip05: "_@example.com"}`                     |
 
 Check your Relatr instance for available capabilities and their exact argument formats.
 

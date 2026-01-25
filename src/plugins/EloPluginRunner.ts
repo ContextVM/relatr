@@ -8,13 +8,37 @@ import type { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { evaluateElo } from "./EloEvaluator";
 import { Logger } from "../utils/Logger";
 import { PlanningStore } from "./PlanningStore";
-import { planRelatrDeclarations } from "./relatrPlanner";
+import {
+  compilePluginProgram,
+  evalExprAtPlanTime,
+  isDoCallExpr,
+} from "./relatrPlanner";
+import { generateRequestKey } from "./requestKey";
+import { withTimeout } from "../utils/utils";
+import type { EloPluginDebugPlan } from "./EloPluginDebug";
+import { buildDebugPlan } from "./EloPluginDebug";
 
 const logger = new Logger({ service: "EloPluginRunner" });
 
 export interface PluginRunnerContext extends BaseContext {
   searchQuery?: string;
 }
+
+export type HostPolicyLimits = {
+  /** Maximum number of `plan`/`then` rounds allowed per plugin */
+  maxRoundsPerPlugin?: number;
+  /** Maximum number of plannable `do` calls allowed in a single round */
+  maxRequestsPerRound?: number;
+  /** Maximum number of plannable `do` calls allowed across all rounds */
+  maxTotalRequestsPerPlugin?: number;
+};
+
+const DEFAULT_HOST_POLICY_LIMITS: Required<HostPolicyLimits> = {
+  // Conservative defaults; override via runPlugin/runPlugins config.
+  maxRoundsPerPlugin: 8,
+  maxRequestsPerRound: 32,
+  maxTotalRequestsPerPlugin: 128,
+};
 
 /**
  * Run a single Elo plugin with capability provisioning
@@ -26,19 +50,74 @@ export async function runPlugin(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
-  },
+  } & HostPolicyLimits,
   planningStore?: PlanningStore,
   now?: number,
 ): Promise<EloEvaluationResult> {
+  const { result } = await runPluginInternal(
+    plugin,
+    context,
+    executor,
+    config,
+    {
+      planningStore,
+      now,
+      includeDebug: false,
+    },
+  );
+  return result;
+}
+
+/**
+ * Run a plugin and return both score result and a v1 debug plan trace.
+ *
+ * This is intended for operator tooling / tests; the normal engine path uses
+ * [`runPlugin()`](src/plugins/EloPluginRunner.ts:line) and does not allocate trace objects.
+ */
+export async function runPluginWithDebug(
+  plugin: PortablePlugin,
+  context: PluginRunnerContext,
+  executor: CapabilityExecutor,
+  config: {
+    eloPluginTimeoutMs: number;
+    capTimeoutMs: number;
+  } & HostPolicyLimits,
+  planningStore?: PlanningStore,
+  now?: number,
+): Promise<{ result: EloEvaluationResult; debug: EloPluginDebugPlan }> {
+  return runPluginInternal(plugin, context, executor, config, {
+    planningStore,
+    now,
+    includeDebug: true,
+  });
+}
+
+async function runPluginInternal(
+  plugin: PortablePlugin,
+  context: PluginRunnerContext,
+  executor: CapabilityExecutor,
+  config: {
+    eloPluginTimeoutMs: number;
+    capTimeoutMs: number;
+  } & HostPolicyLimits,
+  opts: {
+    planningStore?: PlanningStore;
+    now?: number;
+    includeDebug: boolean;
+  },
+): Promise<{ result: EloEvaluationResult; debug: EloPluginDebugPlan }> {
   const startTime = Date.now();
+  const limits = { ...DEFAULT_HOST_POLICY_LIMITS, ...config };
+
+  const plannedDecls: EloPluginDebugPlan["plannedDecls"] = [];
+  const provisioningOutcomes = new Map<string, any>();
 
   try {
     logger.debug(`Running plugin: ${plugin.manifest.name}`);
 
-    // 1. Build initial Elo input for planning
     // Use provided now for determinism across plugins in a single evaluation run,
     // otherwise compute it (for standalone plugin runs).
-    const nowValue = now ?? Math.floor(Date.now() / 1000);
+    const nowValue = opts.now ?? Math.floor(Date.now() / 1000);
     const eloInput: EloInput = {
       targetPubkey: context.targetPubkey,
       sourcePubkey: context.sourcePubkey || null,
@@ -49,37 +128,7 @@ export async function runPlugin(
     // Planning store scope:
     // - If provided (runPlugins), it's shared across plugins for dedupe.
     // - If not provided (runPlugin), create one for this single evaluation.
-    const effectivePlanningStore = planningStore ?? new PlanningStore();
-
-    // 2. Plan: extract RELATR blocks and evaluate args_expr sequentially
-    const { strippedSource, plannedDecls } = planRelatrDeclarations(
-      plugin.content,
-      eloInput,
-    );
-
-    // 3. Provision: collect and batch execute deduped requests
-    // Build list of requests to execute (filtering by allowlist first)
-    const requestsToExecute: Array<{
-      request: { capName: string; argsJson: unknown; timeoutMs: number };
-      requestKey: string;
-    }> = [];
-
-    for (const decl of plannedDecls) {
-      if (!decl.requestKey) continue;
-
-      // We already evaluated args_expr and validated JSON-only during planning
-      const argsJson = decl.argsJsonOrNull;
-      if (argsJson === null) continue;
-
-      requestsToExecute.push({
-        request: {
-          capName: decl.capName,
-          argsJson,
-          timeoutMs: config.capTimeoutMs,
-        },
-        requestKey: decl.requestKey,
-      });
-    }
+    const effectivePlanningStore = opts.planningStore ?? new PlanningStore();
 
     // Create capability context (used for all requests in this plugin)
     const capContext = {
@@ -93,48 +142,178 @@ export async function runPlugin(
       relays: context.relays,
     };
 
-    // Execute all requests in batch for better performance
-    if (requestsToExecute.length > 0) {
-      await executor.executeBatch(
-        requestsToExecute,
-        capContext,
-        effectivePlanningStore,
-      );
-    }
+    const main = async (): Promise<number> => {
+      // Execute rounds sequentially, batching do-calls at end of each round.
+      const { program } = compilePluginProgram(plugin.content);
 
-    // 4. Build provisioned by id for scoring.
-    // Missing/failed/unplannable requests resolve to null.
-    const provisionedById: Record<string, unknown | null> = {};
-    for (const decl of plannedDecls) {
-      if (!decl.requestKey) {
-        provisionedById[decl.id] = null;
-        continue;
+      // Host policy: max rounds
+      if (program.rounds.length > limits.maxRoundsPerPlugin) {
+        throw new Error(
+          `Host policy: too many rounds (${program.rounds.length} > ${limits.maxRoundsPerPlugin})`,
+        );
       }
-      const v = effectivePlanningStore.get(decl.requestKey);
-      provisionedById[decl.id] = v === undefined ? null : (v as any);
-    }
-    eloInput.provisioned = provisionedById;
 
-    // 5. Score: evaluate Elo after stripping RELATR blocks
-    const result = await evaluateElo(
-      plugin,
-      eloInput,
-      config.eloPluginTimeoutMs,
-      strippedSource,
+      // Execution state
+      const env: Record<string, unknown> = {};
+      const pendingRoundDoBindings: Array<{
+        bindingName: string;
+        requestKey: string;
+      }> = [];
+
+      // Provision: collect and batch execute requests (per-round)
+      const requestsToExecute: Array<{
+        request: { capName: string; argsJson: unknown; timeoutMs: number };
+        requestKey: string;
+      }> = [];
+
+      let totalPlannableDoCalls = 0;
+
+      for (
+        let roundIndex = 0;
+        roundIndex < program.rounds.length;
+        roundIndex++
+      ) {
+        const round = program.rounds[roundIndex]!;
+        pendingRoundDoBindings.length = 0;
+        requestsToExecute.length = 0;
+
+        let roundPlannableDoCalls = 0;
+
+        // Evaluate bindings in order
+        for (const binding of round.bindings) {
+          if (isDoCallExpr(binding.value)) {
+            // Evaluate args at plan-time
+            const argsValue = evalExprAtPlanTime(
+              binding.value.argsExpr,
+              eloInput,
+              env,
+            );
+            const requestKey = generateRequestKey(
+              binding.value.capName,
+              argsValue,
+            );
+
+            if (opts.includeDebug) {
+              plannedDecls.push({
+                bindingName: binding.name,
+                capName: binding.value.capName,
+                requestKey,
+                roundIndex,
+              });
+            }
+
+            if (!requestKey) {
+              // Unplannable args => bind null (failure semantics)
+              env[binding.name] = null;
+              continue;
+            }
+
+            roundPlannableDoCalls++;
+            totalPlannableDoCalls++;
+
+            // Host policy: limits
+            if (roundPlannableDoCalls > limits.maxRequestsPerRound) {
+              throw new Error(
+                `Host policy: too many requests in round ${roundIndex} (${roundPlannableDoCalls} > ${limits.maxRequestsPerRound})`,
+              );
+            }
+            if (totalPlannableDoCalls > limits.maxTotalRequestsPerPlugin) {
+              throw new Error(
+                `Host policy: too many total requests (${totalPlannableDoCalls} > ${limits.maxTotalRequestsPerPlugin})`,
+              );
+            }
+
+            pendingRoundDoBindings.push({
+              bindingName: binding.name,
+              requestKey,
+            });
+
+            // Bind placeholder; actual result arrives after provisioning.
+            env[binding.name] = null;
+
+            requestsToExecute.push({
+              request: {
+                capName: binding.value.capName,
+                argsJson: argsValue,
+                timeoutMs: config.capTimeoutMs,
+              },
+              requestKey,
+            });
+
+            continue;
+          }
+
+          // Non-do binding is computed immediately.
+          const value = evalExprAtPlanTime(binding.value, eloInput, env);
+          env[binding.name] = value;
+        }
+
+        // Provision after round (batch-at-end)
+        if (requestsToExecute.length > 0) {
+          const responses = await executor.executeBatch(
+            requestsToExecute,
+            capContext,
+            effectivePlanningStore,
+          );
+
+          if (opts.includeDebug) {
+            for (let i = 0; i < requestsToExecute.length; i++) {
+              const req = requestsToExecute[i]!;
+              const res = responses[i]!;
+              provisioningOutcomes.set(req.requestKey, res);
+            }
+          }
+        }
+
+        // Consume results into env for next `then`
+        for (const doBinding of pendingRoundDoBindings) {
+          const v = effectivePlanningStore.get(doBinding.requestKey);
+          env[doBinding.bindingName] = v === undefined ? null : v;
+        }
+      }
+
+      // Score execution: compile a wrapper so score can reference round bindings.
+      // Also mirror v0's _.provisioned behavior as a v1 convenience:
+      // - expose all do-binding values by name under _.provisioned
+      // (Note: this is not required by the v1 spec, but keeps host input stable.)
+      eloInput.provisioned = { ...env };
+      const scoreValue = evalExprAtPlanTime(program.score, eloInput, env);
+
+      return typeof scoreValue === "number" ? scoreValue : 0.0;
+    };
+
+    const scoreValue = await withTimeout(main(), config.eloPluginTimeoutMs);
+
+    const elapsedMs = Date.now() - startTime;
+    const numericScore = typeof scoreValue === "number" ? scoreValue : 0.0;
+    const result: EloEvaluationResult = {
+      pluginId: plugin.id,
+      pluginName: plugin.manifest.name,
+      score: Math.max(
+        0.0,
+        Math.min(1.0, isFinite(numericScore) ? numericScore : 0.0),
+      ),
+      success: true,
+      elapsedMs,
+    };
+
+    const debug = buildDebugPlan(
+      plugin.manifest.name,
+      opts.includeDebug ? plannedDecls : [],
+      opts.includeDebug ? provisioningOutcomes : new Map(),
+      true,
+      result.score,
+      elapsedMs,
     );
 
-    logger.debug(
-      `Plugin ${plugin.manifest.name} completed in ${Date.now() - startTime}ms`,
-    );
-
-    return result;
+    return { result, debug };
   } catch (error) {
     const elapsedMs = Date.now() - startTime;
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     logger.error(`Plugin ${plugin.manifest.name} failed: ${errorMsg}`);
 
-    return {
+    const result: EloEvaluationResult = {
       pluginId: plugin.id,
       pluginName: plugin.manifest.name,
       score: 0.0,
@@ -142,6 +321,17 @@ export async function runPlugin(
       error: errorMsg,
       elapsedMs,
     };
+
+    const debug = buildDebugPlan(
+      plugin.manifest.name,
+      opts.includeDebug ? plannedDecls : [],
+      opts.includeDebug ? provisioningOutcomes : new Map(),
+      false,
+      0.0,
+      elapsedMs,
+    );
+
+    return { result, debug };
   }
 }
 
@@ -155,7 +345,7 @@ export async function runPlugins(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
-  },
+  } & HostPolicyLimits,
 ): Promise<Record<string, number>> {
   const metrics: Record<string, number> = {};
 
@@ -211,7 +401,7 @@ export async function runPluginsBatch(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
-  },
+  } & HostPolicyLimits,
 ): Promise<Map<string, Record<string, number>>> {
   const results = new Map<string, Record<string, number>>();
 

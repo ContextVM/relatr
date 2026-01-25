@@ -151,21 +151,16 @@ export class RelatrFactory {
 
       // Step 7: Create Elo plugin engine first (needed for MetricsValidator and TrustCalculator)
       let eloEngine: IEloPluginEngine;
-      if (validatedConfig.eloPluginsEnabled) {
-        logger.info("Elo plugins enabled, creating engine...");
-        eloEngine = new EloPluginEngine(validatedConfig, {
-          pool,
-          relays: validatedConfig.nostrRelays,
-          graph: socialGraph,
-        });
-        await eloEngine.initialize();
-        logger.info(
-          `Elo plugin engine initialized with ${eloEngine.getPluginCount()} plugins`,
-        );
-      } else {
-        logger.info("Elo plugins disabled, using null-object engine");
-        eloEngine = new NullEloPluginEngine();
-      }
+      logger.info("Creating Elo plugin engine...");
+      eloEngine = new EloPluginEngine(validatedConfig, {
+        pool,
+        relays: validatedConfig.nostrRelays,
+        graph: socialGraph,
+      });
+      await eloEngine.initialize();
+      logger.info(
+        `Elo plugin engine initialized with ${eloEngine.getPluginCount()} plugins`,
+      );
 
       // Step 8: Initialize trust calculation with resolved plugin weights
       const trustCalculator = new TrustCalculator(

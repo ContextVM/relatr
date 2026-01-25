@@ -30,10 +30,15 @@ export interface RelatrConfig {
   /**
    * Elo plugins configuration
    */
-  eloPluginsEnabled: boolean;
   eloPluginsDir: string;
   eloPluginTimeoutMs: number;
   capTimeoutMs: number;
+  /** Host policy: maximum number of plan/then rounds allowed per plugin */
+  eloMaxRoundsPerPlugin: number;
+  /** Host policy: maximum number of plannable do calls allowed in a single round */
+  eloMaxRequestsPerRound: number;
+  /** Host policy: maximum number of plannable do calls allowed across all rounds */
+  eloMaxTotalRequestsPerPlugin: number;
   eloPluginWeights: Record<string, number>;
 
   /**

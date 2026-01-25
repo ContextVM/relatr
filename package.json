@@ -28,7 +28,7 @@
   "dependencies": {
     "@contextvm/sdk": "^0.2.5",
     "@duckdb/node-api": "^1.4.2-r.1",
-    "@enspirit/elo": "^0.9.5",
+    "@enspirit/elo": "file:./elo",
     "@types/luxon": "^3.7.1",
     "applesauce-core": "^5.0.3",
     "applesauce-relay": "^5.0.0",

@@ -18,7 +18,7 @@ const MUTUAL_TARGET_PUBKEY =
 // Note: activity is inherently noisy on real relays; assert a minimum tier instead of exact.
 const MIN_ACTIVITY_TIER: 0.0 | 0.3 | 0.6 | 1.0 = 0.6;
 
-describe("Elo Plugins v0 - real-network dogfooding (opt-in)", () => {
+describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
   let pool: RelayPool;
   let graph: any;
   let registry: CapabilityRegistry;
@@ -67,6 +67,11 @@ describe("Elo Plugins v0 - real-network dogfooding (opt-in)", () => {
           "root_nip05",
         ].sort(),
       );
+
+      // v1-only enforcement: ensure fixtures declare relatr-version=v1
+      for (const p of plugins) {
+        expect(p.manifest.relatrVersion).toBe("v1");
+      }
     },
     30_000,
   );

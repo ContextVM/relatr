@@ -26,10 +26,12 @@ const testConfig: RelatrConfig = {
   cleanupIntervalHours: 1,
   validationSyncIntervalHours: 1,
   taEnabled: false,
-  eloPluginsEnabled: false,
   eloPluginsDir: "/tmp/test-plugins",
   eloPluginTimeoutMs: 5000,
   capTimeoutMs: 3000,
+  eloMaxRoundsPerPlugin: 8,
+  eloMaxRequestsPerRound: 32,
+  eloMaxTotalRequestsPerPlugin: 128,
   eloPluginWeights: {},
   isPublicServer: false,
 };

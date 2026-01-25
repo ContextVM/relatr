@@ -4,12 +4,12 @@
   "created_at": 1760000000,
   "tags": [
     ["name", "reciprocity_mutual"],
-    ["relatr-version", "v0"],
+    ["relatr-version", "v1"],
     ["title", "Reciprocity / Mutual follow"],
     [
       "description",
       "Scores 1.0 if source and target mutually follow (graph.are_mutual)."
     ]
   ],
-  "content": "--RELATR\ncap mutual = graph.are_mutual {a: _.sourcePubkey, b: _.targetPubkey}\n--RELATR\n\nif _.sourcePubkey == null then 0.0\nelse if fetch(_.provisioned, .mutual) == true then 1.0\nelse 0.0\n"
+  "content": "plan\n  mutual = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey}\nin\nif _.sourcePubkey == null then 0.0\nelse if mutual == true then 1.0\nelse 0.0\n"
 }

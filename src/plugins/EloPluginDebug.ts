@@ -1,4 +1,3 @@
-import type { PlanRelatrResult } from "./relatrPlanner";
 import type { CapabilityResponse } from "./plugin-types";
 import type { PluginManifest } from "./plugin-types";
 
@@ -10,11 +9,15 @@ export interface EloPluginDebugPlan {
   /** Plugin name for identification */
   pluginName: string;
 
-  /** Planned capability declarations with their ids and RequestKeys */
+  /**
+   * Planned declarations from plugin execution.
+   * Contains the do-call bindings with their request keys for traceability.
+   */
   plannedDecls: {
-    id: string;
+    bindingName: string;
     capName: string;
     requestKey: string | null; // null if unplannable
+    roundIndex?: number;
   }[];
 
   /** Set of unique RequestKeys that were provisioned */
@@ -45,7 +48,7 @@ export interface EloPluginDebugPlan {
  */
 export function buildDebugPlan(
   pluginName: string,
-  planResult: PlanRelatrResult,
+  plannedDecls: EloPluginDebugPlan["plannedDecls"],
   provisioningOutcomes: Map<string, CapabilityResponse>,
   scoringSuccess: boolean,
   score: number,
@@ -53,16 +56,9 @@ export function buildDebugPlan(
 ): EloPluginDebugPlan {
   const uniqueRequestKeys = new Set<string>();
 
-  const plannedDecls = planResult.plannedDecls.map((decl) => {
-    if (decl.requestKey) {
-      uniqueRequestKeys.add(decl.requestKey);
-    }
-    return {
-      id: decl.id,
-      capName: decl.capName,
-      requestKey: decl.requestKey,
-    };
-  });
+  for (const decl of plannedDecls) {
+    if (decl.requestKey) uniqueRequestKeys.add(decl.requestKey);
+  }
 
   const outcomes: Record<
     string,
