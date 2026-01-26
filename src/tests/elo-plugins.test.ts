@@ -2,8 +2,16 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { runPlugin, runPlugins } from "../plugins/EloPluginRunner";
-import type { PortablePlugin } from "../plugins/plugin-types";
+import type {
+  PortablePlugin,
+  CapabilityRunCache,
+} from "../plugins/plugin-types";
 import { PlanningStore } from "../plugins/PlanningStore";
+import { LruCache } from "../utils/lru-cache";
+import {
+  nip05DomainOf,
+  normalizeNip05,
+} from "@/capabilities/http/utils/httpNip05Normalize";
 
 describe("Elo Plugins - Runner Integration", () => {
   let registry: CapabilityRegistry;
@@ -547,4 +555,150 @@ describe("Elo Plugins - Runner Integration", () => {
   // Note: _.provisioned was a v0-era convention. In v1, provisioned values are
   // accessed directly via binding names (e.g. `res`), and the host does not
   // populate _.provisioned.
+});
+
+describe("NIP-05 Normalization", () => {
+  test("normalizeNip05 lowercases the identifier", () => {
+    expect(normalizeNip05("Alice@EXAMPLE.COM")).toBe("alice@example.com");
+  });
+
+  test("normalizeNip05 adds _@ prefix when missing", () => {
+    expect(normalizeNip05("example.com")).toBe("_@example.com");
+  });
+
+  test("normalizeNip05 trims whitespace", () => {
+    expect(normalizeNip05("  alice@example.com  ")).toBe("alice@example.com");
+  });
+
+  test("normalizeNip05 handles already-formatted identifiers", () => {
+    expect(normalizeNip05("_@example.com")).toBe("_@example.com");
+  });
+
+  test("nip05DomainOf extracts domain correctly", () => {
+    expect(nip05DomainOf("alice@example.com")).toBe("example.com");
+    expect(nip05DomainOf("_@example.com")).toBe("example.com");
+    expect(nip05DomainOf("invalid")).toBeNull();
+  });
+});
+
+describe("Capability Run Cache Wiring", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+  let receivedCapRunCache: CapabilityRunCache | undefined;
+
+  beforeEach(() => {
+    registry = new CapabilityRegistry();
+    executor = new CapabilityExecutor(registry);
+    receivedCapRunCache = undefined;
+
+    registry.register("test.cache_check", async (args, ctx) => {
+      receivedCapRunCache = ctx.capRunCache;
+      return { ok: true };
+    });
+  });
+
+  test("capRunCache should be passed to capability handlers", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_cache_test",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content: "plan res = do 'test.cache_check' {x: 1} in res.ok",
+      manifest: {
+        name: "p_cache_test",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as unknown as any,
+    };
+
+    const cache: CapabilityRunCache = {
+      nip05Resolve: new LruCache<Promise<{ pubkey: string | null }>>(100),
+      nip05BadDomains: new LruCache<true>(50),
+    };
+
+    await runPlugin(
+      plugin,
+      { targetPubkey: "t1", capRunCache: cache },
+      executor,
+      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1000 },
+    );
+
+    expect(receivedCapRunCache).toBe(cache);
+  });
+});
+
+describe("NIP-05 Domain Fail-Fast Cache", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+  let callCount: number;
+
+  beforeEach(() => {
+    registry = new CapabilityRegistry();
+    executor = new CapabilityExecutor(registry);
+    callCount = 0;
+
+    registry.register("test.nip05_resolve", async (args, ctx) => {
+      callCount++;
+      // Simulate a timeout error
+      throw new Error("Operation timed out after 5000ms");
+    });
+  });
+
+  test("should mark domain as bad after timeout and skip subsequent requests", async () => {
+    const cache: CapabilityRunCache = {
+      nip05Resolve: new LruCache<Promise<{ pubkey: string | null }>>(100),
+      nip05BadDomains: new LruCache<true>(50),
+    };
+
+    const plugin: PortablePlugin = {
+      id: "p_nip05_timeout_1",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.nip05_resolve' {nip05: 'alice@example.com'} in if res == null then 1.0 else 0.0",
+      manifest: {
+        name: "p_nip05_timeout_1",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as unknown as any,
+    };
+
+    const result1 = await runPlugin(
+      plugin,
+      { targetPubkey: "t1", capRunCache: cache },
+      executor,
+      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1 },
+    );
+
+    expect(result1.success).toBe(true);
+    expect(result1.score).toBe(1.0); // null fallback
+    expect(callCount).toBe(1);
+
+    // Second request to same domain should be skipped (case-normalized)
+    const plugin2: PortablePlugin = {
+      ...plugin,
+      id: "p_nip05_timeout_2",
+      content:
+        "plan res = do 'test.nip05_resolve' {nip05: 'bob@example.com'} in if res == null then 1.0 else 0.0",
+    };
+
+    const result2 = await runPlugin(
+      plugin2,
+      { targetPubkey: "t1", capRunCache: cache },
+      executor,
+      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1 },
+    );
+
+    expect(result2.success).toBe(true);
+    expect(result2.score).toBe(1.0);
+    // Only one more call (for bob@example.com) since alice@example.com was cached as bad
+    expect(callCount).toBe(2);
+  });
 });

@@ -5,6 +5,21 @@
 import type { NostrEvent } from "nostr-tools";
 import type { SocialGraph } from "../graph/SocialGraph";
 import type { RelayPool } from "applesauce-relay";
+import type { LruCache } from "../utils/lru-cache";
+
+/**
+ * Per-run capability cache container.
+ *
+ * Intended lifetime: a single validation run (across all chunks), then flushed.
+ * Values should generally be cached as in-flight promises to dedupe concurrent calls.
+ */
+export type CapabilityRunCache = {
+  /** Cache for `http.nip05_resolve({ nip05 })` results keyed by normalized nip05 string */
+  nip05Resolve?: LruCache<Promise<{ pubkey: string | null }>>;
+
+  /** Cache of NIP-05 domains that have proven unresponsive during this run (fail-fast). */
+  nip05BadDomains?: LruCache<true>;
+};
 
 /**
  * Base context shared across plugin and capability execution
@@ -16,6 +31,9 @@ export interface BaseContext {
   graph?: SocialGraph;
   pool?: RelayPool;
   relays?: string[];
+
+  /** Optional per-run cache for capability results (cross-pubkey dedupe). */
+  capRunCache?: CapabilityRunCache;
 }
 
 /**

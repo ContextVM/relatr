@@ -17,6 +17,7 @@ import { generateRequestKey } from "./requestKey";
 import { withTimeout } from "../utils/utils";
 import type { EloPluginDebugPlan } from "./EloPluginDebug";
 import { buildDebugPlan } from "./EloPluginDebug";
+import { normalizeNip05 } from "../capabilities/http/utils/httpNip05Normalize";
 
 const logger = new Logger({ service: "EloPluginRunner" });
 
@@ -139,6 +140,7 @@ async function runPluginInternal(
       graph: context.graph,
       pool: context.pool,
       relays: context.relays,
+      capRunCache: context.capRunCache,
     };
 
     const main = async (): Promise<number> => {
@@ -165,6 +167,10 @@ async function runPluginInternal(
         requestKey: string;
       }> = [];
 
+      // Per-round request dedupe so we never schedule duplicates inside the same batch.
+      // (Cross-round and cross-plugin dedupe is handled by PlanningStore.)
+      const roundRequestKeys = new Set<string>();
+
       let totalPlannableDoCalls = 0;
 
       for (
@@ -175,6 +181,7 @@ async function runPluginInternal(
         const round = program.rounds[roundIndex]!;
         pendingRoundDoBindings.length = 0;
         requestsToExecute.length = 0;
+        roundRequestKeys.clear();
 
         let roundPlannableDoCalls = 0;
 
@@ -192,6 +199,22 @@ async function runPluginInternal(
                 eloInput,
                 env,
               );
+
+              // Host policy: capability-specific argument normalization.
+              // This improves request-key dedupe and downstream caching while
+              // keeping plugin semantics unchanged.
+              if (
+                binding.value.capName === "http.nip05_resolve" &&
+                argsValue &&
+                typeof argsValue === "object" &&
+                typeof (argsValue as any).nip05 === "string"
+              ) {
+                argsValue = {
+                  ...(argsValue as Record<string, unknown>),
+                  nip05: normalizeNip05((argsValue as any).nip05),
+                };
+              }
+
               requestKey = generateRequestKey(binding.value.capName, argsValue);
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);
@@ -241,14 +264,18 @@ async function runPluginInternal(
             // Bind placeholder; actual result arrives after provisioning.
             env[binding.name] = null;
 
-            requestsToExecute.push({
-              request: {
-                capName: binding.value.capName,
-                argsJson: argsValue,
-                timeoutMs: config.capTimeoutMs,
-              },
-              requestKey,
-            });
+            // Only schedule once per round; bindings still get filled from PlanningStore.
+            if (!roundRequestKeys.has(requestKey)) {
+              roundRequestKeys.add(requestKey);
+              requestsToExecute.push({
+                request: {
+                  capName: binding.value.capName,
+                  argsJson: argsValue,
+                  timeoutMs: config.capTimeoutMs,
+                },
+                requestKey,
+              });
+            }
 
             continue;
           }
@@ -359,7 +386,7 @@ export async function runPlugins(
     return metrics;
   }
 
-  logger.info(
+  logger.debug(
     `Running ${plugins.length} Elo plugins for pubkey: ${context.targetPubkey}`,
   );
 
@@ -392,7 +419,7 @@ export async function runPlugins(
   // Clear planning store after evaluation
   planningStore.clear();
 
-  logger.info(`Completed running ${plugins.length} plugins`);
+  logger.debug(`Completed running ${plugins.length} plugins`);
 
   return metrics;
 }

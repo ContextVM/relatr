@@ -2,7 +2,6 @@ import type {
   RelatrConfig,
   TrustScore,
   ProfileMetrics,
-  MetricWeights,
   ScoreComponents,
 } from "../types";
 import { SocialGraphError } from "../types";

@@ -199,7 +199,6 @@ export class CapabilityExecutor {
    * Execute multiple capabilities concurrently
    * @param requests - Array of capability requests
    * @param context - Execution context
-   * @param pluginId - Plugin ID for deduplication
    * @param planningStore - Optional planning store for per-evaluation deduplication
    * @returns Array of capability responses
    */

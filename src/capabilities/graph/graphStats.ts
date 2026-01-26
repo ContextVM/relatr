@@ -1,6 +1,5 @@
-import type { CapabilityHandler } from "./CapabilityRegistry";
-import type { SocialGraph } from "../graph/SocialGraph";
-import { Logger } from "../utils/Logger";
+import { Logger } from "@/utils/Logger";
+import type { CapabilityHandler } from "../CapabilityRegistry";
 
 const logger = new Logger({ service: "graphStats" });
 

@@ -1,0 +1,17 @@
+{
+  "kind": 765,
+  "pubkey": "fd6bc0b5267839db39a2a8d5f27846f8a5f34250266d3e48312fe270d207753e",
+  "created_at": 1760000000,
+  "tags": [
+    ["name", "nip05_valid"],
+    ["relatr-version", "^0.1.16"],
+    ["title", "NIP-05 valid"],
+    [
+      "description",
+      "Scores 1.0 if a known NIP-05 identifier resolves to the target pubkey (fixed nip05 string for deterministic planning)."
+    ]
+  ],
+  "content": "plan\n  meta = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey], limit: 1}\nin then\n  events = meta | [],\n  ev = first(events),\n  profile = Data(fetch(ev, .content) | '{}'),\n  nip05 = fetch(profile, .nip05) | null,\n  nip05_res = do 'http.nip05_resolve' {nip05: nip05}\nin\nif nip05 == null then 0.0\nelse\n  let\n    res = nip05_res,\n    resolved_pubkey = fetch(res, .pubkey) | null\n  in\n  if lower(resolved_pubkey | '') == lower(_.targetPubkey) then 1.0 else 0.0\n",
+  "id": "5d034e881e07f145595963112cd436f6bf53f0a942ac87c349338a9cfb677478",
+  "sig": "f99d5f57569b4e2c8731c4a3fb7267d5e2fccb66fff97cc4d2fb816f86982914fca76bda3c4cdc6a6df4fafe7e8a6eb7e06557742b7d055c5a270399c6232f70"
+}

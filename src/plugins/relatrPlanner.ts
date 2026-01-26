@@ -1,4 +1,4 @@
- import type { Expr, PluginProgram } from "@contextvm/elo";
+import type { Expr, PluginProgram } from "@contextvm/elo";
 import {
   parsePluginProgram,
   compileToJavaScriptWithMeta,

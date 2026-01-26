@@ -27,6 +27,7 @@ export interface IEloPluginEngine {
   evaluateForPubkey(input: {
     targetPubkey: string;
     sourcePubkey?: string;
+    capRunCache?: import("./plugin-types").CapabilityRunCache;
   }): Promise<Record<string, number>>;
   getPluginCount(): number;
   isInitialized(): boolean;
@@ -138,6 +139,7 @@ export class EloPluginEngine implements IEloPluginEngine {
   async evaluateForPubkey(input: {
     targetPubkey: string;
     sourcePubkey?: string;
+    capRunCache?: import("./plugin-types").CapabilityRunCache;
   }): Promise<Record<string, number>> {
     if (!this.initialized) {
       throw new Error(
@@ -162,6 +164,7 @@ export class EloPluginEngine implements IEloPluginEngine {
       graph: this.deps.graph,
       pool: this.deps.pool,
       relays: this.deps.relays,
+      capRunCache: input.capRunCache,
     };
 
     // Run plugins using existing runner (which handles capability provisioning)

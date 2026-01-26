@@ -1,7 +1,7 @@
-import type { CapabilityHandler } from "./CapabilityRegistry";
+import { Logger } from "@/utils/Logger";
 import type { NostrEvent, Filter } from "nostr-tools";
-import { Logger } from "../utils/Logger";
-import { withTimeout } from "../utils/utils";
+import type { CapabilityHandler } from "../CapabilityRegistry";
+import { withTimeout } from "@/utils/utils";
 
 const logger = new Logger({ service: "nostrQuery" });
 
@@ -55,7 +55,7 @@ export const nostrQuery: CapabilityHandler = async (args, context) => {
   logger.debug(`Querying nostr with filter: ${JSON.stringify(filter)}`);
 
   try {
-    const timeoutMs = context.config.capTimeoutMs || 10000;
+    const timeoutMs = context.config.capTimeoutMs || 30000;
     const events = await withTimeout(
       new Promise<NostrEvent[]>((resolve, reject) => {
         const collectedEvents: NostrEvent[] = [];

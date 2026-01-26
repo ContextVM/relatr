@@ -135,7 +135,7 @@ export class SearchService implements ISearchService {
         setTimeout(() => {
           subscription.unsubscribe();
           resolve(events);
-        }, 5000);
+        }, this.config.capTimeoutMs);
       });
 
       for (const event of nostrEvents) {

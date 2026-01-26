@@ -1,11 +1,11 @@
 import type { CapabilityRegistry } from "./CapabilityRegistry";
-import { nostrQuery } from "./nostrQuery";
-import { httpNip05Resolve } from "./httpNip05Resolve";
-import { graphStats } from "./graphStats";
-import { graphAllPubkeys } from "./graphAllPubkeys";
-import { graphAreMutual } from "./graphAreMutual";
-import { graphIsFollowing } from "./graphIsFollowing";
-import { graphPubkeyExists } from "./graphPubkeyExists";
+import { graphAllPubkeys } from "./graph/graphAllPubkeys";
+import { graphAreMutual } from "./graph/graphAreMutual";
+import { graphIsFollowing } from "./graph/graphIsFollowing";
+import { graphPubkeyExists } from "./graph/graphPubkeyExists";
+import { graphStats } from "./graph/graphStats";
+import { httpNip05Resolve } from "./http/httpNip05Resolve";
+import { nostrQuery } from "./nostr/nostrQuery";
 
 /**
  * Registers all built-in capabilities with the capability registry.

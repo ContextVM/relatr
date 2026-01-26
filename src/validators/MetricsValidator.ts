@@ -8,6 +8,8 @@ import { logger } from "@/utils/Logger";
 import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 import { nowSeconds } from "@/utils/utils";
 import type { IEloPluginEngine } from "../plugins/EloPluginEngine";
+import { LruCache } from "@/utils/lru-cache";
+import type { CapabilityRunCache } from "../plugins/plugin-types";
 
 /**
  * MetricsValidator - Validates profile metrics using Elo plugins only.
@@ -172,6 +174,16 @@ export class MetricsValidator {
     const results = new Map<string, ProfileMetrics>();
     const now = nowSeconds();
 
+    // Per-run capability cache (cross-pubkey dedupe) scoped to this batch call.
+    // Keep in-memory only; flush in finally to avoid leaks.
+    const capRunCache: CapabilityRunCache = {
+      // Cache in-flight promises so concurrent pubkeys dedupe correctly.
+      nip05Resolve: new LruCache<Promise<{ pubkey: string | null }>>(5000),
+      // Fail-fast cache for domains that have timed out during this run.
+      // Keeps retry storms from multiplying across pubkeys.
+      nip05BadDomains: new LruCache<true>(2000),
+    };
+
     try {
       // Check cache for all pubkeys in batch
       const cachedMetrics = await executeWithRetry(async () => {
@@ -194,13 +206,24 @@ export class MetricsValidator {
         return results;
       }
 
-      // Process validation in smaller chunks to avoid memory spikes
+      // Process validation in smaller chunks to avoid memory spikes.
+      // Run chunks with bounded parallelism.
       const CHUNK_SIZE = 100;
+      const CHUNK_CONCURRENCY = 2;
 
+      const chunks: string[][] = [];
       for (let i = 0; i < pubkeysToValidate.length; i += CHUNK_SIZE) {
-        const chunk = pubkeysToValidate.slice(i, i + CHUNK_SIZE);
-        logger.debug(
-          `Processing validation chunk ${Math.floor(i / CHUNK_SIZE) + 1} of ${Math.ceil(pubkeysToValidate.length / CHUNK_SIZE)}`,
+        chunks.push(pubkeysToValidate.slice(i, i + CHUNK_SIZE));
+      }
+
+      const totalChunks = chunks.length;
+
+      const processChunk = async (
+        chunk: string[],
+        chunkNum: number,
+      ): Promise<void> => {
+        logger.info(
+          `Processing validation chunk ${chunkNum} of ${totalChunks} (${chunk.length} pubkeys)`,
         );
 
         // Fetch profiles for this chunk
@@ -230,10 +253,10 @@ export class MetricsValidator {
         // Validate this chunk in parallel
         const validationPromises = chunkProfiles.map(async (profile) => {
           try {
-            // Execute Elo plugins
             const eloMetrics = await this.evaluateEloPlugins(
               profile.pubkey,
               sourcePubkey,
+              capRunCache,
             );
 
             const result: ProfileMetrics = {
@@ -245,7 +268,6 @@ export class MetricsValidator {
 
             return { pubkey: profile.pubkey, result, success: true };
           } catch (error) {
-            // Return default metrics on validation errors
             logger.warn(
               `[MetricsValidator] ⚠️ Validation failed for ${profile.pubkey}:`,
               error instanceof Error ? error.message : String(error),
@@ -275,7 +297,6 @@ export class MetricsValidator {
           }
         }
 
-        // Save this chunk's successful results immediately
         if (chunkSuccessfulResults.length > 0) {
           try {
             await this.metricsRepository.saveBatch(chunkSuccessfulResults);
@@ -283,6 +304,13 @@ export class MetricsValidator {
             logger.warn("Chunk batch cache write failed:", error);
           }
         }
+      };
+
+      for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
+        const batch = chunks.slice(i, i + CHUNK_CONCURRENCY);
+        await Promise.all(
+          batch.map((chunk, j) => processChunk(chunk, i + j + 1)),
+        );
       }
 
       return results;
@@ -313,6 +341,9 @@ export class MetricsValidator {
         }
       }
       return fallbackResults;
+    } finally {
+      capRunCache.nip05Resolve?.clear();
+      capRunCache.nip05BadDomains?.clear();
     }
   }
 
@@ -399,11 +430,13 @@ export class MetricsValidator {
   private async evaluateEloPlugins(
     pubkey: string,
     sourcePubkey?: string,
+    capRunCache?: CapabilityRunCache,
   ): Promise<Record<string, number>> {
     try {
       return await this.eloEngine.evaluateForPubkey({
         targetPubkey: pubkey,
         sourcePubkey,
+        capRunCache,
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);

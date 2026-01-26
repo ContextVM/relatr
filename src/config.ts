@@ -43,8 +43,8 @@ export const RelatrConfigSchema = z.object({
 
   // Elo plugins configuration
   eloPluginsDir: z.string().default("./plugins/elo"),
-  eloPluginTimeoutMs: z.number().positive().default(5000),
-  capTimeoutMs: z.number().positive().default(5000),
+  eloPluginTimeoutMs: z.number().positive().default(30000),
+  capTimeoutMs: z.number().positive().default(30000),
   // Host policy limits
   eloMaxRoundsPerPlugin: z.number().int().positive().default(8),
   eloMaxRequestsPerRound: z.number().int().positive().default(32),

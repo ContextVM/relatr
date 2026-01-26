@@ -11,5 +11,5 @@
       "Scores 1.0 if a known NIP-05 identifier resolves to the target pubkey (fixed nip05 string for deterministic planning)."
     ]
   ],
-  "content": "plan\n  meta = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey], limit: 1},\n  nip05_res = do 'http.nip05_resolve' {nip05: '_@dergigi.com'}\nin\nlet\n  res = nip05_res,\n  pubkey = fetch(res, .pubkey) | null\nin\nif lower(pubkey | '') == lower(_.targetPubkey) then 1.0 else 0.0\n"
+  "content": "plan\n  meta = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey], limit: 1}\nin then\n  events = meta | [],\n  ev = first(events),\n  profile = Data(fetch(ev, .content) | '{}'),\n  nip05 = fetch(profile, .nip05) | null,\n  nip05_res = do 'http.nip05_resolve' {nip05: nip05}\nin\nif nip05 == null then 0.0\nelse\n  let\n    res = nip05_res,\n    resolved_pubkey = fetch(res, .pubkey) | null\n  in\n  if lower(resolved_pubkey | '') == lower(_.targetPubkey) then 1.0 else 0.0\n"
 }
