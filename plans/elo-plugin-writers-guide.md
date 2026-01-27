@@ -171,14 +171,14 @@ Write plugins that:
 
 ## Packaging your plugin (Nostr event)
 
-Plugins are published as Nostr events, containing:
+Plugins are published as **kind 765** Nostr events, containing:
 
 - `content`: the plugin program text (the `plan/then/.../score` program)
 - tags/metadata describing the plugin
 
 At minimum, include:
 
-- `name`: stable identifier (`snake_case` or `kebab-case`)
+- `n`: stable identifier (`snake_case` or `kebab-case`). Uses single-letter tag per Nostr convention for relay indexing.
 - `relatr-version`: a **caret semver range** describing which Relatr versions this plugin is compatible with (e.g. `^0.1.16`)
 
 Recommended:
@@ -186,6 +186,31 @@ Recommended:
 - `title`
 - `description`
 - `weight` (0.0 to 1.0)
+
+Example event:
+
+```json
+{
+  "kind": 765,
+  "content": "plan notes = do 'nostr.query' {...} in ...",
+  "tags": [
+    ["n", "activity_notes"],
+    ["relatr-version", "^0.1.16"],
+    ["title", "Activity score (notes)"],
+    ["description", "Scores higher for more notes."]
+  ],
+  ...
+}
+```
+
+### Plugin versioning
+
+Versions are determined by `created_at` timestamp (newer = later version). To query versions:
+
+- Filter: kind 765 + author pubkey + `n` tag
+- Sort by `created_at` descending, then by event `id` lexicographically
+
+See [`plans/relatr-plugins-spec-v1.md`](plans/relatr-plugins-spec-v1.md) §10-11 for full details.
 
 ---
 

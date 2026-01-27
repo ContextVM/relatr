@@ -5,8 +5,12 @@ import { HOST_VERSION } from "../version";
  * Parse Nostr event tags into a structured plugin manifest
  *
  * Tag schema:
- * - name, relatr-version (single values)
- * - title, description, weight (single values)
+ * - n (single-letter, indexable): plugin name
+ * - relatr-version (single value): semver range
+ * - title, description, weight (single values, optional)
+ *
+ * Per Nostr convention, the name uses a single-letter tag 'n' for relay indexing.
+ * See: plans/relatr-plugins-spec-v1.md §10
  *
  * @param tags - Nostr event tags (string[][])
  * @returns Parsed plugin manifest
@@ -26,7 +30,7 @@ export function parseManifestTags(tags: string[][]): PluginManifest {
     const [key, value] = tag;
 
     switch (key) {
-      case "name":
+      case "n":
         manifest.name = value || "";
         break;
       case "relatr-version":
@@ -62,7 +66,7 @@ export function validateManifest(manifest: PluginManifest): {
   const hostVersion = HOST_VERSION;
 
   if (!manifest.name || manifest.name.trim() === "") {
-    errors.push("Manifest must have a 'name' tag");
+    errors.push("Manifest must have an 'n' tag (plugin name)");
   }
 
   if (manifest.name && !/^[a-z0-9_-]+$/.test(manifest.name)) {

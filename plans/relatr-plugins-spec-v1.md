@@ -196,3 +196,88 @@ in then
 in
   if nip05_result != null then 1.0 else 0.0
 ```
+
+---
+
+## 10. Nostr Event Format
+
+Plugins are published as Nostr events for portability and discoverability.
+
+### 10.1 Event Kind
+
+Plugins use **kind 765**.
+
+### 10.2 Content
+
+The `content` field contains the plugin program text (the `plan/then/.../score` program).
+
+### 10.3 Tags (Manifest)
+
+Tags provide plugin metadata. Indexable tags use single-letter keys per Nostr convention.
+
+**Required tags:**
+
+| Tag            | Key              | Value Description                                                    |
+| -------------- | ---------------- | -------------------------------------------------------------------- |
+| Name           | `n`              | Stable identifier (`snake_case` or `kebab-case`). Indexed by relays. |
+| Relatr Version | `relatr-version` | Caret semver range for host compatibility (e.g., `^0.1.16`).         |
+
+**Optional tags:**
+
+| Tag         | Key           | Value Description              |
+| ----------- | ------------- | ------------------------------ |
+| Title       | `title`       | Human-readable plugin title.   |
+| Description | `description` | Plugin description.            |
+| Weight      | `weight`      | Plugin weight from 0.0 to 1.0. |
+
+Example event tags:
+
+```json
+[
+  ["n", "activity_notes"],
+  ["relatr-version", "^0.1.16"],
+  ["title", "Activity score (notes)"],
+  ["description", "Scores higher for more recent notes by targetPubkey."],
+  ["weight", "0.8"]
+]
+```
+
+---
+
+## 11. Plugin Versioning
+
+The plugin versioning system leverages Nostr's existing properties.
+
+### 11.1 Version Identity
+
+Versions are identified by:
+
+1. **Author** (`pubkey`) — who published the plugin
+2. **Name** (`n` tag) — the plugin identifier
+
+### 11.2 Discovering Versions
+
+To find all versions of a plugin:
+
+1. Query for kind 765 events
+2. Filter by author (`pubkey`)
+3. Filter by `n` tag value
+
+### 11.3 Determining the Latest Version
+
+The "latest" or "head" version is determined by:
+
+1. **Primary**: Highest `created_at` timestamp
+2. **Tie-break**: Lexicographically smallest event `id`
+
+This leverages Nostr's existing guarantees:
+
+- Event IDs are SHA-256 hashes (globally unique)
+- `created_at` is provided by the author
+- The combination provides deterministic ordering
+
+### 11.4 Rationale
+
+- **No explicit version numbers**: Nostr event IDs and timestamps already provide unique identity and ordering
+- **Single-letter `n` tag**: Enables efficient relay indexing — users can query for plugins by name
+- **Author-scoped**: Plugin names are per-author, avoiding global namespace collisions

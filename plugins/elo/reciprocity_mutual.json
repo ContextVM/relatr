@@ -1,17 +1,26 @@
 {
   "kind": 765,
-  "pubkey": "fd6bc0b5267839db39a2a8d5f27846f8a5f34250266d3e48312fe270d207753e",
+  "pubkey": "0f0c15457799aac79848730a6d466cd89bec73ad59973b4c52431bd2890974fe",
   "created_at": 1760000000,
   "tags": [
-    ["name", "reciprocity_mutual"],
-    ["relatr-version", "^0.1.16"],
-    ["title", "Reciprocity / Mutual follow"],
+    [
+      "n",
+      "reciprocity_mutual"
+    ],
+    [
+      "relatr-version",
+      "^0.1.16"
+    ],
+    [
+      "title",
+      "Reciprocity / Mutual follow"
+    ],
     [
       "description",
       "Scores 1.0 if source and target mutually follow (graph.are_mutual)."
     ]
   ],
   "content": "plan\n  mutual = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey}\nin\nif _.sourcePubkey == null then 0.0\nelse if mutual == true then 1.0\nelse 0.0\n",
-  "id": "5f20cbdb723a5fb8f061902616fbdb74acadaa45e403ada6851fc91d4e4a58de",
-  "sig": "7338818295f08db65ca24a6aaf1378c1548dd35cc3aafc13b82deaf0792572f0adea910e6d65a9196b3922d8978a62ab1591c267bb647671d4006771481f042d"
+  "id": "4f9c2b0cd50732f64f5646a983b6b0e71c7d4ecff292de9a384e7c9f92cbef80",
+  "sig": "25f5e3bf03191ed4d551ea1334a0efe3eb2effe9df4c0e0bae143461ffb3e237b0104e07707c3954dbebf639f45376cf9e1be1d59697900ed59848c33be26963"
 }

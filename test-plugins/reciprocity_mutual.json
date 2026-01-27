@@ -3,7 +3,7 @@
   "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
   "created_at": 1760000000,
   "tags": [
-    ["name", "reciprocity_mutual"],
+    ["n", "reciprocity_mutual"],
     ["relatr-version", "^0.1.16"],
     ["title", "Reciprocity / Mutual follow"],
     [

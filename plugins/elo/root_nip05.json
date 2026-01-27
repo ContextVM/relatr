@@ -1,17 +1,26 @@
 {
   "kind": 765,
-  "pubkey": "fd6bc0b5267839db39a2a8d5f27846f8a5f34250266d3e48312fe270d207753e",
+  "pubkey": "0f0c15457799aac79848730a6d466cd89bec73ad59973b4c52431bd2890974fe",
   "created_at": 1760000000,
   "tags": [
-    ["name", "root_nip05"],
-    ["relatr-version", "^0.1.16"],
-    ["title", "Root NIP-05"],
+    [
+      "n",
+      "root_nip05"
+    ],
+    [
+      "relatr-version",
+      "^0.1.16"
+    ],
+    [
+      "title",
+      "Root NIP-05"
+    ],
     [
       "description",
       "Scores 1.0 if profile nip05 normalizes to '_@domain' (root)."
     ]
   ],
   "content": "plan\n  meta = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey], limit: 1}\nin then\n  events = meta | [],\n  ev = first(events),\n  profile = Data(fetch(ev, .content) | '{}'),\n  nip05 = fetch(profile, .nip05) | null,\n  normalized =\n    if nip05 == null then null\n    else if contains(nip05, '@') then nip05\n    else '_@' + nip05,\n  username =\n    if normalized == null then null\n    else first(split(normalized, '@'))\nin\nif username == '_' then 1.0 else 0.0\n",
-  "id": "6bfc4221be6a95471ea3004c311f0f0d2a55b46f752fa962f4ee4b578c99952e",
-  "sig": "4b64667bc40bfc0b75e474eebe190219c5deb40c0e815fd1b2bc628966da609268ed223bd835016ab80bf9b880a75c237b97f766b3c49ff14e1cc8a39e1adc83"
+  "id": "84db589fef4068ec4ffe2597b0894d338599c83ac365b7bb7f5bbf942fbbe014",
+  "sig": "344bd6ba07ae915d16e62264f7cbb9ba971f359e9f55da36119107a76b12c635b8a5ba9278c8c59619ea83b281fa32b6a38b4deea9d852a82ec81797a93f3f61"
 }
