@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { RelayPool } from "applesauce-relay";
+import { SocialGraph } from "../graph/SocialGraph";
 import { loadPluginsFromDirectory } from "@/plugins/PortablePluginLoader";
 import { CapabilityRegistry } from "@/capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "@/capabilities/CapabilityExecutor";
@@ -20,7 +21,7 @@ const MIN_ACTIVITY_TIER: 0.0 | 0.3 | 0.6 | 1.0 = 0.6;
 
 describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
   let pool: RelayPool;
-  let graph: any;
+  let graph: SocialGraph;
   let registry: CapabilityRegistry;
   let executor: CapabilityExecutor;
 
@@ -32,13 +33,12 @@ describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
 
     pool = new RelayPool();
     // Avoid expensive network-backed social graph creation in tests.
-    // We keep the graph capability path realistic by providing a minimal stub
-    // that answers the mutual-follow check for the fixture pair.
+    // Create a mock graph that implements only what's needed.
     graph = {
       isInitialized: () => true,
       areMutualFollows: async (a: string, b: string) =>
         a === GIGI_PUBKEY && b === MUTUAL_TARGET_PUBKEY,
-    };
+    } as unknown as SocialGraph;
 
     registry = new CapabilityRegistry();
     registerBuiltInCapabilities(registry);

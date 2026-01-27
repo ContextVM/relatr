@@ -31,7 +31,6 @@ import {
   EloPluginEngine,
   type IEloPluginEngine,
 } from "../plugins/EloPluginEngine";
-import { NullEloPluginEngine } from "../plugins/NullEloPluginEngine";
 import { nowMs } from "@/utils/utils";
 
 export class RelatrFactory {
@@ -150,9 +149,7 @@ export class RelatrFactory {
       logger.info("Social graph stats", graphStats);
 
       // Step 7: Create Elo plugin engine first (needed for MetricsValidator and TrustCalculator)
-      let eloEngine: IEloPluginEngine;
-      logger.info("Creating Elo plugin engine...");
-      eloEngine = new EloPluginEngine(validatedConfig, {
+      const eloEngine: IEloPluginEngine = new EloPluginEngine(validatedConfig, {
         pool,
         relays: validatedConfig.nostrRelays,
         graph: socialGraph,

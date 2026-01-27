@@ -112,7 +112,6 @@ export class TrustCalculator {
       ) {
         continue;
       }
-      const weight = this.pluginWeights[metricName];
       components.validators[metricName] = {
         score: this.roundToDecimalPlaces(metricValue),
       };

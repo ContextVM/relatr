@@ -12,7 +12,10 @@ const logger = new Logger({ service: "EloEvaluator" });
 /**
  * Cache for compiled Elo functions
  */
-const compilationCache = new Map<string, (_: EloInput) => unknown>();
+type CompiledElo =
+  | ((_: EloInput) => unknown)
+  | { evaluate: (_: EloInput) => unknown };
+const compilationCache = new Map<string, CompiledElo>();
 
 /**
  * Compile Elo code to a JavaScript function
@@ -28,7 +31,7 @@ export function compileElo(
   if (cacheKey) {
     const cached = compilationCache.get(cacheKey);
     if (cached) {
-      return cached;
+      return cached instanceof Function ? cached : cached.evaluate;
     }
   }
 
@@ -40,7 +43,7 @@ export function compileElo(
     // even if the user expression doesn't explicitly reference them.
     const compiled = compile(source, {
       runtime: { DateTime, Duration },
-    }) as any;
+    }) as CompiledElo;
 
     // Cache the compiled function
     if (cacheKey) {
@@ -51,10 +54,10 @@ export function compileElo(
       try {
         // `compile()` returns a function that takes `_` as its argument.
         // (See docs excerpt in `plans/elo-reference.md`.)
-        if (typeof compiled === "function") return compiled(_);
+        if (compiled instanceof Function) return compiled(_);
 
         // Some builds may return an object with an evaluate method.
-        if (compiled && typeof compiled.evaluate === "function")
+        if ("evaluate" in compiled && typeof compiled.evaluate === "function")
           return compiled.evaluate(_);
 
         return compiled;

@@ -26,7 +26,7 @@ export function isJsonValue(value: unknown): boolean {
 
   try {
     // This will throw if given non-JSON values
-    const canonical = canonicalize(value as any);
+    const canonical = canonicalize(value as Parameters<typeof canonicalize>);
     return canonical !== undefined;
   } catch {
     return false;
@@ -43,7 +43,7 @@ export function canonicalizeArgs(args: unknown): string | null {
   }
 
   try {
-    const canonical = canonicalize(args as any);
+    const canonical = canonicalize(args as Parameters<typeof canonicalize>);
     if (canonical === undefined) {
       return null;
     }

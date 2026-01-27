@@ -1,5 +1,4 @@
 import type { CapabilityResponse } from "./plugin-types";
-import type { PluginManifest } from "./plugin-types";
 
 /**
  * Debug plan output for Elo plugin evaluation.

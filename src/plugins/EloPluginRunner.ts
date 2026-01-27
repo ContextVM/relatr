@@ -3,9 +3,9 @@ import type {
   EloInput,
   EloEvaluationResult,
   BaseContext,
+  CapabilityResponse,
 } from "./plugin-types";
 import type { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
-import { evaluateElo } from "./EloEvaluator";
 import { Logger } from "../utils/Logger";
 import { PlanningStore } from "./PlanningStore";
 import {
@@ -111,7 +111,7 @@ async function runPluginInternal(
   const limits = { ...DEFAULT_HOST_POLICY_LIMITS, ...config };
 
   const plannedDecls: EloPluginDebugPlan["plannedDecls"] = [];
-  const provisioningOutcomes = new Map<string, any>();
+  const provisioningOutcomes = new Map<string, CapabilityResponse>();
 
   try {
     logger.debug(`Running plugin: ${plugin.manifest.name}`);
@@ -207,11 +207,13 @@ async function runPluginInternal(
                 binding.value.capName === "http.nip05_resolve" &&
                 argsValue &&
                 typeof argsValue === "object" &&
-                typeof (argsValue as any).nip05 === "string"
+                typeof (argsValue as { nip05?: string }).nip05 === "string"
               ) {
                 argsValue = {
                   ...(argsValue as Record<string, unknown>),
-                  nip05: normalizeNip05((argsValue as any).nip05),
+                  nip05: normalizeNip05(
+                    (argsValue as { nip05?: string }).nip05 as string,
+                  ),
                 };
               }
 

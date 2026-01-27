@@ -111,11 +111,6 @@ export class MetricsValidator {
     const now = nowSeconds();
 
     try {
-      // Get profile for validations
-      const profile =
-        (await this.metadataRepository.get(pubkey)) ||
-        (await this.fetchProfile(pubkey));
-
       // Execute Elo plugins
       const eloMetrics = await this.evaluateEloPlugins(pubkey, sourcePubkey);
 

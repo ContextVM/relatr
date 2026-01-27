@@ -1,9 +1,5 @@
 import { validateAndDecodePubkey } from "@/utils/utils.nostr.js";
-import {
-  ApplesauceRelayPool,
-  NostrServerTransport,
-  PrivateKeySigner,
-} from "@contextvm/sdk";
+import { NostrServerTransport, PrivateKeySigner } from "@contextvm/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
@@ -66,7 +62,7 @@ export async function startMCPServer(): Promise<void> {
     // const transport = new StdioServerTransport();
     const transport = new NostrServerTransport({
       signer: new PrivateKeySigner(config.serverSecretKey),
-      relayHandler: new ApplesauceRelayPool(config.serverRelays),
+      relayHandler: config.serverRelays,
       injectClientPubkey: true,
       isPublicServer: config.isPublicServer,
       serverInfo: {

@@ -7,7 +7,7 @@ const logger = new Logger({ service: "CapabilityRegistry" });
  * Capability handler function signature
  */
 export type CapabilityHandler = (
-  args: any,
+  args: unknown,
   context: CapabilityContext,
 ) => Promise<unknown>;
 

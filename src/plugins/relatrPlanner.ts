@@ -10,9 +10,6 @@ import {
 } from "@contextvm/elo";
 import { DateTime, Duration } from "luxon";
 import type { EloInput } from "./plugin-types";
-import { Logger } from "../utils/Logger";
-
-const logger = new Logger({ service: "RelatrPlanner" });
 
 export type CompiledPluginProgram = {
   program: PluginProgram;

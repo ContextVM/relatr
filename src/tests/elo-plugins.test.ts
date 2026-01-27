@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import type { NostrEvent } from "nostr-tools";
 import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { runPlugin, runPlugins } from "../plugins/EloPluginRunner";
@@ -45,7 +46,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const context = {
@@ -86,7 +87,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -116,7 +117,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -144,7 +145,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const plugin2: PortablePlugin = {
@@ -161,7 +162,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     await runPlugins([plugin1, plugin2], { targetPubkey: "t1" }, executor, {
@@ -195,7 +196,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const plugin2: PortablePlugin = {
@@ -212,7 +213,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const planningStore = new PlanningStore();
@@ -262,7 +263,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -289,7 +290,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -317,7 +318,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -345,7 +346,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -372,7 +373,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -399,7 +400,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -429,7 +430,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const plugin2: PortablePlugin = {
@@ -446,7 +447,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     await runPlugins([plugin1, plugin2], { targetPubkey: "t1" }, executor, {
@@ -475,7 +476,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const planningStore = new PlanningStore();
@@ -511,7 +512,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -540,7 +541,7 @@ describe("Elo Plugins - Runner Integration", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
@@ -611,7 +612,7 @@ describe("Capability Run Cache Wiring", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const cache: CapabilityRunCache = {
@@ -640,7 +641,7 @@ describe("NIP-05 Domain Fail-Fast Cache", () => {
     executor = new CapabilityExecutor(registry);
     callCount = 0;
 
-    registry.register("test.nip05_resolve", async (args, ctx) => {
+    registry.register("test.nip05_resolve", async (_args, _ctx) => {
       callCount++;
       // Simulate a timeout error
       throw new Error("Operation timed out after 5000ms");
@@ -667,7 +668,7 @@ describe("NIP-05 Domain Fail-Fast Cache", () => {
         description: null,
         weight: 1.0,
       },
-      rawEvent: {} as unknown as any,
+      rawEvent: {} as NostrEvent,
     };
 
     const result1 = await runPlugin(

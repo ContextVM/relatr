@@ -20,25 +20,25 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.8.0",
-    "typescript-eslint": "^8.53.1"
+    "prettier": "^3.8.1",
+    "typescript-eslint": "^8.54.0"
   },
   "peerDependencies": {
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@contextvm/elo": "^0.10.0",
-    "@contextvm/sdk": "^0.2.5",
+    "@contextvm/sdk": "^0.2.6",
     "@duckdb/node-api": "^1.4.2-r.1",
     "@types/luxon": "^3.7.1",
     "applesauce-core": "^5.0.3",
     "applesauce-relay": "^5.0.0",
     "json-canonicalize": "^2.0.0",
     "nostr-social-duck": "^0.1.24",
-    "nostr-tools": "^2.19.4",
+    "nostr-tools": "^2.20.0",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
