@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.19
+
+### Patch Changes
+
+- chore(deps): update dependencies
+
 ## 0.1.18
 
 ### Patch Changes
