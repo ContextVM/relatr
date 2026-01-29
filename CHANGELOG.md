@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.17
+
+### Patch Changes
+
+- fix(ta): skip TA publish for rank 0
+
 ## 0.1.16
 
 ### Patch Changes
