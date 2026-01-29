@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.18
+
+### Patch Changes
+
+- chore(deps): update @contextvm/sdk to 0.2.7
+
 ## 0.1.17
 
 ### Patch Changes
