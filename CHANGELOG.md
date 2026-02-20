@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.20
+
+### Patch Changes
+
+- build(deps): update dependencies including @contextvm/sdk major version bump
+
 ## 0.1.19
 
 ### Patch Changes
