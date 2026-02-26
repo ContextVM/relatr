@@ -1,5 +1,11 @@
 # relatr
 
+## 0.1.21
+
+### Patch Changes
+
+- chore: bump deps
+
 ## 0.1.20
 
 ### Patch Changes
