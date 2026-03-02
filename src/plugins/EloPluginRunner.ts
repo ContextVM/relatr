@@ -410,12 +410,11 @@ export async function runPlugins(
       now,
     );
 
-    // Use plugin name as the metric key
-    metrics[plugin.manifest.name] = result.score;
+    // Use namespaced plugin key to avoid collisions across different authors.
+    const metricKey = `${plugin.pubkey}:${plugin.manifest.name}`;
+    metrics[metricKey] = result.score;
 
-    if (!result.success) {
-      logger.warn(`Plugin ${plugin.manifest.name} failed: ${result.error}`);
-    }
+    // Plugin failures are already logged at ERROR level in runPluginInternal
   }
 
   // Clear planning store after evaluation

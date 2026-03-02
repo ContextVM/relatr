@@ -217,10 +217,10 @@ Tags provide plugin metadata. Indexable tags use single-letter keys per Nostr co
 
 **Required tags:**
 
-| Tag            | Key              | Value Description                                                    |
-| -------------- | ---------------- | -------------------------------------------------------------------- |
-| Name           | `n`              | Stable identifier (`snake_case` or `kebab-case`). Indexed by relays. |
-| Relatr Version | `relatr-version` | Caret semver range for host compatibility (e.g., `^0.1.16`).         |
+| Tag            | Key              | Value Description                                                                                                            |
+| -------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Name           | `n`              | Stable identifier (`snake_case` or `kebab-case`). Indexed by relays.                                                         |
+| Relatr Version | `relatr-version` | Caret semver range for host compatibility (e.g., `^0.1.16`).<br>`^0.1.16` = `>=0.1.16 <0.2.0`<br>`^1.2.3` = `>=1.2.3 <2.0.0` |
 
 **Optional tags:**
 

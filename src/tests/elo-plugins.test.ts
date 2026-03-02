@@ -173,6 +173,54 @@ describe("Elo Plugins - Runner Integration", () => {
     expect(callCount).toBe(1);
   });
 
+  test("should key metrics by pubkey:name to avoid collisions across authors", async () => {
+    const pluginA: PortablePlugin = {
+      id: "p_same_name_a",
+      pubkey: "pk_a",
+      createdAt: 123,
+      kind: 31234,
+      content: "plan x = 1 in 1.0",
+      manifest: {
+        name: "same_name",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const pluginB: PortablePlugin = {
+      id: "p_same_name_b",
+      pubkey: "pk_b",
+      createdAt: 124,
+      kind: 31234,
+      content: "plan x = 1 in 0.5",
+      manifest: {
+        name: "same_name",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const metrics = await runPlugins(
+      [pluginA, pluginB],
+      { targetPubkey: "t1" },
+      executor,
+      {
+        eloPluginTimeoutMs: 1000,
+        capTimeoutMs: 1000,
+      },
+    );
+
+    expect(metrics["pk_a:same_name"]).toBe(1.0);
+    expect(metrics["pk_b:same_name"]).toBe(0.5);
+    expect(Object.keys(metrics).length).toBe(2);
+  });
+
   test("should deduplicate failing capability calls across plugins (cache null failures)", async () => {
     // This test asserts v1 failure semantics + dedupe:
     // if a capability fails, the host should still treat it as a null value
@@ -592,7 +640,7 @@ describe("Capability Run Cache Wiring", () => {
     executor = new CapabilityExecutor(registry);
     receivedCapRunCache = undefined;
 
-    registry.register("test.cache_check", async (args, ctx) => {
+    registry.register("test.cache_check", async (_, ctx) => {
       receivedCapRunCache = ctx.capRunCache;
       return { ok: true };
     });

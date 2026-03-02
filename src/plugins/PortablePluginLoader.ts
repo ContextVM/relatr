@@ -7,6 +7,35 @@ import type { PortablePlugin } from "./plugin-types";
 import { parseManifestTags, validateManifest } from "./parseManifestTags";
 import { logger } from "@/utils/Logger";
 
+const RELATR_PLUGIN_KIND = 765;
+
+function comparePluginVersionDesc(
+  a: PortablePlugin,
+  b: PortablePlugin,
+): number {
+  // Newer createdAt first
+  if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+  // Tie-break by lexicographically smallest id first
+  return a.id.localeCompare(b.id);
+}
+
+function selectLatestPluginVersions(
+  plugins: PortablePlugin[],
+): PortablePlugin[] {
+  const byKey = new Map<string, PortablePlugin>();
+
+  for (const plugin of plugins) {
+    const key = `${plugin.pubkey}:${plugin.manifest.name}`;
+    const existing = byKey.get(key);
+
+    if (!existing || comparePluginVersionDesc(plugin, existing) < 0) {
+      byKey.set(key, plugin);
+    }
+  }
+
+  return Array.from(byKey.values());
+}
+
 /**
  * Check if unsafe plugins are allowed (dev/test mode)
  */
@@ -81,6 +110,12 @@ export async function loadPluginFromFile(
     throw new Error(`Plugin is missing required 'kind' field`);
   }
 
+  if (rawEvent.kind !== RELATR_PLUGIN_KIND) {
+    throw new Error(
+      `Unsupported plugin kind '${rawEvent.kind}' (expected ${RELATR_PLUGIN_KIND})`,
+    );
+  }
+
   if (!rawEvent.tags) {
     throw new Error(`Plugin is missing required 'tags' field`);
   }
@@ -152,10 +187,18 @@ export async function loadPluginsFromDirectory(
       }
     }
 
+    const selectedPlugins = selectLatestPluginVersions(plugins);
+
     // Log summary
     if (plugins.length > 0) {
       logger.info(
-        `Successfully loaded ${plugins.length} plugins from ${dirPath}`,
+        `Successfully loaded ${plugins.length} plugin event(s) from ${dirPath}`,
+      );
+    }
+
+    if (selectedPlugins.length !== plugins.length) {
+      logger.info(
+        `Selected ${selectedPlugins.length} latest plugin version(s) after de-duplicating by pubkey+name`,
       );
     }
 
@@ -163,7 +206,7 @@ export async function loadPluginsFromDirectory(
       logger.warn(`Encountered ${errors.length} errors while loading plugins`);
     }
 
-    return plugins;
+    return selectedPlugins;
   } catch (error) {
     throw new Error(
       `Failed to read plugins directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`,

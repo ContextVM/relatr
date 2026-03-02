@@ -179,7 +179,9 @@ Plugins are published as **kind 765** Nostr events, containing:
 At minimum, include:
 
 - `n`: stable identifier (`snake_case` or `kebab-case`). Uses single-letter tag per Nostr convention for relay indexing.
-- `relatr-version`: a **caret semver range** describing which Relatr versions this plugin is compatible with (e.g. `^0.1.16`)
+- `relatr-version`: a **caret semver range** describing which Relatr versions this plugin is compatible with (e.g. `^0.1.16`).
+  - `^0.1.16` means `>=0.1.16 <0.2.0` (0.x: only patch updates)
+  - `^1.2.3` means `>=1.2.3 <2.0.0` (1.x+: minor and patch updates)
 
 Recommended:
 

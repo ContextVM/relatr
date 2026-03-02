@@ -1,6 +1,67 @@
 import type { PluginManifest } from "./plugin-types";
 import { HOST_VERSION } from "../version";
 
+type ParsedSemver = {
+  major: number;
+  minor: number;
+  patch: number;
+};
+
+function parseSemver(version: string): ParsedSemver | null {
+  const m = version.trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return null;
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+  };
+}
+
+function cmpSemver(a: ParsedSemver, b: ParsedSemver): number {
+  if (a.major !== b.major) return a.major - b.major;
+  if (a.minor !== b.minor) return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+
+/**
+ * Minimal semver range support for plugin host-compat checks.
+ *
+ * Supported forms:
+ * - exact: 1.2.3
+ * - caret: ^1.2.3, ^0.2.3, ^0.0.3
+ */
+function satisfiesRelatrVersion(host: string, range: string): boolean {
+  const hostV = parseSemver(host);
+  if (!hostV) return false;
+
+  const raw = range.trim();
+
+  // Exact version
+  if (!raw.startsWith("^")) {
+    const exact = parseSemver(raw);
+    return !!exact && cmpSemver(hostV, exact) === 0;
+  }
+
+  // Caret range
+  const base = parseSemver(raw.slice(1));
+  if (!base) return false;
+
+  // Lower bound (inclusive)
+  if (cmpSemver(hostV, base) < 0) return false;
+
+  // Upper bound (exclusive) per semver caret semantics
+  let upper: ParsedSemver;
+  if (base.major > 0) {
+    upper = { major: base.major + 1, minor: 0, patch: 0 };
+  } else if (base.minor > 0) {
+    upper = { major: 0, minor: base.minor + 1, patch: 0 };
+  } else {
+    upper = { major: 0, minor: 0, patch: base.patch + 1 };
+  }
+
+  return cmpSemver(hostV, upper) < 0;
+}
+
 /**
  * Parse Nostr event tags into a structured plugin manifest
  *
@@ -79,17 +140,14 @@ export function validateManifest(manifest: PluginManifest): {
     errors.push("Manifest must have a 'relatr-version' tag");
   }
 
-  // relatr-version is a semver range (e.g. ^0.1.16) that must match the host.
-  // Minimal implementation: support caret ranges only.
   if (manifest.relatrVersion) {
     const v = manifest.relatrVersion.trim();
-    if (!v.startsWith("^")) {
+    if (!v.startsWith("^") && !/^\d+\.\d+\.\d+$/.test(v)) {
       errors.push(
-        `Unsupported relatr-version: ${manifest.relatrVersion} (expected caret semver like '^${hostVersion}')`,
+        `Unsupported relatr-version: ${manifest.relatrVersion} (expected exact semver like '${hostVersion}' or caret semver like '^${hostVersion}')`,
       );
     } else {
-      const base = v.slice(1);
-      if (base !== hostVersion) {
+      if (!satisfiesRelatrVersion(hostVersion, v)) {
         errors.push(
           `Unsupported relatr-version: ${manifest.relatrVersion} (host is ${hostVersion})`,
         );

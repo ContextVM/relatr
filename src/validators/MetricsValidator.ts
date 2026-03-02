@@ -20,7 +20,6 @@ import type { CapabilityRunCache } from "../plugins/plugin-types";
 export class MetricsValidator {
   private pool: RelayPool;
   private nostrRelays: string[];
-  private graphManager: SocialGraph;
   private metricsRepository: MetricsRepository;
   private timeoutMs: number = 10000;
   private cacheTtlSeconds: number = 3600;
@@ -72,7 +71,6 @@ export class MetricsValidator {
 
     this.pool = pool;
     this.nostrRelays = nostrRelays;
-    this.graphManager = graphManager;
     this.metricsRepository = metricsRepository;
     // cacheTtlSeconds is expressed in SECONDS (used with unix epoch seconds throughout the code).
     // Keep it in seconds to avoid accidentally producing multi-year TTLs.
@@ -213,11 +211,36 @@ export class MetricsValidator {
 
       const totalChunks = chunks.length;
 
+      const mapWithConcurrency = async <T, R>(
+        items: T[],
+        limit: number,
+        worker: (item: T) => Promise<R>,
+      ): Promise<R[]> => {
+        if (items.length === 0) return [];
+        const results = new Array<R>(items.length);
+        let nextIndex = 0;
+
+        const runWorker = async () => {
+          while (true) {
+            const currentIndex = nextIndex;
+            nextIndex++;
+            if (currentIndex >= items.length) return;
+            results[currentIndex] = await worker(items[currentIndex]!);
+          }
+        };
+
+        const workerCount = Math.min(limit, items.length);
+        await Promise.all(
+          Array.from({ length: workerCount }, () => runWorker()),
+        );
+        return results;
+      };
+
       const processChunk = async (
         chunk: string[],
         chunkNum: number,
       ): Promise<void> => {
-        logger.info(
+        logger.debug(
           `Processing validation chunk ${chunkNum} of ${totalChunks} (${chunk.length} pubkeys)`,
         );
 
@@ -237,10 +260,10 @@ export class MetricsValidator {
 
         // Fetch remaining profiles from relays in parallel for this chunk
         if (chunkPubkeysToFetch.length > 0) {
-          const fetchedProfiles = await Promise.all(
-            chunkPubkeysToFetch.map(
-              async (pubkey) => await this.fetchProfile(pubkey),
-            ),
+          const fetchedProfiles = await mapWithConcurrency(
+            chunkPubkeysToFetch,
+            12,
+            async (pubkey) => await this.fetchProfile(pubkey),
           );
           chunkProfiles.push(...fetchedProfiles);
         }
@@ -316,8 +339,11 @@ export class MetricsValidator {
         error,
       );
 
-      const fallbackResults = new Map<string, ProfileMetrics>();
+      const fallbackResults = new Map<string, ProfileMetrics>(results);
       for (const pubkey of pubkeys) {
+        if (fallbackResults.has(pubkey)) {
+          continue;
+        }
         try {
           const result = await this.validateAll(pubkey, sourcePubkey);
           fallbackResults.set(pubkey, result);
@@ -366,6 +392,27 @@ export class MetricsValidator {
   private async fetchProfile(pubkey: string): Promise<NostrProfile> {
     try {
       const event = await new Promise<NostrEvent | null>((resolve, reject) => {
+        let settled = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+        const finalize = (value: NostrEvent | null) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          resolve(value);
+        };
+
+        const fail = (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          reject(error);
+        };
+
         const subscription = this.pool
           .request(this.nostrRelays, {
             kinds: [0], // Metadata event
@@ -374,18 +421,19 @@ export class MetricsValidator {
           })
           .subscribe({
             next: (event) => {
-              resolve(event);
               subscription.unsubscribe();
+              finalize(event);
             },
             error: (error) => {
-              reject(error);
+              subscription.unsubscribe();
+              fail(error);
             },
           });
 
         // Auto-unsubscribe after timeout to prevent hanging subscriptions
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           subscription.unsubscribe();
-          resolve(null);
+          finalize(null);
         }, this.timeoutMs);
       });
 

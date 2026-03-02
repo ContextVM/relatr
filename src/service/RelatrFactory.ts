@@ -306,7 +306,6 @@ export class RelatrFactory {
       // Check if directory exists
       let dirExists = false;
       try {
-        await Bun.$`stat ${dataDir}`;
         dirExists = true;
       } catch {
         dirExists = false;

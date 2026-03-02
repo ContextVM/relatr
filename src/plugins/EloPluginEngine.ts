@@ -181,22 +181,11 @@ export class EloPluginEngine implements IEloPluginEngine {
       },
     );
 
-    // Convert simple plugin names to namespaced names (<pubkey>:<name>)
-    const namespacedMetrics: Record<string, number> = {};
-    for (const plugin of this.plugins) {
-      const simpleName = plugin.manifest.name;
-      const namespacedName = `${plugin.pubkey}:${simpleName}`;
-
-      if (pluginMetrics[simpleName] !== undefined) {
-        namespacedMetrics[namespacedName] = pluginMetrics[simpleName];
-      }
-    }
-
     logger.debug(
-      `Plugin evaluation complete for ${input.targetPubkey}: ${Object.keys(namespacedMetrics).length} metrics`,
+      `Plugin evaluation complete for ${input.targetPubkey}: ${Object.keys(pluginMetrics).length} metrics`,
     );
 
-    return namespacedMetrics;
+    return pluginMetrics;
   }
   /**
    * Get number of loaded plugins
