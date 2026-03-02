@@ -5,7 +5,7 @@
     "": {
       "name": "relatr",
       "dependencies": {
-        "@contextvm/sdk": "^0.6",
+        "@contextvm/sdk": "^0.6.1",
         "@duckdb/node-api": "^1.4.4-r.1",
         "applesauce-core": "^5.1.0",
         "applesauce-relay": "^5.1.0",
@@ -21,10 +21,10 @@
         "@types/bun": "latest",
         "@types/react": "^19.2.14",
         "@types/react-dom": "^19.2.3",
-        "eslint": "^9.39.2",
+        "eslint": "^9.39.3",
         "eslint-config-prettier": "^10.1.8",
         "prettier": "^3.8.1",
-        "typescript-eslint": "^8.56.0",
+        "typescript-eslint": "^8.56.1",
       },
       "optionalDependencies": {
         "@duckdb/node-bindings-darwin-arm64": "^1.4.4-r.1",
@@ -75,21 +75,21 @@
 
     "@changesets/write": ["@changesets/write@0.4.0", "", { "dependencies": { "@changesets/types": "^6.1.0", "fs-extra": "^7.0.1", "human-id": "^4.1.1", "prettier": "^2.7.1" } }, "sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q=="],
 
-    "@contextvm/sdk": ["@contextvm/sdk@0.6.1", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.26.0", "applesauce-relay": "^5.1.0", "nostr-tools": "~2.18.2", "pino": "^10.3.1", "rxjs": "^7.8.2", "zod": "^4.3.5" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-pT+g9zMPgcxWilzMEadruHMoCiTKyW/5yPt8KuTTmH7CD9MKq85t1+sF4KsmF1lOAyhxcgQDBHG+ybCL575cYA=="],
+    "@contextvm/sdk": ["@contextvm/sdk@0.6.2", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.26.0", "applesauce-relay": "^5.1.0", "nostr-tools": "~2.18.2", "pino": "^10.3.1", "rxjs": "^7.8.2", "zod": "^4.3.5" }, "peerDependencies": { "typescript": "^5.9.2" } }, "sha512-rerqo6GwpV8kO37TwAI9L/SZeCfi1Y/U3a0TUyVA8+uqvHTdBXPz7jsKwHqr4kbpzvIWXSFEpO+/Y0/hMKtUYA=="],
 
-    "@duckdb/node-api": ["@duckdb/node-api@1.4.4-r.1", "", { "dependencies": { "@duckdb/node-bindings": "1.4.4-r.1" } }, "sha512-oqaH9DXTJNwyLkd2FgJwmSnWVqjB5irbESeTeNVMBnM03iRaNY545BhfBDumu1TnOV2koIdG1mNsmjgq/ZTIkA=="],
+    "@duckdb/node-api": ["@duckdb/node-api@1.4.4-r.2", "", { "dependencies": { "@duckdb/node-bindings": "1.4.4-r.2" } }, "sha512-nfOXZPp+2cIVXUCuq9TfbZrLrSUnxuh42zZx5IpBkdlMjoeqpqEdughnGcDULoAhn1H1j5+h30orjmV9rJ9xEw=="],
 
-    "@duckdb/node-bindings": ["@duckdb/node-bindings@1.4.4-r.1", "", { "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "1.4.4-r.1", "@duckdb/node-bindings-darwin-x64": "1.4.4-r.1", "@duckdb/node-bindings-linux-arm64": "1.4.4-r.1", "@duckdb/node-bindings-linux-x64": "1.4.4-r.1", "@duckdb/node-bindings-win32-x64": "1.4.4-r.1" } }, "sha512-NFm0AMrK3kiVLQhgnGUEjX5c8Elm93dYePZ9BUCvvd0AVVTKEBeRhBp9afziuzP3Sl5+7XQ1TyaBLsZJKKBDBQ=="],
+    "@duckdb/node-bindings": ["@duckdb/node-bindings@1.4.4-r.2", "", { "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "1.4.4-r.2", "@duckdb/node-bindings-darwin-x64": "1.4.4-r.2", "@duckdb/node-bindings-linux-arm64": "1.4.4-r.2", "@duckdb/node-bindings-linux-x64": "1.4.4-r.2", "@duckdb/node-bindings-win32-x64": "1.4.4-r.2" } }, "sha512-6c2hU7hPYEpI1Ynf4VVVQbdeqXngr5TqCm6raJQ/Ne+4L0uqVVQKhZonzgkzOLML4f99qs23FX3cN9IaB9A7xw=="],
 
-    "@duckdb/node-bindings-darwin-arm64": ["@duckdb/node-bindings-darwin-arm64@1.4.4-r.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-/NtbkCgCAOJDxw41XvSGV/mxQAlsx+2xUvhIVUj6fxoOfTG4jTttRhuphwE3EXNoWzJOjZxCZ5LwhC/qb6ZwLg=="],
+    "@duckdb/node-bindings-darwin-arm64": ["@duckdb/node-bindings-darwin-arm64@1.4.4-r.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-kfs7oM1I9xK3+bnQJDxCgbQHeVr4HhV0qejGiaQjEZjjtP/BxzH46Bx01m2zHWnmxNXKvtNR1tsOt3NaoWQ2vA=="],
 
-    "@duckdb/node-bindings-darwin-x64": ["@duckdb/node-bindings-darwin-x64@1.4.4-r.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-lzFRDrZwc1EoV513vmKufasiAQ2WlhEb0O6guRBarbvOKKVhRb8tQ5H7LPVTrIewjTI3XDgHrnK+vfh9L+xQcA=="],
+    "@duckdb/node-bindings-darwin-x64": ["@duckdb/node-bindings-darwin-x64@1.4.4-r.2", "", { "os": "darwin", "cpu": "x64" }, "sha512-MGvSqE09iLuc5MRYaQKqMAvwQP2ygyYKKYWtlGdQtAs1C05s4UIRnpJSQL0X0L5gi44vwpN6Q5BEUihuzN8W4A=="],
 
-    "@duckdb/node-bindings-linux-arm64": ["@duckdb/node-bindings-linux-arm64@1.4.4-r.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-wq92/EcTiOTRW1RSDOwjeLyMMXWwNVNwU21TQdfu3sgS86+Ih3raaK68leDgY5cWgf72We3J2W7HYz8GwxcMYw=="],
+    "@duckdb/node-bindings-linux-arm64": ["@duckdb/node-bindings-linux-arm64@1.4.4-r.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-htSCwC66pkCLQdWUZHaNm4YrXQ0IWQInD2IjAi6Mgc6Bp9VVaeqzZddK+//kh2zvbgyyl3qWSIp8vCq5MxiUgg=="],
 
-    "@duckdb/node-bindings-linux-x64": ["@duckdb/node-bindings-linux-x64@1.4.4-r.1", "", { "os": "linux", "cpu": "x64" }, "sha512-fjYNc+t4/T7mhzZ57oJoIQaWvbYVvxhidcNNansQFiWnd6/JMLCULd4qnt8XI3Tt2BrZsraH690KSBIS3QPt0w=="],
+    "@duckdb/node-bindings-linux-x64": ["@duckdb/node-bindings-linux-x64@1.4.4-r.2", "", { "os": "linux", "cpu": "x64" }, "sha512-ZbmL+QOhTnuUIQztgFNOWo2KNP6ukDnhYUWxQl8zZ3nHeaLcsydWTfHLxvDDxLAQqA46M3iZSVyc9tL/zDkjtw=="],
 
-    "@duckdb/node-bindings-win32-x64": ["@duckdb/node-bindings-win32-x64@1.4.4-r.1", "", { "os": "win32", "cpu": "x64" }, "sha512-+J+MUYGvYWfX0balWToDIy3CBYg7hHI0KQUQ39+SniinXlMF8+puRW6ebyQ+AXrcrKkwuj4wzJuEBD0AdhHGtw=="],
+    "@duckdb/node-bindings-win32-x64": ["@duckdb/node-bindings-win32-x64@1.4.4-r.2", "", { "os": "win32", "cpu": "x64" }, "sha512-K8l934jxpTkc/JmNIu4jrTJMLzc60Ziqo6OCcrtYU7hhXkrQod5FCFWMe4JFIKrBhwNsd/VHQQ4RQ6gOT9gY2w=="],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.9.1", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-phrYmNiYppR7znFEdqgfWHXR6NCkZEK7hwWDHZUjit/2/U0r6XvkDl0SYnoM51Hq7FhCGdLDT6zxCCOY1hexsQ=="],
 
@@ -453,7 +453,7 @@
 
     "nostr-social-duck": ["nostr-social-duck@0.1.24", "", { "dependencies": { "@duckdb/node-api": "^1.4.2-r.1" }, "optionalDependencies": { "@duckdb/node-bindings-darwin-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-darwin-x64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-arm64": "^1.4.2-r.1", "@duckdb/node-bindings-linux-x64": "^1.4.2-r.1", "@duckdb/node-bindings-win32-x64": "^1.4.2-r.1" }, "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-5sjVeAfTqeW2ghALpWDiCfpNqvwAyBLSGNBBcDRKE8b8TLgBKO1ccU45sgR5rjqqlVR/UE6j/K1GWJ0CxgX7Tw=="],
 
-    "nostr-tools": ["nostr-tools@2.23.1", "", { "dependencies": { "@noble/ciphers": "2.1.1", "@noble/curves": "2.0.1", "@noble/hashes": "2.0.1", "@scure/base": "2.0.0", "@scure/bip32": "2.0.1", "@scure/bip39": "2.0.1", "nostr-wasm": "0.1.0" }, "peerDependencies": { "typescript": ">=5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-Q5SJ1omrseBFXtLwqDhufpFLA6vX3rS/IuBCc974qaYX6YKGwEPxa/ZsyxruUOr+b+5EpWL2hFmCB5AueYrfBw=="],
+    "nostr-tools": ["nostr-tools@2.23.3", "", { "dependencies": { "@noble/ciphers": "2.1.1", "@noble/curves": "2.0.1", "@noble/hashes": "2.0.1", "@scure/base": "2.0.0", "@scure/bip32": "2.0.1", "@scure/bip39": "2.0.1", "nostr-wasm": "0.1.0" }, "peerDependencies": { "typescript": ">=5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-AALyt9k8xPdF4UV2mlLJ2mgCn4kpTB0DZ8t2r6wjdUh6anfx2cTVBsHUlo9U0EY/cKC5wcNyiMAmRJV5OVEalA=="],
 
     "nostr-wasm": ["nostr-wasm@0.1.0", "", {}, "sha512-78BTryCLcLYv96ONU8Ws3Q1JzjlAt+43pWQhIl86xZmWeegYCNLPml7yQ+gG3vR6V5h4XGj+TxO+SS5dsThQIA=="],
 

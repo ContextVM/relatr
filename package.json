@@ -26,22 +26,22 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.6.1",
-    "@duckdb/node-api": "^1.4.4-r.1",
+    "@contextvm/sdk": "^0.6.2",
+    "@duckdb/node-api": "^1.4.4-r.2",
     "applesauce-core": "^5.1.0",
     "applesauce-relay": "^5.1.0",
     "nostr-social-duck": "^0.1.24",
-    "nostr-tools": "^2.23.1",
+    "nostr-tools": "^2.23.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
-    "@duckdb/node-bindings-linux-x64": "^1.4.4-r.1",
-    "@duckdb/node-bindings-linux-arm64": "^1.4.4-r.1",
-    "@duckdb/node-bindings-darwin-x64": "^1.4.4-r.1",
-    "@duckdb/node-bindings-darwin-arm64": "^1.4.4-r.1",
-    "@duckdb/node-bindings-win32-x64": "^1.4.4-r.1"
+    "@duckdb/node-bindings-linux-x64": "^1.4.4-r.2",
+    "@duckdb/node-bindings-linux-arm64": "^1.4.4-r.2",
+    "@duckdb/node-bindings-darwin-x64": "^1.4.4-r.2",
+    "@duckdb/node-bindings-darwin-arm64": "^1.4.4-r.2",
+    "@duckdb/node-bindings-win32-x64": "^1.4.4-r.2"
   }
 }
