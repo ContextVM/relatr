@@ -24,6 +24,18 @@ export interface EloPluginEngineDeps {
  */
 export interface IEloPluginEngine {
   initialize(): Promise<void>;
+  reloadFromPlugins(input: {
+    plugins: PortablePlugin[];
+    enabled: Record<string, boolean>;
+    weightOverrides: Record<string, number>;
+    resolvedWeights?: Record<string, number>;
+  }): Promise<void>;
+  getRuntimeState(): {
+    plugins: PortablePlugin[];
+    enabled: Record<string, boolean>;
+    weightOverrides: Record<string, number>;
+    resolvedWeights: Record<string, number>;
+  };
   evaluateForPubkey(input: {
     targetPubkey: string;
     sourcePubkey?: string;
@@ -54,6 +66,8 @@ export class EloPluginEngine implements IEloPluginEngine {
   private initialized = false;
   private metricDescriptions: MetricDescriptionRegistry;
   private resolvedWeights: Record<string, number> = {};
+  private enabledByKey: Record<string, boolean> = {};
+  private weightOverridesByKey: Record<string, number> = {};
 
   constructor(
     private config: RelatrConfig,
@@ -97,6 +111,10 @@ export class EloPluginEngine implements IEloPluginEngine {
       logger.info(`Loading plugins from ${this.config.eloPluginsDir}`);
       this.plugins = await loadPlugins(this.config.eloPluginsDir);
       logger.info(`Loaded ${this.plugins.length} plugins`);
+      this.enabledByKey = Object.fromEntries(
+        this.plugins.map((p) => [`${p.pubkey}:${p.manifest.name}`, true]),
+      );
+      this.weightOverridesByKey = { ...(this.config.eloPluginWeights || {}) };
 
       // Register built-in capabilities (nostr, graph, http)
       logger.info("Registering built-in capabilities");
@@ -116,7 +134,7 @@ export class EloPluginEngine implements IEloPluginEngine {
 
       // Resolve plugin weights (Tier 1: Config override, Tier 2: Manifest default, Tier 3: Proportional distribution)
       logger.info("Resolving plugin weights");
-      this.resolvedWeights = this.resolvePluginWeights();
+      this.resolvedWeights = this.resolvePluginWeights(this.weightOverridesByKey);
       logger.info(
         `Resolved weights for ${Object.keys(this.resolvedWeights).length} plugins`,
       );
@@ -128,6 +146,51 @@ export class EloPluginEngine implements IEloPluginEngine {
       logger.error(`Failed to initialize EloPluginEngine: ${errorMsg}`);
       throw error;
     }
+  }
+
+  async reloadFromPlugins(input: {
+    plugins: PortablePlugin[];
+    enabled: Record<string, boolean>;
+    weightOverrides: Record<string, number>;
+    resolvedWeights?: Record<string, number>;
+  }): Promise<void> {
+    if (!this.initialized) {
+      throw new Error("EloPluginEngine not initialized. Call initialize() first.");
+    }
+
+    const nextPlugins = [...input.plugins];
+    const nextEnabled = { ...input.enabled };
+    const nextOverrides = { ...input.weightOverrides };
+
+    const nextMetricDescriptions = new MetricDescriptionRegistry();
+    for (const plugin of nextPlugins) {
+      const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
+      const description = plugin.manifest.description || "No description available";
+      nextMetricDescriptions.register(namespacedName, description);
+    }
+
+    const nextResolvedWeights =
+      input.resolvedWeights || this.resolvePluginWeights(nextOverrides, nextPlugins);
+
+    this.plugins = nextPlugins;
+    this.enabledByKey = nextEnabled;
+    this.weightOverridesByKey = nextOverrides;
+    this.metricDescriptions = nextMetricDescriptions;
+    this.resolvedWeights = nextResolvedWeights;
+  }
+
+  getRuntimeState(): {
+    plugins: PortablePlugin[];
+    enabled: Record<string, boolean>;
+    weightOverrides: Record<string, number>;
+    resolvedWeights: Record<string, number>;
+  } {
+    return {
+      plugins: [...this.plugins],
+      enabled: { ...this.enabledByKey },
+      weightOverrides: { ...this.weightOverridesByKey },
+      resolvedWeights: { ...this.resolvedWeights },
+    };
   }
 
   /**
@@ -216,13 +279,17 @@ export class EloPluginEngine implements IEloPluginEngine {
    * - Tier 3: Proportional distribution of remaining weight
    * @returns Record mapping namespaced plugin names to their weights
    */
-  private resolvePluginWeights(): Record<string, number> {
+  private resolvePluginWeights(
+    overrides?: Record<string, number>,
+    pluginsInput?: PortablePlugin[],
+  ): Record<string, number> {
     const weights: Record<string, number> = {};
-    const configOverrides = this.config.eloPluginWeights || {};
+    const configOverrides = overrides || this.config.eloPluginWeights || {};
+    const sourcePlugins = pluginsInput || this.plugins;
     const weightedPlugins: Array<{ name: string; weight: number }> = [];
     const unweightedPlugins: string[] = [];
 
-    for (const plugin of this.plugins) {
+    for (const plugin of sourcePlugins) {
       const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
 
       // Tier 1: Config override (highest priority)

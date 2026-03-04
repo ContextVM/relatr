@@ -32,6 +32,7 @@ import {
   type IEloPluginEngine,
 } from "../plugins/EloPluginEngine";
 import { nowMs } from "@/utils/utils";
+import { PluginManager } from "@/plugins/PluginManager";
 
 export class RelatrFactory {
   static async createRelatrService(
@@ -165,6 +166,14 @@ export class RelatrFactory {
         eloEngine.getResolvedWeights(),
       );
 
+      const pluginManager = new PluginManager(
+        settingsRepository,
+        eloEngine,
+        trustCalculator,
+        pool,
+        validatedConfig.nostrRelays,
+      );
+
       // Step 9: Initialize MetricsValidator with Elo engine
       const metricsValidator = new MetricsValidator(
         pool,
@@ -197,6 +206,7 @@ export class RelatrFactory {
         taRepository,
         pubkeyMetadataFetcher,
         trustCalculator,
+        pluginManager,
         searchService,
         schedulerService: undefined,
         taService: undefined, // Will be set after TA service is created

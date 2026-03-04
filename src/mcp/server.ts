@@ -12,6 +12,14 @@ import { relaySet } from "applesauce-core/helpers";
 import { RateLimiter } from "./RateLimiter.js";
 import { nowMs } from "@/utils/utils.js";
 
+export function isAdminPubkey(
+  clientPubkey: string | undefined,
+  adminPubkeys: string[],
+): boolean {
+  if (!clientPubkey) return false;
+  return adminPubkeys.includes(clientPubkey);
+}
+
 /**
  * Start MCP server for Relatr
  *
@@ -51,6 +59,19 @@ export async function startMCPServer(): Promise<void> {
     registerCalculateTrustScoresTool(server, relatrService, rateLimiter);
     registerStatsTool(server, relatrService, rateLimiter);
     registerSearchProfilesTool(server, relatrService, rateLimiter);
+    registerPluginsListTool(server, relatrService, rateLimiter);
+    registerPluginsInstallTool(
+      server,
+      relatrService,
+      rateLimiter,
+      config.adminPubkeys,
+    );
+    registerPluginsConfigTool(
+      server,
+      relatrService,
+      rateLimiter,
+      config.adminPubkeys,
+    );
     if (taService) {
       registerManageTATool(server, taService, rateLimiter);
     }
@@ -91,6 +112,165 @@ export async function startMCPServer(): Promise<void> {
 
     process.exit(1);
   }
+}
+
+function registerPluginsListTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+): void {
+  const inputSchema = z.object({
+    verbose: z.boolean().optional().default(false),
+  });
+
+  const pluginSchema = z.object({
+    pluginKey: z.string(),
+    name: z.string(),
+    enabled: z.boolean(),
+    effectiveWeight: z.number(),
+    pubkey: z.string().optional(),
+    title: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    versionInfo: z.string().optional(),
+    defaultWeight: z.number().nullable().optional(),
+    installedEventId: z.string().optional(),
+    createdAt: z.number().optional(),
+  });
+
+  const outputSchema = z.object({
+    plugins: z.array(pluginSchema),
+  });
+
+  server.registerTool(
+    "plugins_list",
+    {
+      title: "Plugins List",
+      description: "List plugin runtime state with concise or verbose metadata",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params) => {
+      try {
+        const result = await withRateLimit(rateLimiter, "plugins_list", () =>
+          relatrService.listPlugins({ verbose: params.verbose }),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_list");
+      }
+    },
+  );
+}
+
+function registerPluginsInstallTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+  adminPubkeys: string[],
+): void {
+  const inputSchema = z
+    .object({
+      eventId: z.string().optional(),
+      nevent: z.string().optional(),
+      relays: z.array(z.string()).optional(),
+    })
+    .refine((v) => Number(!!v.eventId) + Number(!!v.nevent) === 1, {
+      message: "Provide exactly one of eventId or nevent",
+    });
+
+  const outputSchema = z.object({
+    pluginKey: z.string(),
+    enabled: z.literal(false),
+  });
+
+  server.registerTool(
+    "plugins_install",
+    {
+      title: "Plugins Install",
+      description: "Install a plugin from event id or nevent (admin-only)",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      const clientPubkey = _meta?.clientPubkey;
+      if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unauthorized: admin pubkey required",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await withRateLimit(rateLimiter, "plugins_install", () =>
+          relatrService.installPlugin(params),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_install", clientPubkey);
+      }
+    },
+  );
+}
+
+function registerPluginsConfigTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+  adminPubkeys: string[],
+): void {
+  const inputSchema = z.object({
+    changes: z
+      .array(
+        z.object({
+          pluginKey: z.string(),
+          enabled: z.boolean().optional(),
+          weightOverride: z.number().min(0).max(1).nullable().optional(),
+        }),
+      )
+      .min(1),
+  });
+
+  const outputSchema = z.object({
+    updated: z.number(),
+  });
+
+  server.registerTool(
+    "plugins_config",
+    {
+      title: "Plugins Config",
+      description: "Batch configure plugin enablement/weights atomically (admin-only)",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      const clientPubkey = _meta?.clientPubkey;
+      if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unauthorized: admin pubkey required",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await withRateLimit(rateLimiter, "plugins_config", () =>
+          relatrService.configurePlugins(params),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_config", clientPubkey);
+      }
+    },
+  );
 }
 
 /**

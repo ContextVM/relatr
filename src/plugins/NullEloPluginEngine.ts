@@ -1,5 +1,6 @@
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
 import type { IEloPluginEngine } from "./EloPluginEngine";
+import type { PortablePlugin } from "./plugin-types";
 
 /**
  * NullEloPluginEngine - Null-object implementation of EloPluginEngine
@@ -27,6 +28,29 @@ export class NullEloPluginEngine implements IEloPluginEngine {
    */
   async initialize(): Promise<void> {
     // No-op - null object is always "initialized"
+  }
+
+  async reloadFromPlugins(_input: {
+    plugins: PortablePlugin[];
+    enabled: Record<string, boolean>;
+    weightOverrides: Record<string, number>;
+    resolvedWeights?: Record<string, number>;
+  }): Promise<void> {
+    // No-op
+  }
+
+  getRuntimeState(): {
+    plugins: PortablePlugin[];
+    enabled: Record<string, boolean>;
+    weightOverrides: Record<string, number>;
+    resolvedWeights: Record<string, number>;
+  } {
+    return {
+      plugins: [],
+      enabled: {},
+      weightOverrides: {},
+      resolvedWeights: {},
+    };
   }
 
   /**

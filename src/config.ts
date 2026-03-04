@@ -55,6 +55,7 @@ export const RelatrConfigSchema = z.object({
     .describe(
       "Override weights for Elo plugins (namespaced names: pubkey:pluginName)",
     ),
+  adminPubkeys: z.array(z.string()).default([]),
 
   // MCP server configuration
   isPublicServer: z
@@ -157,6 +158,11 @@ export function loadConfig(): RelatrConfig {
       : undefined,
     eloPluginWeights: process.env.ELO_PLUGIN_WEIGHTS
       ? JSON.parse(process.env.ELO_PLUGIN_WEIGHTS)
+      : undefined,
+    adminPubkeys: process.env.ADMIN_PUBKEYS
+      ? process.env.ADMIN_PUBKEYS.split(",")
+          .map((p) => normalizeToPubkey(p.trim()))
+          .filter((p): p is string => !!p)
       : undefined,
 
     // MCP server configuration

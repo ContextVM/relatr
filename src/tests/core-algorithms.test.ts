@@ -33,6 +33,7 @@ const testConfig: RelatrConfig = {
   eloMaxRequestsPerRound: 32,
   eloMaxTotalRequestsPerPlugin: 128,
   eloPluginWeights: {},
+  adminPubkeys: [],
   isPublicServer: false,
 };
 

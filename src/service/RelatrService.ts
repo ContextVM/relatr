@@ -18,6 +18,12 @@ import { logger } from "../utils/Logger";
 import { isHexKey } from "applesauce-core/helpers";
 import { nowSeconds } from "@/utils/utils";
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
+import type {
+  ConfigurePluginsInput,
+  InstallPluginInput,
+  ListPluginsInput,
+  PluginListItem,
+} from "@/plugins/PluginManager";
 
 export class RelatrService implements IRelatrService {
   private initialized = false;
@@ -30,6 +36,7 @@ export class RelatrService implements IRelatrService {
   private dbManager: RelatrServiceDependencies["dbManager"];
   private metadataRepository: RelatrServiceDependencies["metadataRepository"];
   private taService: TAService | undefined;
+  private pluginManager: RelatrServiceDependencies["pluginManager"];
 
   constructor(dependencies: RelatrServiceDependencies) {
     this.config = dependencies.config;
@@ -41,7 +48,27 @@ export class RelatrService implements IRelatrService {
     this.dbManager = dependencies.dbManager;
     this.metadataRepository = dependencies.metadataRepository;
     this.taService = dependencies.taService;
+    this.pluginManager = dependencies.pluginManager;
     this.initialized = true;
+  }
+
+  async installPlugin(input: InstallPluginInput): Promise<{
+    pluginKey: string;
+    enabled: false;
+  }> {
+    return this.pluginManager.install(input);
+  }
+
+  async configurePlugins(
+    input: ConfigurePluginsInput,
+  ): Promise<{ updated: number }> {
+    return this.pluginManager.configure(input);
+  }
+
+  async listPlugins(
+    input: ListPluginsInput = {},
+  ): Promise<{ plugins: PluginListItem[] }> {
+    return this.pluginManager.list(input);
   }
 
   /**

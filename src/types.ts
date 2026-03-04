@@ -40,6 +40,7 @@ export interface RelatrConfig {
   /** Host policy: maximum number of plannable do calls allowed across all rounds */
   eloMaxTotalRequestsPerPlugin: number;
   eloPluginWeights: Record<string, number>;
+  adminPubkeys: string[];
 
   /**
    * MCP server configuration

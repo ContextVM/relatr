@@ -38,6 +38,10 @@ export class TrustCalculator {
     this.pluginWeights = pluginWeights;
   }
 
+  setPluginWeights(pluginWeights: Record<string, number>): void {
+    this.pluginWeights = { ...pluginWeights };
+  }
+
   /**
    * Calculate trust score between source and target pubkeys
    * @param sourcePubkey - Source public key

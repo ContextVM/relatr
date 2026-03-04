@@ -23,6 +23,13 @@ import type { TARepository } from "../database/repositories/TARepository";
 import type { TrustCalculator } from "../trust/TrustCalculator";
 import type { TAService } from "./TAService";
 import type { RelayPool } from "applesauce-relay";
+import type {
+  ConfigurePluginsInput,
+  InstallPluginInput,
+  ListPluginsInput,
+  PluginListItem,
+  PluginManager,
+} from "@/plugins/PluginManager";
 
 export interface ISearchService {
   searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult>;
@@ -73,6 +80,12 @@ export interface IRelatrService {
   shutdown(): Promise<void>;
   isInitialized(): boolean;
   getConfig(): RelatrConfig;
+  installPlugin(input: InstallPluginInput): Promise<{
+    pluginKey: string;
+    enabled: false;
+  }>;
+  configurePlugins(input: ConfigurePluginsInput): Promise<{ updated: number }>;
+  listPlugins(input?: ListPluginsInput): Promise<{ plugins: PluginListItem[] }>;
 }
 
 export interface RelatrServiceDependencies {
@@ -97,6 +110,7 @@ export interface RelatrServiceDependencies {
 
   pubkeyMetadataFetcher: PubkeyMetadataFetcher;
   trustCalculator: TrustCalculator;
+  pluginManager: PluginManager;
   searchService: ISearchService;
   schedulerService?: ISchedulerService;
 }
