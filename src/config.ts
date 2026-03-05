@@ -155,7 +155,7 @@ export function loadConfig(): RelatrConfig {
   const result = RelatrConfigSchema.safeParse(configData);
 
   if (!result.success) {
-    const errorMessages = result.error.errors
+    const errorMessages = result.error.issues
       .map((err) => `${err.path.join(".")}: ${err.message}`)
       .join(", ");
     throw new Error(`Configuration validation failed: ${errorMessages}`);

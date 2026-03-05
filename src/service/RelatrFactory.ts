@@ -34,7 +34,7 @@ export class RelatrFactory {
         const validationResult = RelatrConfigSchema.safeParse(config);
         
         if (!validationResult.success) {
-          const errorMessages = validationResult.error.errors.map(err =>
+          const errorMessages = validationResult.error.issues.map(err =>
             `${err.path.join('.')}: ${err.message}`
           ).join(', ');
           throw new ValidationError(`Configuration validation failed: ${errorMessages}`, 'config');
@@ -187,7 +187,7 @@ export class RelatrFactory {
             if (!graphExists && (await metadataRepository.getStats()).totalEntries === 0) {
                 logger.info('Fetching initial profile metadata...');
                 try {
-                    const pubkeys = await socialGraph.getUsersUpToDistance(validatedConfig.numberOfHops);
+                    const pubkeys = await socialGraph.getAllUsersInGraph();
                     logger.info(`Found ${pubkeys.length.toLocaleString()} pubkeys within ${validatedConfig.numberOfHops} hops for metadata fetching`);
                     await pubkeyMetadataFetcher.fetchMetadata({
                         pubkeys,
