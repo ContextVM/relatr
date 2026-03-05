@@ -72,6 +72,12 @@ export async function startMCPServer(): Promise<void> {
       rateLimiter,
       config.adminPubkeys,
     );
+    registerPluginsUninstallTool(
+      server,
+      relatrService,
+      rateLimiter,
+      config.adminPubkeys,
+    );
     if (taService) {
       registerManageTATool(server, taService, rateLimiter);
     }
@@ -168,19 +174,16 @@ function registerPluginsInstallTool(
   rateLimiter: RateLimiter,
   adminPubkeys: string[],
 ): void {
-  const inputSchema = z
-    .object({
-      eventId: z.string().optional(),
-      nevent: z.string().optional(),
-      relays: z.array(z.string()).optional(),
-    })
-    .refine((v) => Number(!!v.eventId) + Number(!!v.nevent) === 1, {
-      message: "Provide exactly one of eventId or nevent",
-    });
+  const inputSchema = z.object({
+    eventId: z.string().optional(),
+    nevent: z.string().optional(),
+    relays: z.array(z.string()).optional(),
+    enable: z.boolean().optional(),
+  });
 
   const outputSchema = z.object({
     pluginKey: z.string(),
-    enabled: z.literal(false),
+    enabled: z.boolean(),
   });
 
   server.registerTool(
@@ -192,7 +195,7 @@ function registerPluginsInstallTool(
       outputSchema: outputSchema.shape,
     },
     async (params, { _meta }) => {
-      const clientPubkey = _meta?.clientPubkey;
+      const clientPubkey = _meta?.clientPubkey as string | undefined;
       if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
         return {
           content: [
@@ -229,7 +232,7 @@ function registerPluginsConfigTool(
         z.object({
           pluginKey: z.string(),
           enabled: z.boolean().optional(),
-          weightOverride: z.number().min(0).max(1).nullable().optional(),
+          weightOverride: z.number().min(0).max(1).optional(),
         }),
       )
       .min(1),
@@ -243,12 +246,13 @@ function registerPluginsConfigTool(
     "plugins_config",
     {
       title: "Plugins Config",
-      description: "Batch configure plugin enablement/weights atomically (admin-only)",
+      description:
+        "Batch configure plugin enablement/weights atomically (admin-only)",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
     async (params, { _meta }) => {
-      const clientPubkey = _meta?.clientPubkey;
+      const clientPubkey = _meta?.clientPubkey as string | undefined;
       if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
         return {
           content: [
@@ -268,6 +272,56 @@ function registerPluginsConfigTool(
         return { content: [], structuredContent: result };
       } catch (error) {
         return toMcpResponse(error, "plugins_config", clientPubkey);
+      }
+    },
+  );
+}
+
+function registerPluginsUninstallTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+  adminPubkeys: string[],
+): void {
+  const inputSchema = z.object({
+    pluginKeys: z.array(z.string()).min(1),
+  });
+
+  const outputSchema = z.object({
+    removed: z.number(),
+  });
+
+  server.registerTool(
+    "plugins_uninstall",
+    {
+      title: "Plugins Uninstall",
+      description: "Batch uninstall plugins by pluginKey (admin-only)",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      const clientPubkey = _meta?.clientPubkey as string | undefined;
+      if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unauthorized: admin pubkey required",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await withRateLimit(
+          rateLimiter,
+          "plugins_uninstall",
+          () => relatrService.uninstallPlugins(params),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_uninstall", clientPubkey);
       }
     },
   );

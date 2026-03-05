@@ -279,7 +279,7 @@ const manifest = parseManifestTags(rawEvent.tags);
 const validation = validateManifest(manifest);
 if (!validation.valid) {
   throw new Error(
-    `Plugin manifest validation failed: ${validation.errors.join(', ')}`,
+    `Plugin manifest validation failed: ${validation.errors.join(", ")}`,
   );
 }
 ```
@@ -301,13 +301,15 @@ Reference from [`registerStatsTool()`](../src/mcp/server.ts:361):
 
 ```ts
 server.registerTool(
-  'stats',
+  "stats",
   {
-    title: 'Stats',
+    title: "Stats",
     inputSchema: inputSchema.shape,
     outputSchema: outputSchema.shape,
   },
-  async () => { /* handler */ },
+  async () => {
+    /* handler */
+  },
 );
 ```
 

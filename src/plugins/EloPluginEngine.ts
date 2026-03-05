@@ -1,6 +1,5 @@
 import type { SocialGraph } from "../graph/SocialGraph";
 import type { RelayPool } from "applesauce-relay";
-import { loadPlugins } from "./PortablePluginLoader";
 import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { registerBuiltInCapabilities } from "../capabilities/registerBuiltInCapabilities";
@@ -39,6 +38,7 @@ export interface IEloPluginEngine {
   evaluateForPubkey(input: {
     targetPubkey: string;
     sourcePubkey?: string;
+    metricKeys?: string[];
     capRunCache?: import("./plugin-types").CapabilityRunCache;
   }): Promise<Record<string, number>>;
   getPluginCount(): number;
@@ -52,7 +52,7 @@ export interface IEloPluginEngine {
  * EloPluginEngine - Central facade for Elo portable plugins
  *
  * This engine provides a single entrypoint for all Elo plugin operations:
- * - Plugin loading (startup-load only)
+ * - Plugin runtime execution (plugins are provided externally)
  * - Capability registration and execution
  * - Plugin evaluation for pubkeys
  *
@@ -81,7 +81,7 @@ export class EloPluginEngine implements IEloPluginEngine {
   }
 
   /**
-   * Initialize engine - load plugins and register built-in capabilities
+   * Initialize engine and register built-in capabilities
    * This should be called once during application startup.
    */
   async initialize(): Promise<void> {
@@ -104,16 +104,8 @@ export class EloPluginEngine implements IEloPluginEngine {
         throw new Error("SocialGraph dependency is required");
       }
 
-      // Load plugins from configured directory.
-      if (!this.config.eloPluginsDir) {
-        throw new Error("Elo plugins directory is required (eloPluginsDir)");
-      }
-      logger.info(`Loading plugins from ${this.config.eloPluginsDir}`);
-      this.plugins = await loadPlugins(this.config.eloPluginsDir);
-      logger.info(`Loaded ${this.plugins.length} plugins`);
-      this.enabledByKey = Object.fromEntries(
-        this.plugins.map((p) => [`${p.pubkey}:${p.manifest.name}`, true]),
-      );
+      this.plugins = [];
+      this.enabledByKey = {};
       this.weightOverridesByKey = { ...(this.config.eloPluginWeights || {}) };
 
       // Register built-in capabilities (nostr, graph, http)
@@ -121,20 +113,11 @@ export class EloPluginEngine implements IEloPluginEngine {
       registerBuiltInCapabilities(this.registry);
       logger.info("Built-in capabilities registered");
 
-      // Register metric descriptions for all loaded plugins
-      logger.info("Registering metric descriptions for plugins");
-      for (const plugin of this.plugins) {
-        const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
-        const description =
-          plugin.manifest.description || "No description available";
-        this.metricDescriptions.register(namespacedName, description);
-        logger.debug(`Registered description for plugin: ${namespacedName}`);
-      }
-      logger.info(`Registered ${this.plugins.length} plugin descriptions`);
-
       // Resolve plugin weights (Tier 1: Config override, Tier 2: Manifest default, Tier 3: Proportional distribution)
       logger.info("Resolving plugin weights");
-      this.resolvedWeights = this.resolvePluginWeights(this.weightOverridesByKey);
+      this.resolvedWeights = this.resolvePluginWeights(
+        this.weightOverridesByKey,
+      );
       logger.info(
         `Resolved weights for ${Object.keys(this.resolvedWeights).length} plugins`,
       );
@@ -155,7 +138,9 @@ export class EloPluginEngine implements IEloPluginEngine {
     resolvedWeights?: Record<string, number>;
   }): Promise<void> {
     if (!this.initialized) {
-      throw new Error("EloPluginEngine not initialized. Call initialize() first.");
+      throw new Error(
+        "EloPluginEngine not initialized. Call initialize() first.",
+      );
     }
 
     const nextPlugins = [...input.plugins];
@@ -165,12 +150,14 @@ export class EloPluginEngine implements IEloPluginEngine {
     const nextMetricDescriptions = new MetricDescriptionRegistry();
     for (const plugin of nextPlugins) {
       const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
-      const description = plugin.manifest.description || "No description available";
+      const description =
+        plugin.manifest.description || "No description available";
       nextMetricDescriptions.register(namespacedName, description);
     }
 
     const nextResolvedWeights =
-      input.resolvedWeights || this.resolvePluginWeights(nextOverrides, nextPlugins);
+      input.resolvedWeights ||
+      this.resolvePluginWeights(nextOverrides, nextPlugins);
 
     this.plugins = nextPlugins;
     this.enabledByKey = nextEnabled;
@@ -202,6 +189,7 @@ export class EloPluginEngine implements IEloPluginEngine {
   async evaluateForPubkey(input: {
     targetPubkey: string;
     sourcePubkey?: string;
+    metricKeys?: string[];
     capRunCache?: import("./plugin-types").CapabilityRunCache;
   }): Promise<Record<string, number>> {
     if (!this.initialized) {
@@ -231,8 +219,19 @@ export class EloPluginEngine implements IEloPluginEngine {
     };
 
     // Run plugins using existing runner (which handles capability provisioning)
+    const metricKeyFilter =
+      input.metricKeys && input.metricKeys.length > 0
+        ? new Set(input.metricKeys)
+        : null;
+
+    const pluginsToRun = metricKeyFilter
+      ? this.plugins.filter((plugin) =>
+          metricKeyFilter.has(`${plugin.pubkey}:${plugin.manifest.name}`),
+        )
+      : this.plugins;
+
     const pluginMetrics = await runPlugins(
-      this.plugins,
+      pluginsToRun,
       context,
       this.executor,
       {

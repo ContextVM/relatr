@@ -172,6 +172,12 @@ export class RelatrFactory {
         trustCalculator,
         pool,
         validatedConfig.nostrRelays,
+        validatedConfig.eloPluginsDir,
+      );
+
+      const bootstrapResult = await pluginManager.bootstrapFromFilesystem();
+      logger.info(
+        `Plugin manager bootstrap imported ${bootstrapResult.imported} plugin(s) from filesystem`,
       );
 
       // Step 9: Initialize MetricsValidator with Elo engine

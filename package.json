@@ -14,7 +14,7 @@
     "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\""
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.8",
+    "@changesets/cli": "^2.30.0",
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -30,6 +30,7 @@
     "@contextvm/elo": "^0.10.1",
     "@contextvm/sdk": "^0.6.2",
     "@duckdb/node-api": "^1.4.2-r.1",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/luxon": "^3.7.1",
     "applesauce-core": "^5.1.0",
     "applesauce-relay": "^5.1.0",
@@ -38,8 +39,7 @@
     "nostr-tools": "^2.23.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "zod": "^3.25.76"
+    "react-dom": "^19.2.4"
   },
   "optionalDependencies": {
     "@duckdb/node-bindings-linux-x64": "^1.4.2-r.1",

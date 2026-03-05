@@ -23,6 +23,7 @@ import type {
   InstallPluginInput,
   ListPluginsInput,
   PluginListItem,
+  UninstallPluginsInput,
 } from "@/plugins/PluginManager";
 
 export class RelatrService implements IRelatrService {
@@ -54,9 +55,15 @@ export class RelatrService implements IRelatrService {
 
   async installPlugin(input: InstallPluginInput): Promise<{
     pluginKey: string;
-    enabled: false;
+    enabled: boolean;
   }> {
     return this.pluginManager.install(input);
+  }
+
+  async uninstallPlugins(
+    input: UninstallPluginsInput,
+  ): Promise<{ removed: number }> {
+    return this.pluginManager.uninstall(input);
   }
 
   async configurePlugins(

@@ -28,6 +28,7 @@ import type {
   InstallPluginInput,
   ListPluginsInput,
   PluginListItem,
+  UninstallPluginsInput,
   PluginManager,
 } from "@/plugins/PluginManager";
 
@@ -82,8 +83,9 @@ export interface IRelatrService {
   getConfig(): RelatrConfig;
   installPlugin(input: InstallPluginInput): Promise<{
     pluginKey: string;
-    enabled: false;
+    enabled: boolean;
   }>;
+  uninstallPlugins(input: UninstallPluginsInput): Promise<{ removed: number }>;
   configurePlugins(input: ConfigurePluginsInput): Promise<{ updated: number }>;
   listPlugins(input?: ListPluginsInput): Promise<{ plugins: PluginListItem[] }>;
 }

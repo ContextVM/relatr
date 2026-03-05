@@ -1,5 +1,8 @@
 import { decode } from "nostr-tools/nip19";
+import { mkdir, writeFile, rm, readdir, readFile } from "fs/promises";
+import { join } from "path";
 import { parseManifestTags, validateManifest } from "./parseManifestTags";
+import { loadPluginsFromDirectory } from "./PortablePluginLoader";
 import type { PortablePlugin } from "./plugin-types";
 import type { IEloPluginEngine } from "./EloPluginEngine";
 import type { SettingsRepository } from "@/database/repositories/SettingsRepository";
@@ -25,6 +28,7 @@ export interface InstallPluginInput {
   eventId?: string;
   nevent?: string;
   relays?: string[];
+  enable?: boolean;
 }
 
 interface ResolvedInstallSource {
@@ -38,6 +42,10 @@ export interface ConfigurePluginsInput {
     enabled?: boolean;
     weightOverride?: number | null;
   }>;
+}
+
+export interface UninstallPluginsInput {
+  pluginKeys: string[];
 }
 
 export interface ListPluginsInput {
@@ -62,6 +70,10 @@ function pluginKeyOf(plugin: PortablePlugin): string {
   return `${plugin.pubkey}:${plugin.manifest.name}`;
 }
 
+function artifactFileNameFor(pluginKey: string): string {
+  return `${pluginKey.replaceAll(":", "-")}.json`;
+}
+
 function parseJsonOrDefault<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
   try {
@@ -75,7 +87,10 @@ export class PluginManager {
   private mutationChain: Promise<unknown> = Promise.resolve();
 
   constructor(
-    private readonly settingsRepository: Pick<SettingsRepository, "get" | "set">,
+    private readonly settingsRepository: Pick<
+      SettingsRepository,
+      "get" | "set"
+    >,
     private readonly eloEngine: Pick<
       IEloPluginEngine,
       "getRuntimeState" | "reloadFromPlugins"
@@ -83,30 +98,132 @@ export class PluginManager {
     private readonly trustCalculator: Pick<TrustCalculator, "setPluginWeights">,
     private readonly pool: RelayPool,
     private readonly defaultRelays: string[],
+    private readonly pluginsDir?: string,
   ) {}
 
-  install(input: InstallPluginInput): Promise<{ pluginKey: string; enabled: false }> {
+  bootstrapFromFilesystem(): Promise<{ imported: number }> {
+    return this.runSerialized(async () => {
+      if (!this.pluginsDir) return { imported: 0 };
+
+      const fsPlugins = await loadPluginsFromDirectory(this.pluginsDir);
+      const fsInstalled: InstalledMap = Object.fromEntries(
+        fsPlugins.map((plugin) => [pluginKeyOf(plugin), plugin]),
+      );
+      const state = await this.readState();
+      const previousRuntime = this.eloEngine.getRuntimeState();
+
+      const imported = Object.keys(fsInstalled).filter(
+        (key) => !state.installed[key],
+      ).length;
+      const nextEnabled: EnabledMap = {};
+      const nextOverrides: WeightOverrideMap = {};
+      for (const key of Object.keys(fsInstalled)) {
+        nextEnabled[key] = state.enabled[key] ?? true;
+        if (state.overrides[key] !== undefined) {
+          nextOverrides[key] = state.overrides[key];
+        }
+      }
+
+      const nextState = {
+        ...state,
+        installed: fsInstalled,
+        enabled: nextEnabled,
+        overrides: nextOverrides,
+      };
+
+      const candidateRuntime = this.buildRuntimeState(
+        nextState.installed,
+        nextState.enabled,
+        nextState.overrides,
+      );
+
+      try {
+        await this.eloEngine.reloadFromPlugins(candidateRuntime);
+        this.trustCalculator.setPluginWeights(candidateRuntime.resolvedWeights);
+      } catch (error) {
+        try {
+          await this.eloEngine.reloadFromPlugins(previousRuntime);
+          this.trustCalculator.setPluginWeights(
+            previousRuntime.resolvedWeights,
+          );
+        } catch (rollbackError) {
+          logger.error(
+            "Plugin runtime rollback failed:",
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+          );
+        }
+        throw new RelatrError(
+          `Failed to apply plugin runtime bootstrap: ${error instanceof Error ? error.message : String(error)}`,
+          "PLUGIN_RUNTIME_APPLY_FAILED",
+        );
+      }
+
+      await this.persistStateWithRollback(state.previousRaw, nextState);
+      return { imported };
+    });
+  }
+
+  install(
+    input: InstallPluginInput,
+  ): Promise<{ pluginKey: string; enabled: boolean }> {
     return this.runSerialized(async () => {
       const event = await this.resolveInstallEvent(input);
       const plugin = this.toPortablePlugin(event);
       const key = pluginKeyOf(plugin);
 
+      await this.persistPluginArtifact(plugin, key);
+
       const state = await this.readState();
       state.installed[key] = plugin;
       if (state.enabled[key] === undefined) {
-        state.enabled[key] = false;
+        state.enabled[key] = input.enable === true;
+      }
+
+      const candidateRuntime = this.buildRuntimeState(
+        state.installed,
+        state.enabled,
+        state.overrides,
+      );
+      const previousRuntime = this.eloEngine.getRuntimeState();
+
+      try {
+        await this.eloEngine.reloadFromPlugins(candidateRuntime);
+        this.trustCalculator.setPluginWeights(candidateRuntime.resolvedWeights);
+      } catch (error) {
+        try {
+          await this.eloEngine.reloadFromPlugins(previousRuntime);
+          this.trustCalculator.setPluginWeights(
+            previousRuntime.resolvedWeights,
+          );
+        } catch (rollbackError) {
+          logger.error(
+            "Plugin runtime rollback failed:",
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+          );
+        }
+        throw new RelatrError(
+          `Failed to apply plugin install runtime: ${error instanceof Error ? error.message : String(error)}`,
+          "PLUGIN_RUNTIME_APPLY_FAILED",
+        );
       }
 
       await this.persistStateWithRollback(state.previousRaw, state);
 
-      return { pluginKey: key, enabled: false };
+      return { pluginKey: key, enabled: state.enabled[key] === true };
     });
   }
 
   configure(input: ConfigurePluginsInput): Promise<{ updated: number }> {
     return this.runSerialized(async () => {
       if (!input.changes?.length) {
-        throw new ValidationError("changes must contain at least one item", "changes");
+        throw new ValidationError(
+          "changes must contain at least one item",
+          "changes",
+        );
       }
 
       const state = await this.readState();
@@ -114,14 +231,20 @@ export class PluginManager {
 
       for (const change of input.changes) {
         if (!installedKeys.has(change.pluginKey)) {
-          throw new ValidationError(`Unknown pluginKey: ${change.pluginKey}`, "pluginKey");
+          throw new ValidationError(
+            `Unknown pluginKey: ${change.pluginKey}`,
+            "pluginKey",
+          );
         }
         if (
           change.weightOverride !== undefined &&
           change.weightOverride !== null &&
           (change.weightOverride < 0 || change.weightOverride > 1)
         ) {
-          throw new ValidationError("weightOverride must be between 0 and 1", "weightOverride");
+          throw new ValidationError(
+            "weightOverride must be between 0 and 1",
+            "weightOverride",
+          );
         }
       }
 
@@ -153,7 +276,9 @@ export class PluginManager {
       } catch (error) {
         try {
           await this.eloEngine.reloadFromPlugins(previousRuntime);
-          this.trustCalculator.setPluginWeights(previousRuntime.resolvedWeights);
+          this.trustCalculator.setPluginWeights(
+            previousRuntime.resolvedWeights,
+          );
         } catch (rollbackError) {
           logger.error(
             "Plugin runtime rollback failed:",
@@ -179,9 +304,94 @@ export class PluginManager {
     });
   }
 
-  async list(input: ListPluginsInput = {}): Promise<{ plugins: PluginListItem[] }> {
+  uninstall(input: UninstallPluginsInput): Promise<{ removed: number }> {
+    return this.runSerialized(async () => {
+      if (!input.pluginKeys?.length) {
+        throw new ValidationError(
+          "pluginKeys must contain at least one item",
+          "pluginKeys",
+        );
+      }
+      if (!this.pluginsDir) {
+        throw new RelatrError(
+          "Plugin directory is not configured",
+          "PLUGIN_STORAGE_NOT_CONFIGURED",
+        );
+      }
+
+      const state = await this.readState();
+      for (const pluginKey of input.pluginKeys) {
+        if (!state.installed[pluginKey]) {
+          throw new ValidationError(
+            `Unknown pluginKey: ${pluginKey}`,
+            "pluginKey",
+          );
+        }
+      }
+
+      for (const pluginKey of input.pluginKeys) {
+        const plugin = state.installed[pluginKey]!;
+        await this.removePluginArtifact(plugin, pluginKey);
+      }
+
+      const candidateInstalled: InstalledMap = { ...state.installed };
+      const candidateEnabled: EnabledMap = { ...state.enabled };
+      const candidateOverrides: WeightOverrideMap = { ...state.overrides };
+      for (const pluginKey of input.pluginKeys) {
+        delete candidateInstalled[pluginKey];
+        delete candidateEnabled[pluginKey];
+        delete candidateOverrides[pluginKey];
+      }
+
+      const previousRuntime = this.eloEngine.getRuntimeState();
+      const candidateRuntime = this.buildRuntimeState(
+        candidateInstalled,
+        candidateEnabled,
+        candidateOverrides,
+      );
+
+      try {
+        await this.eloEngine.reloadFromPlugins(candidateRuntime);
+        this.trustCalculator.setPluginWeights(candidateRuntime.resolvedWeights);
+      } catch (error) {
+        try {
+          await this.eloEngine.reloadFromPlugins(previousRuntime);
+          this.trustCalculator.setPluginWeights(
+            previousRuntime.resolvedWeights,
+          );
+        } catch (rollbackError) {
+          logger.error(
+            "Plugin runtime rollback failed:",
+            rollbackError instanceof Error
+              ? rollbackError.message
+              : String(rollbackError),
+          );
+        }
+        throw new RelatrError(
+          `Failed to apply plugin uninstall runtime: ${error instanceof Error ? error.message : String(error)}`,
+          "PLUGIN_RUNTIME_APPLY_FAILED",
+        );
+      }
+
+      await this.persistStateWithRollback(state.previousRaw, {
+        installed: candidateInstalled,
+        enabled: candidateEnabled,
+        overrides: candidateOverrides,
+      });
+
+      return { removed: input.pluginKeys.length };
+    });
+  }
+
+  async list(
+    input: ListPluginsInput = {},
+  ): Promise<{ plugins: PluginListItem[] }> {
     const state = await this.readState();
-    const runtime = this.buildRuntimeState(state.installed, state.enabled, state.overrides);
+    const runtime = this.buildRuntimeState(
+      state.installed,
+      state.enabled,
+      state.overrides,
+    );
     const plugins = Object.entries(state.installed)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([pluginKey, plugin]) => {
@@ -209,15 +419,25 @@ export class PluginManager {
     return { plugins };
   }
 
-  private async resolveInstallEvent(input: InstallPluginInput): Promise<NostrEvent> {
+  private async resolveInstallEvent(
+    input: InstallPluginInput,
+  ): Promise<NostrEvent> {
     const source = this.extractEventSource(input);
     const relays = Array.from(
-      new Set([...(input.relays || []), ...source.relayHints, ...this.defaultRelays]),
+      new Set([
+        ...(input.relays || []),
+        ...source.relayHints,
+        ...this.defaultRelays,
+      ]),
     );
 
     const event = await new Promise<NostrEvent | null>((resolve, reject) => {
       this.pool
-        .request(relays, { ids: [source.id], kinds: [RELATR_PLUGIN_KIND], limit: 1 })
+        .request(relays, {
+          ids: [source.id],
+          kinds: [RELATR_PLUGIN_KIND],
+          limit: 1,
+        })
         .subscribe({
           next: (evt) => {
             resolve(evt);
@@ -241,9 +461,96 @@ export class PluginManager {
     return event;
   }
 
+  private async persistPluginArtifact(
+    plugin: PortablePlugin,
+    pluginKey: string,
+  ): Promise<void> {
+    if (!this.pluginsDir) {
+      throw new RelatrError(
+        "Plugin directory is not configured",
+        "PLUGIN_STORAGE_NOT_CONFIGURED",
+      );
+    }
+
+    try {
+      await mkdir(this.pluginsDir, { recursive: true });
+      const fileName = artifactFileNameFor(pluginKey);
+      const filePath = join(this.pluginsDir, fileName);
+      await writeFile(
+        filePath,
+        JSON.stringify(plugin.rawEvent, null, 2),
+        "utf-8",
+      );
+    } catch (error) {
+      throw new RelatrError(
+        `Failed to persist plugin artifact: ${error instanceof Error ? error.message : String(error)}`,
+        "PLUGIN_ARTIFACT_PERSIST_FAILED",
+      );
+    }
+  }
+
+  private async removePluginArtifact(
+    plugin: PortablePlugin,
+    pluginKey: string,
+  ): Promise<void> {
+    if (!this.pluginsDir) {
+      throw new RelatrError(
+        "Plugin directory is not configured",
+        "PLUGIN_STORAGE_NOT_CONFIGURED",
+      );
+    }
+
+    const dashedPath = join(this.pluginsDir, artifactFileNameFor(pluginKey));
+    const encodedPath = join(
+      this.pluginsDir,
+      `${encodeURIComponent(pluginKey)}.json`,
+    );
+    try {
+      await rm(dashedPath);
+      return;
+    } catch {
+      // try legacy encoded filename, then fallback to scan by event id
+    }
+
+    try {
+      await rm(encodedPath);
+      return;
+    } catch {
+      // fallback to scan by event id for filesystem-imported plugins
+    }
+
+    try {
+      const entries = await readdir(this.pluginsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const filePath = join(this.pluginsDir, entry.name);
+        try {
+          const raw = await readFile(filePath, "utf-8");
+          const parsed = JSON.parse(raw) as { id?: string };
+          if (parsed.id === plugin.id) {
+            await rm(filePath);
+            return;
+          }
+        } catch {
+          // ignore unreadable/non-json file and continue scanning
+        }
+      }
+
+      throw new Error(`Plugin artifact not found for key: ${pluginKey}`);
+    } catch (error) {
+      throw new RelatrError(
+        `Failed to remove plugin artifact: ${error instanceof Error ? error.message : String(error)}`,
+        "PLUGIN_ARTIFACT_DELETE_FAILED",
+      );
+    }
+  }
+
   private extractEventSource(input: InstallPluginInput): ResolvedInstallSource {
     if (!!input.eventId === !!input.nevent) {
-      throw new ValidationError("Provide exactly one of eventId or nevent", "source");
+      throw new ValidationError(
+        "Provide exactly one of eventId or nevent",
+        "source",
+      );
     }
 
     if (input.eventId) return { id: input.eventId, relayHints: [] };
@@ -251,7 +558,10 @@ export class PluginManager {
     try {
       const decoded = decode(input.nevent!);
       if (decoded.type !== "nevent") {
-        throw new ValidationError("nevent must decode to nevent type", "nevent");
+        throw new ValidationError(
+          "nevent must decode to nevent type",
+          "nevent",
+        );
       }
 
       const data = decoded.data as { id: string; relays?: string[] };
@@ -266,7 +576,10 @@ export class PluginManager {
 
   private toPortablePlugin(event: NostrEvent): PortablePlugin {
     if (event.kind !== RELATR_PLUGIN_KIND) {
-      throw new ValidationError(`Unsupported plugin kind: ${event.kind}`, "kind");
+      throw new ValidationError(
+        `Unsupported plugin kind: ${event.kind}`,
+        "kind",
+      );
     }
 
     const manifest = parseManifestTags(event.tags || []);
@@ -321,7 +634,10 @@ export class PluginManager {
     }
 
     const total = weighted.reduce((sum, w) => sum + w.weight, 0);
-    const normalized = total > 1 ? weighted.map((w) => ({ ...w, weight: w.weight / total })) : weighted;
+    const normalized =
+      total > 1
+        ? weighted.map((w) => ({ ...w, weight: w.weight / total }))
+        : weighted;
     const normalizedTotal = normalized.reduce((sum, w) => sum + w.weight, 0);
     const remaining = Math.max(0, 1 - normalizedTotal);
 
@@ -346,7 +662,11 @@ export class PluginManager {
     installed: InstalledMap;
     enabled: EnabledMap;
     overrides: WeightOverrideMap;
-    previousRaw: { installed: string | null; enabled: string | null; overrides: string | null };
+    previousRaw: {
+      installed: string | null;
+      enabled: string | null;
+      overrides: string | null;
+    };
   }> {
     const [installedRaw, enabledRaw, overridesRaw] = await Promise.all([
       this.settingsRepository.get(SETTINGS_KEYS.installed),
@@ -358,13 +678,25 @@ export class PluginManager {
       installed: parseJsonOrDefault(installedRaw, {}),
       enabled: parseJsonOrDefault(enabledRaw, {}),
       overrides: parseJsonOrDefault(overridesRaw, {}),
-      previousRaw: { installed: installedRaw, enabled: enabledRaw, overrides: overridesRaw },
+      previousRaw: {
+        installed: installedRaw,
+        enabled: enabledRaw,
+        overrides: overridesRaw,
+      },
     };
   }
 
   private async persistStateWithRollback(
-    previousRaw: { installed: string | null; enabled: string | null; overrides: string | null },
-    state: { installed: InstalledMap; enabled: EnabledMap; overrides: WeightOverrideMap },
+    previousRaw: {
+      installed: string | null;
+      enabled: string | null;
+      overrides: string | null;
+    },
+    state: {
+      installed: InstalledMap;
+      enabled: EnabledMap;
+      overrides: WeightOverrideMap;
+    },
   ): Promise<void> {
     const target = {
       installed: JSON.stringify(state.installed),
@@ -373,9 +705,15 @@ export class PluginManager {
     };
 
     try {
-      await this.settingsRepository.set(SETTINGS_KEYS.installed, target.installed);
+      await this.settingsRepository.set(
+        SETTINGS_KEYS.installed,
+        target.installed,
+      );
       await this.settingsRepository.set(SETTINGS_KEYS.enabled, target.enabled);
-      await this.settingsRepository.set(SETTINGS_KEYS.overrides, target.overrides);
+      await this.settingsRepository.set(
+        SETTINGS_KEYS.overrides,
+        target.overrides,
+      );
     } catch (error) {
       try {
         await this.settingsRepository.set(

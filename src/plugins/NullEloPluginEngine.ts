@@ -60,6 +60,7 @@ export class NullEloPluginEngine implements IEloPluginEngine {
   async evaluateForPubkey(_input: {
     targetPubkey: string;
     sourcePubkey?: string;
+    metricKeys?: string[];
     capRunCache?: import("./plugin-types").CapabilityRunCache;
   }): Promise<Record<string, number>> {
     // Return empty metrics - no plugins to evaluate
