@@ -1,5 +1,35 @@
 # relatr
 
+## 0.1.21
+
+### Patch Changes
+
+- chore: bump deps
+
+## 0.1.20
+
+### Patch Changes
+
+- build(deps): update dependencies including @contextvm/sdk major version bump
+
+## 0.1.19
+
+### Patch Changes
+
+- chore(deps): update dependencies
+
+## 0.1.18
+
+### Patch Changes
+
+- chore(deps): update @contextvm/sdk to 0.2.7
+
+## 0.1.17
+
+### Patch Changes
+
+- fix(ta): skip TA publish for rank 0
+
 ## 0.1.16
 
 ### Patch Changes

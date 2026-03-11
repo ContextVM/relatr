@@ -136,16 +136,25 @@ export class TAService {
       });
 
       // Publish TA event (errors are caught and logged, don't fail the operation)
+      // Skip publishing for rank 0
       let published = false;
       let relayResults: PublishResponse[] | undefined;
-      try {
-        relayResults = await this.publishTAEvent(pubkey, newRank, customRelays);
-        published = true;
-      } catch (error) {
-        logger.warn(
-          `TA publish failed for ${pubkey}, but rank was cached:`,
-          error instanceof Error ? error.message : String(error),
-        );
+      if (newRank === 0) {
+        logger.debug(`TA publish skipped for ${pubkey}: rank is 0`);
+      } else {
+        try {
+          relayResults = await this.publishTAEvent(
+            pubkey,
+            newRank,
+            customRelays,
+          );
+          published = true;
+        } catch (error) {
+          logger.warn(
+            `TA publish failed for ${pubkey}, but rank was cached:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       }
 
       return {
@@ -190,6 +199,12 @@ export class TAService {
     // Guard: TA feature must be enabled
     if (!this.config.taEnabled) {
       throw new RelatrError("TA feature is disabled", "TA_FEATURE_DISABLED");
+    }
+
+    // Guard: Don't publish TA events for rank 0
+    if (rank === 0) {
+      logger.debug(`Skipping TA publish for ${targetPubkey}: rank is 0`);
+      return [];
     }
 
     try {
@@ -378,8 +393,8 @@ export class TAService {
             computedAt: now,
           });
 
-          // Only publish if rank changed
-          if (changed) {
+          // Only publish if rank changed and rank is not 0
+          if (changed && newRank !== 0) {
             publishQueue.push({
               pubkey: user.pubkey,
               rank: newRank,
@@ -485,8 +500,8 @@ export class TAService {
         existsGuaranteed: true,
       });
 
-      // Publish only if rank changed
-      if (changed) {
+      // Publish only if rank changed and rank is not 0
+      if (changed && newRank !== 0) {
         try {
           await this.publishTAEvent(targetPubkey, newRank);
           logger.debug(
@@ -498,6 +513,10 @@ export class TAService {
             error instanceof Error ? error.message : String(error),
           );
         }
+      } else if (newRank === 0) {
+        logger.debug(
+          `Lazy TA refresh: skipping publish for ${targetPubkey}, rank is 0`,
+        );
       } else {
         logger.debug(
           `Lazy TA refresh: rank unchanged for ${targetPubkey}, skipping publish`,

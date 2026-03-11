@@ -82,7 +82,7 @@ export class SchedulerService implements ISchedulerService {
 
   async syncProfiles(
     force: boolean = false,
-    hops: number = 1,
+    hops: number = this.config.numberOfHops,
     sourcePubkey?: string,
   ): Promise<void> {
     logger.info("Starting profile sync and metrics pre-caching...");
@@ -127,8 +127,9 @@ export class SchedulerService implements ISchedulerService {
       }
 
       logger.info("Starting profile sync and metrics pre-caching...");
-      // Step 1: Get all pubkeys from the social graph
-      const discoveredPubkeys = await this.socialGraph.getAllUsersInGraph();
+      // Step 1: Get all pubkeys reachable within configured hop distance
+      const discoveredPubkeys =
+        await this.socialGraph.getUsersUpToDistance(hops);
 
       // Step 2: Fetch metadata for ALL pubkeys to ensure we have the latest metadata
       logger.info(
@@ -392,7 +393,7 @@ export class SchedulerService implements ISchedulerService {
         try {
           if (this.isRunning()) {
             logger.info("Starting periodic background sync...");
-            await this.syncProfiles(false, 1);
+            await this.syncProfiles(false, this.config.numberOfHops);
             logger.info("Periodic sync completed");
           }
         } catch (error) {
