@@ -3,6 +3,7 @@ import { NostrServerTransport, PrivateKeySigner } from "@contextvm/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
+import { HOST_VERSION } from "../version.js";
 import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
 import { TAService } from "../service/TAService.js";
@@ -57,7 +58,7 @@ export async function startMCPServer(): Promise<void> {
     // Register tools with rate limiter
     registerCalculateTrustScoreTool(server, relatrService, rateLimiter);
     registerCalculateTrustScoresTool(server, relatrService, rateLimiter);
-    registerStatsTool(server, relatrService, rateLimiter);
+    registerStatsTool(server, relatrService, rateLimiter, config.adminPubkeys);
     registerSearchProfilesTool(server, relatrService, rateLimiter);
     registerPluginsListTool(server, relatrService, rateLimiter);
     registerPluginsInstallTool(
@@ -596,6 +597,7 @@ function registerStatsTool(
   server: McpServer,
   relatrService: RelatrService,
   rateLimiter: RateLimiter,
+  adminPubkeys: string[],
 ): void {
   // Input schema (empty)
   const inputSchema = z.object({});
@@ -604,6 +606,8 @@ function registerStatsTool(
   const outputSchema = z.object({
     timestamp: z.number(),
     sourcePubkey: z.string(),
+    relatrVersion: z.string(),
+    isAdmin: z.boolean(),
     database: z.object({
       metrics: z.object({
         totalEntries: z.number(),
@@ -630,8 +634,9 @@ function registerStatsTool(
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
-    async () => {
+    async (_params, { _meta }) => {
       try {
+        const clientPubkey = _meta?.clientPubkey as string | undefined;
         const statsResult = await withRateLimit(rateLimiter, "stats", () =>
           relatrService.getStats(),
         );
@@ -641,6 +646,8 @@ function registerStatsTool(
           structuredContent: {
             timestamp: statsResult.timestamp,
             sourcePubkey: statsResult.sourcePubkey,
+            relatrVersion: HOST_VERSION,
+            isAdmin: isAdminPubkey(clientPubkey, adminPubkeys),
             database: {
               metrics: statsResult.database.metrics,
               metadata: statsResult.database.metadata,

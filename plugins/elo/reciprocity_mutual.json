@@ -3,18 +3,9 @@
   "pubkey": "0f0c15457799aac79848730a6d466cd89bec73ad59973b4c52431bd2890974fe",
   "created_at": 1760000000,
   "tags": [
-    [
-      "n",
-      "reciprocity_mutual"
-    ],
-    [
-      "relatr-version",
-      "^0.1.16"
-    ],
-    [
-      "title",
-      "Reciprocity / Mutual follow"
-    ],
+    ["n", "reciprocity_mutual"],
+    ["relatr-version", "^0.1.16"],
+    ["title", "Reciprocity / Mutual follow"],
     [
       "description",
       "Scores 1.0 if source and target mutually follow (graph.are_mutual)."

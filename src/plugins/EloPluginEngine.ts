@@ -4,7 +4,7 @@ import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { registerBuiltInCapabilities } from "../capabilities/registerBuiltInCapabilities";
 import { runPlugins } from "./EloPluginRunner";
-import type { PortablePlugin } from "./plugin-types";
+import type { CapabilityRunCache, PortablePlugin } from "./plugin-types";
 import { Logger } from "../utils/Logger";
 import type { RelatrConfig } from "@/types";
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
@@ -39,7 +39,7 @@ export interface IEloPluginEngine {
     targetPubkey: string;
     sourcePubkey?: string;
     metricKeys?: string[];
-    capRunCache?: import("./plugin-types").CapabilityRunCache;
+    capRunCache?: CapabilityRunCache;
   }): Promise<Record<string, number>>;
   getPluginCount(): number;
   isInitialized(): boolean;
@@ -190,7 +190,7 @@ export class EloPluginEngine implements IEloPluginEngine {
     targetPubkey: string;
     sourcePubkey?: string;
     metricKeys?: string[];
-    capRunCache?: import("./plugin-types").CapabilityRunCache;
+    capRunCache?: CapabilityRunCache;
   }): Promise<Record<string, number>> {
     if (!this.initialized) {
       throw new Error(

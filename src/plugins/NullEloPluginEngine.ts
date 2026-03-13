@@ -1,6 +1,6 @@
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
 import type { IEloPluginEngine } from "./EloPluginEngine";
-import type { PortablePlugin } from "./plugin-types";
+import type { CapabilityRunCache, PortablePlugin } from "./plugin-types";
 
 /**
  * NullEloPluginEngine - Null-object implementation of EloPluginEngine
@@ -16,7 +16,6 @@ import type { PortablePlugin } from "./plugin-types";
  * - Easier to extract as a library later
  */
 export class NullEloPluginEngine implements IEloPluginEngine {
-  private initialized = true;
   private metricDescriptions: MetricDescriptionRegistry;
 
   constructor() {
@@ -61,7 +60,7 @@ export class NullEloPluginEngine implements IEloPluginEngine {
     targetPubkey: string;
     sourcePubkey?: string;
     metricKeys?: string[];
-    capRunCache?: import("./plugin-types").CapabilityRunCache;
+    capRunCache?: CapabilityRunCache;
   }): Promise<Record<string, number>> {
     // Return empty metrics - no plugins to evaluate
     return {};
