@@ -8,7 +8,7 @@
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
     "lint": "eslint src/",
-    "format": "prettier --write .",
+    "format": "prettier --write ./src",
     "generate:version": "bun run scripts/generate-version.ts",
     "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\"",
     "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\""
@@ -21,17 +21,17 @@
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.1",
-    "typescript-eslint": "^8.57.0"
+    "typescript-eslint": "^8.57.2"
   },
   "peerDependencies": {
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/elo": "^0.10.2",
-    "@contextvm/sdk": "^0.7.3",
+    "@contextvm/elo": "^0.10.3",
+    "@contextvm/sdk": "^0.7.5",
     "@duckdb/node-api": "^1.4.2-r.1",
-    "applesauce-core": "^5.1.0",
-    "applesauce-relay": "^5.1.0",
+    "applesauce-core": "^5.2.0",
+    "applesauce-relay": "^5.2.0",
     "nostr-social-duck": "^0.1.24",
     "nostr-tools": "^2.23.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",

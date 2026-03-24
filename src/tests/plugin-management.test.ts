@@ -560,4 +560,149 @@ describe("PluginManager v1 list/runtime", () => {
     expect(parsed.id).toBe(signed.id);
     expect(parsed.kind).toBe(765);
   });
+
+  test("install with enable=true triggers non-blocking validator warm-up callback", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => ({
+        plugins: [],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      reloadFromPlugins: async () => {},
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    const sk = generateSecretKey();
+    const signed = finalizeEvent(
+      {
+        kind: 765,
+        created_at: 1_700_000_005,
+        tags: [
+          ["n", "warmup-plugin"],
+          ["relatr-version", "^0.1.16"],
+        ],
+        content: "plan x = 1 in 0.5",
+      },
+      sk,
+    );
+
+    const pool: Pick<RelayPool, "request"> = {
+      request: () =>
+        new Observable((subscriber) => {
+          subscriber.next(signed);
+          subscriber.complete();
+        }),
+    };
+
+    const dir = await mkdtemp(join(tmpdir(), "relatr-plugin-warmup-"));
+    let warmupCalls = 0;
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      pool as RelayPool,
+      [],
+      dir,
+      {
+        onValidatorsChanged: () => {
+          warmupCalls++;
+        },
+      },
+    );
+
+    await manager.install({ eventId: signed.id, enable: true });
+    await Promise.resolve();
+
+    expect(warmupCalls).toBe(1);
+  });
+
+  test("configure triggers validator warm-up only when enabling a plugin", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const plugin = mkPlugin("pk-warm", "warm_config", 0.3);
+    const pluginKey = "pk-warm:warm_config";
+    await settings.set(
+      "plugins.installed.v1",
+      JSON.stringify({ [pluginKey]: plugin }),
+    );
+    await settings.set(
+      "plugins.enabled.v1",
+      JSON.stringify({ [pluginKey]: false }),
+    );
+    await settings.set("plugins.weightOverrides.v1", JSON.stringify({}));
+
+    let runtime: ReturnType<IEloPluginEngine["getRuntimeState"]> = {
+      plugins: [],
+      enabled: {},
+      weightOverrides: {},
+      resolvedWeights: {},
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => runtime,
+      reloadFromPlugins: async (input) => {
+        runtime = {
+          plugins: [...input.plugins],
+          enabled: { ...input.enabled },
+          weightOverrides: { ...input.weightOverrides },
+          resolvedWeights: { ...input.resolvedWeights },
+        };
+      },
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    let warmupCalls = 0;
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      {} as RelayPool,
+      [],
+      undefined,
+      {
+        onValidatorsChanged: () => {
+          warmupCalls++;
+        },
+      },
+    );
+
+    await manager.configure({
+      changes: [{ pluginKey, weightOverride: 0.7 }],
+    });
+    await Promise.resolve();
+    expect(warmupCalls).toBe(0);
+
+    await manager.configure({
+      changes: [{ pluginKey, enabled: true }],
+    });
+    await Promise.resolve();
+    expect(warmupCalls).toBe(1);
+  });
 });

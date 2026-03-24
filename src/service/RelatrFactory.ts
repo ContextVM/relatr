@@ -44,7 +44,7 @@ export class RelatrFactory {
     const validationResult = RelatrConfigSchema.safeParse(config);
 
     if (!validationResult.success) {
-      const errorMessages = validationResult.error.errors
+      const errorMessages = validationResult.error.issues
         .map((err) => `${err.path.join(".")}: ${err.message}`)
         .join(", ");
       throw new ValidationError(
@@ -166,6 +166,8 @@ export class RelatrFactory {
         eloEngine.getResolvedWeights(),
       );
 
+      let scheduleValidationWarmup = () => {};
+
       const pluginManager = new PluginManager(
         settingsRepository,
         eloEngine,
@@ -173,6 +175,9 @@ export class RelatrFactory {
         pool,
         validatedConfig.nostrRelays,
         validatedConfig.eloPluginsDir,
+        {
+          onValidatorsChanged: () => scheduleValidationWarmup(),
+        },
       );
 
       const bootstrapResult = await pluginManager.bootstrapFromFilesystem();
@@ -249,6 +254,8 @@ export class RelatrFactory {
         pool,
         taService || undefined,
       );
+      scheduleValidationWarmup = () =>
+        schedulerService.scheduleValidationWarmup();
 
       // Update serviceDependencies with the actual schedulerService
       serviceDependencies.schedulerService = schedulerService;

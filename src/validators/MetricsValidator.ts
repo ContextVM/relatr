@@ -23,6 +23,10 @@ export class MetricsValidator {
   private metricsRepository: MetricsRepository;
   private timeoutMs: number = 10000;
   private cacheTtlSeconds: number = 3600;
+  private readonly profileFetchConcurrency = 12;
+  private readonly validationChunkSize = 100;
+  private readonly validationChunkConcurrency = 2;
+  private readonly validationPubkeyConcurrency = 8;
   private metadataRepository: MetadataRepository;
   private eloEngine: IEloPluginEngine;
 
@@ -94,6 +98,16 @@ export class MetricsValidator {
       throw new ValidationError("Pubkey must be a non-empty string");
     }
     const expectedMetricKeys = this.getExpectedMetricKeys();
+    const now = nowSeconds();
+
+    if (expectedMetricKeys.size === 0) {
+      return {
+        pubkey,
+        metrics: {},
+        computedAt: now,
+        expiresAt: now + this.cacheTtlSeconds,
+      };
+    }
 
     let cached: ProfileMetrics | null = null;
     try {
@@ -113,8 +127,6 @@ export class MetricsValidator {
     if (missingMetricKeys.length === 0 && cached) {
       return cached;
     }
-
-    const now = nowSeconds();
 
     try {
       // Execute only missing plugin metrics
@@ -191,6 +203,19 @@ export class MetricsValidator {
     const now = nowSeconds();
     const expectedMetricKeys = this.getExpectedMetricKeys();
 
+    if (expectedMetricKeys.size === 0) {
+      for (const pubkey of pubkeys) {
+        results.set(pubkey, {
+          pubkey,
+          metrics: {},
+          computedAt: now,
+          expiresAt: now + this.cacheTtlSeconds,
+        });
+      }
+
+      return results;
+    }
+
     // Per-run capability cache (cross-pubkey dedupe) scoped to this batch call.
     // Keep in-memory only; flush in finally to avoid leaks.
     const capRunCache: CapabilityRunCache = {
@@ -225,12 +250,13 @@ export class MetricsValidator {
 
       // Process validation in smaller chunks to avoid memory spikes.
       // Run chunks with bounded parallelism.
-      const CHUNK_SIZE = 100;
-      const CHUNK_CONCURRENCY = 2;
-
       const chunks: string[][] = [];
-      for (let i = 0; i < pubkeysToValidate.length; i += CHUNK_SIZE) {
-        chunks.push(pubkeysToValidate.slice(i, i + CHUNK_SIZE));
+      for (
+        let i = 0;
+        i < pubkeysToValidate.length;
+        i += this.validationChunkSize
+      ) {
+        chunks.push(pubkeysToValidate.slice(i, i + this.validationChunkSize));
       }
 
       const totalChunks = chunks.length;
@@ -264,8 +290,8 @@ export class MetricsValidator {
         chunk: string[],
         chunkNum: number,
       ): Promise<void> => {
-        logger.debug(
-          `Processing validation chunk ${chunkNum} of ${totalChunks} (${chunk.length} pubkeys)`,
+        logger.info(
+          `🔄 Processing validation chunk ${chunkNum} of ${totalChunks} (${chunk.length} pubkeys)`,
         );
 
         // Fetch profiles for this chunk
@@ -284,69 +310,75 @@ export class MetricsValidator {
 
         // Fetch remaining profiles from relays in parallel for this chunk
         if (chunkPubkeysToFetch.length > 0) {
+          logger.info(
+            `🌐 Fetching ${chunkPubkeysToFetch.length} missing profiles from relays for chunk ${chunkNum}`,
+          );
           const fetchedProfiles = await mapWithConcurrency(
             chunkPubkeysToFetch,
-            12,
+            this.profileFetchConcurrency,
             async (pubkey) => await this.fetchProfile(pubkey),
           );
           chunkProfiles.push(...fetchedProfiles);
         }
 
-        // Validate this chunk in parallel
-        const validationPromises = chunkProfiles.map(async (profile) => {
-          try {
-            const cached = cachedMetrics.get(profile.pubkey) ?? null;
-            const missingMetricKeys = this.getMissingExpectedMetricKeys(
-              cached?.metrics ?? {},
-              expectedMetricKeys,
-            );
+        // Validate this chunk with bounded pubkey concurrency to avoid
+        // large bursts of plugin/capability work under slow HTTP domains.
+        const chunkValidationResults = await mapWithConcurrency(
+          chunkProfiles,
+          this.validationPubkeyConcurrency,
+          async (profile) => {
+            try {
+              const cached = cachedMetrics.get(profile.pubkey) ?? null;
+              const missingMetricKeys = this.getMissingExpectedMetricKeys(
+                cached?.metrics ?? {},
+                expectedMetricKeys,
+              );
 
-            const computedMetrics = await this.evaluateEloPlugins(
-              profile.pubkey,
-              sourcePubkey,
-              capRunCache,
-              missingMetricKeys,
-            );
+              const computedMetrics = await this.evaluateEloPlugins(
+                profile.pubkey,
+                sourcePubkey,
+                capRunCache,
+                missingMetricKeys,
+              );
 
-            const mergedMetrics = {
-              ...(cached?.metrics ?? {}),
-              ...computedMetrics,
-            };
+              const mergedMetrics = {
+                ...(cached?.metrics ?? {}),
+                ...computedMetrics,
+              };
 
-            const result: ProfileMetrics = {
-              pubkey: profile.pubkey,
-              metrics: mergedMetrics,
-              computedAt: now,
-              expiresAt: now + this.cacheTtlSeconds,
-            };
+              const result: ProfileMetrics = {
+                pubkey: profile.pubkey,
+                metrics: mergedMetrics,
+                computedAt: now,
+                expiresAt: now + this.cacheTtlSeconds,
+              };
 
-            return {
-              pubkey: profile.pubkey,
-              result,
-              computedMetrics,
-              success: true,
-            };
-          } catch (error) {
-            logger.warn(
-              `[MetricsValidator] ⚠️ Validation failed for ${profile.pubkey}:`,
-              error instanceof Error ? error.message : String(error),
-            );
-            const errorMetrics: ProfileMetrics = {
-              pubkey: profile.pubkey,
-              metrics: {},
-              computedAt: now,
-              expiresAt: now + this.cacheTtlSeconds,
-            };
-            return {
-              pubkey: profile.pubkey,
-              result: errorMetrics,
-              computedMetrics: {},
-              success: false,
-            };
-          }
-        });
-
-        const chunkValidationResults = await Promise.all(validationPromises);
+              return {
+                pubkey: profile.pubkey,
+                result,
+                computedMetrics,
+                success: true,
+              };
+            } catch (error) {
+              logger.warn(
+                `[MetricsValidator] ⚠️ Validation failed for ${profile.pubkey}:`,
+                error instanceof Error ? error.message : String(error),
+              );
+              const errorMetrics: ProfileMetrics = {
+                pubkey: profile.pubkey,
+                metrics: {},
+                computedAt: now,
+                expiresAt: now + this.cacheTtlSeconds,
+              };
+              return {
+                pubkey: profile.pubkey,
+                result: errorMetrics,
+                computedMetrics: {},
+                success: false,
+              };
+            }
+          },
+        );
 
         // Process chunk results and save immediately
         const subsetUpserts: Array<{
@@ -374,8 +406,8 @@ export class MetricsValidator {
         }
       };
 
-      for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
-        const batch = chunks.slice(i, i + CHUNK_CONCURRENCY);
+      for (let i = 0; i < chunks.length; i += this.validationChunkConcurrency) {
+        const batch = chunks.slice(i, i + this.validationChunkConcurrency);
         await Promise.all(
           batch.map((chunk, j) => processChunk(chunk, i + j + 1)),
         );
@@ -432,6 +464,10 @@ export class MetricsValidator {
    */
   getResolvedWeights(): Record<string, number> {
     return this.eloEngine.getResolvedWeights();
+  }
+
+  hasConfiguredValidators(): boolean {
+    return this.getExpectedMetricKeys().size > 0;
   }
 
   /**

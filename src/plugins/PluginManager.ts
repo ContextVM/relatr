@@ -24,6 +24,10 @@ type InstalledMap = Record<string, PortablePlugin>;
 type EnabledMap = Record<string, boolean>;
 type WeightOverrideMap = Record<string, number>;
 
+type PluginLifecycleCallbacks = {
+  onValidatorsChanged?: () => void | Promise<void>;
+};
+
 export interface InstallPluginInput {
   eventId?: string;
   nevent?: string;
@@ -99,6 +103,7 @@ export class PluginManager {
     private readonly pool: RelayPool,
     private readonly defaultRelays: string[],
     private readonly pluginsDir?: string,
+    private readonly callbacks: PluginLifecycleCallbacks = {},
   ) {}
 
   bootstrapFromFilesystem(): Promise<{ imported: number }> {
@@ -174,6 +179,7 @@ export class PluginManager {
       const key = pluginKeyOf(plugin);
 
       await this.persistPluginArtifact(plugin, key);
+      logger.info(`📥 Installing plugin: ${key}`);
 
       const state = await this.readState();
       state.installed[key] = plugin;
@@ -212,6 +218,15 @@ export class PluginManager {
       }
 
       await this.persistStateWithRollback(state.previousRaw, state);
+
+      if (state.enabled[key] === true) {
+        logger.info(
+          `🚀 Plugin ${key} installed and enabled, triggering validation warm-up`,
+        );
+        this.triggerValidatorWarmup();
+      } else {
+        logger.info(`✅ Plugin ${key} installed (disabled)`);
+      }
 
       return { pluginKey: key, enabled: state.enabled[key] === true };
     });
@@ -300,6 +315,14 @@ export class PluginManager {
       };
 
       await this.persistStateWithRollback(state.previousRaw, nextState);
+
+      if (this.didEnableAnyPlugin(state.enabled, candidateEnabled)) {
+        logger.info(
+          "🚀 One or more plugins enabled, triggering validation warm-up",
+        );
+        this.triggerValidatorWarmup();
+      }
+
       return { updated: input.changes.length };
     });
   }
@@ -742,6 +765,35 @@ export class PluginManager {
         "PLUGIN_SETTINGS_PERSIST_FAILED",
       );
     }
+  }
+
+  private didEnableAnyPlugin(
+    previousEnabled: EnabledMap,
+    nextEnabled: EnabledMap,
+  ): boolean {
+    for (const [pluginKey, enabled] of Object.entries(nextEnabled)) {
+      if (enabled === true && previousEnabled[pluginKey] !== true) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private triggerValidatorWarmup(): void {
+    const onValidatorsChanged = this.callbacks.onValidatorsChanged;
+    if (!onValidatorsChanged) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      Promise.resolve(onValidatorsChanged()).catch((error) => {
+        logger.warn(
+          "Plugin validator warm-up trigger failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    });
   }
 
   private runSerialized<T>(op: () => Promise<T>): Promise<T> {

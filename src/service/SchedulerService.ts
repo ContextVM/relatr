@@ -18,6 +18,9 @@ export class SchedulerService implements ISchedulerService {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private syncInterval: NodeJS.Timeout | null = null;
   private validationInterval: NodeJS.Timeout | null = null;
+  private validationRunPromise: Promise<void> | null = null;
+  private validationWarmupQueued = false;
+  private validationWarmupRerunRequested = false;
   private _isRunning = false;
   private _isStarting = false;
   private _isStopping = false;
@@ -161,6 +164,76 @@ export class SchedulerService implements ISchedulerService {
     batchSize: number = 250,
     sourcePubkey?: string,
   ): Promise<void> {
+    if (this.validationRunPromise) {
+      this.validationWarmupRerunRequested = true;
+      logger.info(
+        "⏳ Validation sync already in progress, queuing follow-up run",
+      );
+      return this.validationRunPromise;
+    }
+
+    const run = this.performValidationSync(batchSize, sourcePubkey).finally(
+      async () => {
+        this.validationRunPromise = null;
+
+        if (!this.validationWarmupRerunRequested) {
+          return;
+        }
+
+        this.validationWarmupRerunRequested = false;
+        logger.info("🔄 Starting queued follow-up validation sync");
+
+        try {
+          // Use queueMicrotask to avoid deep recursion if syncs are very fast
+          queueMicrotask(async () => {
+            await this.syncValidations(batchSize, sourcePubkey).catch(
+              (error) => {
+                logger.error(
+                  "Follow-up validation warm-up failed:",
+                  error instanceof Error ? error.message : String(error),
+                );
+              },
+            );
+          });
+        } catch (error) {
+          logger.error(
+            "Failed to trigger follow-up validation sync:",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      },
+    );
+    this.validationRunPromise = run;
+    return run;
+  }
+
+  scheduleValidationWarmup(sourcePubkey?: string): void {
+    if (this.validationRunPromise) {
+      this.validationWarmupRerunRequested = true;
+      return;
+    }
+
+    if (this.validationWarmupQueued) {
+      return;
+    }
+
+    this.validationWarmupQueued = true;
+
+    queueMicrotask(() => {
+      this.validationWarmupQueued = false;
+      this.syncValidations(undefined, sourcePubkey).catch((error) => {
+        logger.error(
+          "Scheduled validation warm-up failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    });
+  }
+
+  private async performValidationSync(
+    batchSize: number = 250,
+    sourcePubkey?: string,
+  ): Promise<void> {
     logger.info("Starting validation sync...");
 
     if (
@@ -179,33 +252,39 @@ export class SchedulerService implements ISchedulerService {
       sourcePubkey || this.config.defaultSourcePubkey;
 
     try {
+      if (!this.metricsValidator.hasConfiguredValidators()) {
+        logger.info(
+          "No validator plugins enabled; skipping metric validation sync.",
+        );
+        return;
+      }
+
       // Step 1: Get all pubkeys from the social graph
       const allPubkeys = await this.socialGraph.getAllUsersInGraph();
       logger.info(
         `📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`,
       );
 
-      // Step 2: Identify pubkeys without validation scores
-      const pubkeysWithoutScores =
-        await this.metricsRepository.getPubkeysWithoutScores(allPubkeys);
-      logger.info(
-        `🔍 Found ${pubkeysWithoutScores.length.toLocaleString()} pubkeys missing validation scores`,
-      );
-
-      if (pubkeysWithoutScores.length === 0) {
-        logger.info("✅ All pubkeys have validation scores, no sync needed");
+      if (allPubkeys.length === 0) {
+        logger.info(
+          "✅ No pubkeys found in social graph, validation sync skipped",
+        );
         return;
       }
 
-      // Step 3: Process validations in batches to avoid overwhelming the system
+      logger.info(
+        `🔍 Validating ${allPubkeys.length.toLocaleString()} pubkeys against the current validator set`,
+      );
+
+      // Step 2: Process validations in batches to avoid overwhelming the system
       let processedCount = 0;
       let successCount = 0;
       let errorCount = 0;
 
-      for (let i = 0; i < pubkeysWithoutScores.length; i += batchSize) {
-        const batch = pubkeysWithoutScores.slice(i, i + batchSize);
+      for (let i = 0; i < allPubkeys.length; i += batchSize) {
+        const batch = allPubkeys.slice(i, i + batchSize);
         logger.info(
-          `🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(pubkeysWithoutScores.length / batchSize)} (${batch.length} pubkeys)`,
+          `🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(allPubkeys.length / batchSize)} (${batch.length} pubkeys)`,
         );
 
         try {
@@ -230,7 +309,7 @@ export class SchedulerService implements ISchedulerService {
 
           // Log progress
           logger.info(
-            `📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`,
+            `📈 Progress: ${processedCount}/${allPubkeys.length} processed, ${successCount} successful, ${errorCount} failed`,
           );
         } catch (error) {
           // If batch validation fails, fall back to individual validations
@@ -260,7 +339,7 @@ export class SchedulerService implements ISchedulerService {
 
           // Log progress after fallback processing
           logger.info(
-            `📈 Progress: ${processedCount}/${pubkeysWithoutScores.length} processed, ${successCount} successful, ${errorCount} failed`,
+            `📈 Progress: ${processedCount}/${allPubkeys.length} processed, ${successCount} successful, ${errorCount} failed`,
           );
         }
       }

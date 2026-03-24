@@ -13,6 +13,7 @@ import {
   nip05DomainOf,
   normalizeNip05,
 } from "@/capabilities/http/utils/httpNip05Normalize";
+import { shouldMarkNip05DomainBad } from "@/capabilities/http/httpNip05Resolve";
 
 describe("Elo Plugins - Runner Integration", () => {
   let registry: CapabilityRegistry;
@@ -680,74 +681,26 @@ describe("Capability Run Cache Wiring", () => {
 });
 
 describe("NIP-05 Domain Fail-Fast Cache", () => {
-  let registry: CapabilityRegistry;
-  let executor: CapabilityExecutor;
-  let callCount: number;
-
-  beforeEach(() => {
-    registry = new CapabilityRegistry();
-    executor = new CapabilityExecutor(registry);
-    callCount = 0;
-
-    registry.register("test.nip05_resolve", async (_args, _ctx) => {
-      callCount++;
-      // Simulate a timeout error
-      throw new Error("Operation timed out after 5000ms");
-    });
+  test("should classify timeout failures as bad-domain candidates", () => {
+    expect(
+      shouldMarkNip05DomainBad(new Error("Operation timed out after 5000ms")),
+    ).toBe(true);
   });
 
-  test("should mark domain as bad after timeout and skip subsequent requests", async () => {
-    const cache: CapabilityRunCache = {
-      nip05Resolve: new LruCache<Promise<{ pubkey: string | null }>>(100),
-      nip05BadDomains: new LruCache<true>(50),
-    };
+  test("should classify transport-style failures as bad-domain candidates", () => {
+    expect(
+      shouldMarkNip05DomainBad(
+        new Error("fetch failed: ENOTFOUND example.com"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldMarkNip05DomainBad(new Error("connect ECONNREFUSED 127.0.0.1:443")),
+    ).toBe(true);
+  });
 
-    const plugin: PortablePlugin = {
-      id: "p_nip05_timeout_1",
-      pubkey: "pk",
-      createdAt: 123,
-      kind: 31234,
-      content:
-        "plan res = do 'test.nip05_resolve' {nip05: 'alice@example.com'} in if res == null then 1.0 else 0.0",
-      manifest: {
-        name: "p_nip05_timeout_1",
-        relatrVersion: "^0.1.16",
-        title: null,
-        description: null,
-        weight: 1.0,
-      },
-      rawEvent: {} as NostrEvent,
-    };
-
-    const result1 = await runPlugin(
-      plugin,
-      { targetPubkey: "t1", capRunCache: cache },
-      executor,
-      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1 },
+  test("should not classify arbitrary errors as bad-domain candidates", () => {
+    expect(shouldMarkNip05DomainBad(new Error("unexpected parser state"))).toBe(
+      false,
     );
-
-    expect(result1.success).toBe(true);
-    expect(result1.score).toBe(1.0); // null fallback
-    expect(callCount).toBe(1);
-
-    // Second request to same domain should be skipped (case-normalized)
-    const plugin2: PortablePlugin = {
-      ...plugin,
-      id: "p_nip05_timeout_2",
-      content:
-        "plan res = do 'test.nip05_resolve' {nip05: 'bob@example.com'} in if res == null then 1.0 else 0.0",
-    };
-
-    const result2 = await runPlugin(
-      plugin2,
-      { targetPubkey: "t1", capRunCache: cache },
-      executor,
-      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1 },
-    );
-
-    expect(result2.success).toBe(true);
-    expect(result2.score).toBe(1.0);
-    // Only one more call (for bob@example.com) since alice@example.com was cached as bad
-    expect(callCount).toBe(2);
   });
 });

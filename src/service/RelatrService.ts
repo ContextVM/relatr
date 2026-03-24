@@ -184,6 +184,9 @@ export class RelatrService implements IRelatrService {
 
     try {
       // Pre-fetch distances + metrics in parallel
+      logger.info(
+        `📊 Computing trust scores for ${decodedTargetPubkeys.length} pubkeys`,
+      );
       const [distances, metricsMap] = await Promise.all([
         this.socialGraph.getDistancesBatch(decodedTargetPubkeys),
         this.metricsValidator.validateAllBatch(
@@ -404,10 +407,17 @@ export class RelatrService implements IRelatrService {
     metricDescriptions: MetricDescriptionRegistry,
   ): TrustScore {
     const enrichedValidators: ScoreComponents["validators"] = {};
+    const enabledPluginKeys = new Set(
+      Object.keys(this.metricsValidator.getResolvedWeights()),
+    );
 
     for (const [name, validator] of Object.entries(
       trustScore.components.validators,
     )) {
+      if (!enabledPluginKeys.has(name)) {
+        continue;
+      }
+
       // TrustCalculator now returns { score: number } format
       // Just add the description field
       enrichedValidators[name] = {

@@ -2,6 +2,29 @@ import { describe, expect, test } from "bun:test";
 import { MetricsValidator } from "@/validators/MetricsValidator";
 import type { ProfileMetrics } from "@/types";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs: number = 100,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Timed out waiting for condition");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 function mkCached(
   pubkey: string,
   metrics: Record<string, number>,
@@ -194,5 +217,187 @@ describe("MetricsValidator cache completeness", () => {
     ]);
     expect(results.get(completePubkey)?.metrics[expectedKeys[1]!]).toBe(0.4);
     expect(results.get(incompletePubkey)?.metrics[expectedKeys[1]!]).toBe(0.3);
+  });
+
+  test("validateAll returns empty metrics without evaluating when no validators are configured", async () => {
+    const target = "pk-target";
+
+    let repoGetCalls = 0;
+    const repo = {
+      get: async () => {
+        repoGetCalls++;
+        return null;
+      },
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {
+        throw new Error("upsertMetricSubset should not be called");
+      },
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    let evaluateCalls = 0;
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateForPubkey: async () => {
+        evaluateCalls++;
+        return {};
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      {} as never,
+      eloEngine as never,
+    );
+
+    const result = await validator.validateAll(target, "pk-source");
+
+    expect(validator.hasConfiguredValidators()).toBe(false);
+    expect(repoGetCalls).toBe(0);
+    expect(evaluateCalls).toBe(0);
+    expect(result.pubkey).toBe(target);
+    expect(result.metrics).toEqual({});
+  });
+
+  test("validateAllBatch returns empty metrics for all pubkeys when no validators are configured", async () => {
+    const pubkeys = ["pk-a", "pk-b"];
+
+    let repoGetBatchCalls = 0;
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => {
+        repoGetBatchCalls++;
+        return new Map<string, ProfileMetrics | null>();
+      },
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {
+        throw new Error("upsertMetricSubsetBatch should not be called");
+      },
+    };
+
+    let evaluateCalls = 0;
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateForPubkey: async () => {
+        evaluateCalls++;
+        return {};
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      {} as never,
+      eloEngine as never,
+    );
+
+    const results = await validator.validateAllBatch(pubkeys, "pk-source");
+
+    expect(repoGetBatchCalls).toBe(0);
+    expect(evaluateCalls).toBe(0);
+    expect(Array.from(results.keys())).toEqual(pubkeys);
+    for (const pubkey of pubkeys) {
+      expect(results.get(pubkey)).toEqual(
+        expect.objectContaining({
+          pubkey,
+          metrics: {},
+        }),
+      );
+    }
+  });
+
+  test("validateAllBatch bounds pubkey validation concurrency within a chunk", async () => {
+    const pubkeys = Array.from({ length: 12 }, (_, index) => `pk-${index}`);
+    const gates = new Map(
+      pubkeys.map((pubkey) => [pubkey, deferred<Record<string, number>>()]),
+    );
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    const metadataRepository = {
+      getBatch: async (requestedPubkeys: string[]) => {
+        return new Map(requestedPubkeys.map((pubkey) => [pubkey, { pubkey }]));
+      },
+    };
+
+    let activeValidations = 0;
+    let maxConcurrentValidations = 0;
+    const startedPubkeys: string[] = [];
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateForPubkey: async (input: { targetPubkey: string }) => {
+        activeValidations++;
+        maxConcurrentValidations = Math.max(
+          maxConcurrentValidations,
+          activeValidations,
+        );
+        startedPubkeys.push(input.targetPubkey);
+        try {
+          return await gates.get(input.targetPubkey)!.promise;
+        } finally {
+          activeValidations--;
+        }
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      metadataRepository as never,
+      eloEngine as never,
+    );
+
+    const validationPromise = validator.validateAllBatch(pubkeys);
+    await waitFor(() => startedPubkeys.length === 8);
+
+    expect(maxConcurrentValidations).toBeLessThanOrEqual(8);
+    expect(startedPubkeys.length).toBe(8);
+
+    for (const pubkey of pubkeys) {
+      gates.get(pubkey)!.resolve({ "pk:plugin_a": 1 });
+    }
+
+    const results = await validationPromise;
+    expect(results.size).toBe(pubkeys.length);
+    expect(maxConcurrentValidations).toBeLessThanOrEqual(8);
   });
 });
