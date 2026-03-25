@@ -62,4 +62,28 @@ export class SettingsRepository {
       );
     }
   }
+
+  async delete(key: string): Promise<void> {
+    try {
+      return await executeWithRetry(async () => {
+        return await dbWriteQueue.runExclusive(async () => {
+          await this.writeConnection.run(
+            "DELETE FROM settings WHERE key = $1",
+            {
+              1: key,
+            },
+          );
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to delete setting ${key} after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new DatabaseError(
+        `Failed to delete setting ${key}: ${error instanceof Error ? error.message : String(error)}`,
+        "SETTINGS_DELETE",
+      );
+    }
+  }
 }

@@ -45,6 +45,18 @@ export const RelatrConfigSchema = z.object({
   eloPluginsDir: z.string().default("./plugins/elo"),
   eloPluginTimeoutMs: z.number().positive().default(30000),
   capTimeoutMs: z.number().positive().default(30000),
+  nip05ResolveTimeoutMs: z.number().positive().default(10000),
+  nip05CacheTtlSeconds: z
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60 * 24 * 2),
+  nip05DomainCooldownSeconds: z
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60),
+  eloBatchPubkeyConcurrency: z.number().int().positive().default(8),
   // Host policy limits
   eloMaxRoundsPerPlugin: z.number().int().positive().default(8),
   eloMaxRequestsPerRound: z.number().int().positive().default(32),
@@ -146,6 +158,18 @@ export function loadConfig(): RelatrConfig {
       : undefined,
     capTimeoutMs: process.env.CAP_TIMEOUT_MS
       ? parseInt(process.env.CAP_TIMEOUT_MS, 10)
+      : undefined,
+    nip05ResolveTimeoutMs: process.env.NIP05_RESOLVE_TIMEOUT_MS
+      ? parseInt(process.env.NIP05_RESOLVE_TIMEOUT_MS, 10)
+      : undefined,
+    nip05CacheTtlSeconds: process.env.NIP05_CACHE_TTL_SECONDS
+      ? parseInt(process.env.NIP05_CACHE_TTL_SECONDS, 10)
+      : undefined,
+    nip05DomainCooldownSeconds: process.env.NIP05_DOMAIN_COOLDOWN_SECONDS
+      ? parseInt(process.env.NIP05_DOMAIN_COOLDOWN_SECONDS, 10)
+      : undefined,
+    eloBatchPubkeyConcurrency: process.env.ELO_BATCH_PUBKEY_CONCURRENCY
+      ? parseInt(process.env.ELO_BATCH_PUBKEY_CONCURRENCY, 10)
       : undefined,
     eloMaxRoundsPerPlugin: process.env.ELO_MAX_ROUNDS_PER_PLUGIN
       ? parseInt(process.env.ELO_MAX_ROUNDS_PER_PLUGIN, 10)

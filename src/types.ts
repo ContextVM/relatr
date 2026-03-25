@@ -33,6 +33,10 @@ export interface RelatrConfig {
   eloPluginsDir: string;
   eloPluginTimeoutMs: number;
   capTimeoutMs: number;
+  nip05ResolveTimeoutMs: number;
+  nip05CacheTtlSeconds: number;
+  nip05DomainCooldownSeconds: number;
+  eloBatchPubkeyConcurrency: number;
   /** Host policy: maximum number of plan/then rounds allowed per plugin */
   eloMaxRoundsPerPlugin: number;
   /** Host policy: maximum number of plannable do calls allowed in a single round */

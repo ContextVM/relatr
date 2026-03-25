@@ -39,10 +39,22 @@ function mkMetrics(
 }
 
 describe("SchedulerService validation sync", () => {
+  const mkSettingsRepository = () => ({
+    get: async () => null,
+    set: async () => {},
+    delete: async () => {},
+  });
+
+  const mkMetadataRepository = () => ({
+    getBatch: async (pubkeys: string[]) =>
+      new Map(pubkeys.map((pubkey) => [pubkey, { pubkey }])),
+  });
+
   test("syncValidations validates all graph pubkeys through MetricsValidator completeness logic", async () => {
     const allPubkeys = ["pk-a", "pk-b", "pk-c"];
     const seenBatches: string[][] = [];
     let coarseRepositoryCheckCalls = 0;
+    const refreshedPubkeys: string[][] = [];
 
     const scheduler = new SchedulerService(
       {
@@ -70,16 +82,181 @@ describe("SchedulerService validation sync", () => {
           );
         },
       } as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
+      {
+        getBatch: async (pubkeys: string[]) =>
+          new Map(pubkeys.map((pubkey) => [pubkey, null])),
+      } as never,
+      {
+        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
+          refreshedPubkeys.push([...pubkeys]);
+          return {
+            success: true,
+            message: "ok",
+            profilesFetched: pubkeys.length,
+          };
+        },
+      } as never,
+      mkSettingsRepository() as never,
+      mkMetadataRepository() as never,
+      mkMetadataRepository() as never,
     );
 
     await scheduler.syncValidations(2);
 
     expect(coarseRepositoryCheckCalls).toBe(0);
+    expect(refreshedPubkeys).toEqual([allPubkeys]);
     expect(seenBatches).toEqual([["pk-a", "pk-b"], ["pk-c"]]);
+  });
+
+  test("syncValidations skips metadata refresh when cached metadata is already fresh on restart", async () => {
+    const refreshedPubkeys: string[][] = [];
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b"],
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              mkMetrics(pubkey, { "pk:plugin_b": 1 }),
+            ]),
+          ),
+      } as never,
+      {
+        getBatch: async (pubkeys: string[]) =>
+          new Map(pubkeys.map((pubkey) => [pubkey, { pubkey }])),
+      } as never,
+      {
+        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
+          refreshedPubkeys.push([...pubkeys]);
+          return {
+            success: true,
+            message: "ok",
+            profilesFetched: pubkeys.length,
+          };
+        },
+      } as never,
+      mkSettingsRepository() as never,
+      mkMetadataRepository() as never,
+      mkMetadataRepository() as never,
+    );
+
+    await scheduler.syncValidations(10);
+
+    expect(refreshedPubkeys).toEqual([]);
+  });
+
+  test("syncValidations refreshes only missing metadata when restart cache coverage is partial", async () => {
+    const refreshedPubkeys: string[][] = [];
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b", "pk-c"],
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              mkMetrics(pubkey, { "pk:plugin_b": 1 }),
+            ]),
+          ),
+      } as never,
+      {
+        getBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              pubkey === "pk-b" ? null : { pubkey },
+            ]),
+          ),
+      } as never,
+      {
+        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
+          refreshedPubkeys.push([...pubkeys]);
+          return {
+            success: true,
+            message: "ok",
+            profilesFetched: pubkeys.length,
+          };
+        },
+      } as never,
+      mkSettingsRepository() as never,
+      mkMetadataRepository() as never,
+      mkMetadataRepository() as never,
+    );
+
+    await scheduler.syncValidations(10);
+
+    expect(refreshedPubkeys).toEqual([["pk-b"]]);
+  });
+
+  test("bootstrap metadata coverage suppresses the immediate validation refresh once even when pubkey order changes and cached metadata prevents a second refresh", async () => {
+    const refreshedPubkeys: string[][] = [];
+    let metadataBatchReads = 0;
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => ["pk-b", "pk-a"],
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              mkMetrics(pubkey, { "pk:plugin_b": 1 }),
+            ]),
+          ),
+      } as never,
+      {
+        getBatch: async (pubkeys: string[]) => {
+          metadataBatchReads++;
+          return new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              metadataBatchReads === 1 ? null : { pubkey },
+            ]),
+          );
+        },
+      } as never,
+      {
+        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
+          refreshedPubkeys.push([...pubkeys]);
+          return {
+            success: true,
+            message: "ok",
+            profilesFetched: pubkeys.length,
+          };
+        },
+      } as never,
+      mkSettingsRepository() as never,
+      mkMetadataRepository() as never,
+      mkMetadataRepository() as never,
+    );
+
+    scheduler.markBootstrapMetadataFresh(["pk-a", "pk-b"], "pk-source");
+
+    await scheduler.syncValidations(10);
+    await scheduler.syncValidations(10);
+
+    expect(refreshedPubkeys).toEqual([]);
   });
 
   test("syncValidations skips cleanly when the graph is empty", async () => {
@@ -89,7 +266,7 @@ describe("SchedulerService validation sync", () => {
       {
         defaultSourcePubkey: "pk-source",
       } as never,
-      {} as never,
+      mkMetadataRepository() as never,
       {
         getAllUsersInGraph: async () => [],
       } as never,
@@ -100,10 +277,17 @@ describe("SchedulerService validation sync", () => {
           return new Map();
         },
       } as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
+      mkMetadataRepository() as never,
+      {
+        fetchMetadata: async () => ({
+          success: true,
+          message: "ok",
+          profilesFetched: 0,
+        }),
+      } as never,
+      mkSettingsRepository() as never,
+      mkMetadataRepository() as never,
+      mkMetadataRepository() as never,
     );
 
     await scheduler.syncValidations(10);
@@ -120,7 +304,7 @@ describe("SchedulerService validation sync", () => {
       {
         defaultSourcePubkey: "pk-source",
       } as never,
-      {} as never,
+      mkMetadataRepository() as never,
       {
         getAllUsersInGraph: async () => ["pk-a"],
       } as never,
@@ -138,10 +322,17 @@ describe("SchedulerService validation sync", () => {
           return new Map([["pk-a", mkMetrics("pk-a", { "pk:plugin_a": 1 })]]);
         },
       } as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
+      mkMetadataRepository() as never,
+      {
+        fetchMetadata: async () => ({
+          success: true,
+          message: "ok",
+          profilesFetched: 1,
+        }),
+      } as never,
+      mkSettingsRepository() as never,
+      mkMetadataRepository() as never,
+      mkMetadataRepository() as never,
     );
 
     scheduler.scheduleValidationWarmup();
@@ -162,5 +353,46 @@ describe("SchedulerService validation sync", () => {
 
     secondRunGate.resolve();
     await Promise.resolve();
+  });
+
+  test("scheduleValidationWarmup forwards narrowed metric keys into validation sync", async () => {
+    const seenMetricKeys: string[][] = [];
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => ["pk-a"],
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (
+          _pubkeys: string[],
+          _sourcePubkey?: string,
+          metricKeys?: string[],
+        ) => {
+          seenMetricKeys.push([...(metricKeys ?? [])]);
+          return new Map([["pk-a", mkMetrics("pk-a", { "pk:plugin_a": 1 })]]);
+        },
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        fetchMetadata: async () => ({
+          success: true,
+          message: "ok",
+          profilesFetched: 1,
+        }),
+      } as never,
+      mkSettingsRepository() as never,
+      {} as never,
+      {} as never,
+    );
+
+    scheduler.scheduleValidationWarmup(undefined, ["pk:plugin_a"]);
+    await waitFor(() => seenMetricKeys.length === 1);
+
+    expect(seenMetricKeys).toEqual([["pk:plugin_a"]]);
   });
 });

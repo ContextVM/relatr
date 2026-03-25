@@ -32,6 +32,7 @@
     "@duckdb/node-api": "^1.4.2-r.1",
     "applesauce-core": "^5.2.0",
     "applesauce-relay": "^5.2.0",
+    "json-canonicalize": "^2.0.0",
     "nostr-social-duck": "^0.1.24",
     "nostr-tools": "^2.23.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",

@@ -5,6 +5,10 @@ import { parseManifestTags, validateManifest } from "./parseManifestTags";
 import { loadPluginsFromDirectory } from "./PortablePluginLoader";
 import type { PortablePlugin } from "./plugin-types";
 import type { IEloPluginEngine } from "./EloPluginEngine";
+import {
+  buildPluginWeightRuntimeState,
+  pluginKeyOf,
+} from "./resolvePluginWeights";
 import type { SettingsRepository } from "@/database/repositories/SettingsRepository";
 import type { RelayPool } from "applesauce-relay";
 import { ValidationError, RelatrError } from "@/types";
@@ -25,7 +29,9 @@ type EnabledMap = Record<string, boolean>;
 type WeightOverrideMap = Record<string, number>;
 
 type PluginLifecycleCallbacks = {
-  onValidatorsChanged?: () => void | Promise<void>;
+  onValidatorsChanged?: (input?: {
+    metricKeys?: string[];
+  }) => void | Promise<void>;
 };
 
 export interface InstallPluginInput {
@@ -68,10 +74,6 @@ export interface PluginListItem {
   defaultWeight?: number | null;
   installedEventId?: string;
   createdAt?: number;
-}
-
-function pluginKeyOf(plugin: PortablePlugin): string {
-  return `${plugin.pubkey}:${plugin.manifest.name}`;
 }
 
 function artifactFileNameFor(pluginKey: string): string {
@@ -223,7 +225,7 @@ export class PluginManager {
         logger.info(
           `🚀 Plugin ${key} installed and enabled, triggering validation warm-up`,
         );
-        this.triggerValidatorWarmup();
+        this.triggerValidatorWarmup([key]);
       } else {
         logger.info(`✅ Plugin ${key} installed (disabled)`);
       }
@@ -263,22 +265,40 @@ export class PluginManager {
         }
       }
 
+      const previousRuntime = this.eloEngine.getRuntimeState();
       const candidateEnabled: EnabledMap = { ...state.enabled };
-      const candidateOverrides: WeightOverrideMap = { ...state.overrides };
+      const hasExplicitWeightAssignments = input.changes.some(
+        (change) =>
+          change.weightOverride !== undefined && change.weightOverride !== null,
+      );
+      let candidateOverrides: WeightOverrideMap = hasExplicitWeightAssignments
+        ? {}
+        : { ...state.overrides };
+
       for (const change of input.changes) {
         if (change.enabled !== undefined) {
           candidateEnabled[change.pluginKey] = change.enabled;
         }
-        if (change.weightOverride !== undefined) {
-          if (change.weightOverride === null) {
-            delete candidateOverrides[change.pluginKey];
-          } else {
-            candidateOverrides[change.pluginKey] = change.weightOverride;
+      }
+
+      if (hasExplicitWeightAssignments) {
+        candidateOverrides = this.rebuildOverridesForWeightEdit({
+          previousResolvedWeights: previousRuntime.resolvedWeights,
+          nextEnabled: candidateEnabled,
+          changes: input.changes,
+        });
+      } else {
+        for (const change of input.changes) {
+          if (change.weightOverride !== undefined) {
+            if (change.weightOverride === null) {
+              delete candidateOverrides[change.pluginKey];
+            } else {
+              candidateOverrides[change.pluginKey] = change.weightOverride;
+            }
           }
         }
       }
 
-      const previousRuntime = this.eloEngine.getRuntimeState();
       const candidateRuntime = this.buildRuntimeState(
         state.installed,
         candidateEnabled,
@@ -316,11 +336,15 @@ export class PluginManager {
 
       await this.persistStateWithRollback(state.previousRaw, nextState);
 
-      if (this.didEnableAnyPlugin(state.enabled, candidateEnabled)) {
+      const enabledMetricKeys = this.getNewlyEnabledMetricKeys(
+        state.enabled,
+        candidateEnabled,
+      );
+      if (enabledMetricKeys.length > 0) {
         logger.info(
-          "🚀 One or more plugins enabled, triggering validation warm-up",
+          `🚀 Triggering validation warm-up for ${enabledMetricKeys.length} affected plugin metrics`,
         );
-        this.triggerValidatorWarmup();
+        this.triggerValidatorWarmup(enabledMetricKeys);
       }
 
       return { updated: input.changes.length };
@@ -359,14 +383,16 @@ export class PluginManager {
 
       const candidateInstalled: InstalledMap = { ...state.installed };
       const candidateEnabled: EnabledMap = { ...state.enabled };
-      const candidateOverrides: WeightOverrideMap = { ...state.overrides };
       for (const pluginKey of input.pluginKeys) {
         delete candidateInstalled[pluginKey];
         delete candidateEnabled[pluginKey];
-        delete candidateOverrides[pluginKey];
       }
 
       const previousRuntime = this.eloEngine.getRuntimeState();
+      const candidateOverrides = this.rebuildOverridesForEnabledSet({
+        previousResolvedWeights: previousRuntime.resolvedWeights,
+        nextEnabled: candidateEnabled,
+      });
       const candidateRuntime = this.buildRuntimeState(
         candidateInstalled,
         candidateEnabled,
@@ -636,49 +662,11 @@ export class PluginManager {
     weightOverrides: WeightOverrideMap;
     resolvedWeights: Record<string, number>;
   } {
-    const plugins = Object.entries(installed)
-      .filter(([key]) => enabled[key] === true)
-      .map(([, plugin]) => plugin);
-
-    const resolvedWeights: Record<string, number> = {};
-    const weighted: Array<{ key: string; weight: number }> = [];
-    const unweighted: string[] = [];
-
-    for (const plugin of plugins) {
-      const key = pluginKeyOf(plugin);
-      const override = overrides[key];
-      if (override !== undefined) {
-        weighted.push({ key, weight: override });
-      } else if (plugin.manifest.weight != null) {
-        weighted.push({ key, weight: plugin.manifest.weight });
-      } else {
-        unweighted.push(key);
-      }
-    }
-
-    const total = weighted.reduce((sum, w) => sum + w.weight, 0);
-    const normalized =
-      total > 1
-        ? weighted.map((w) => ({ ...w, weight: w.weight / total }))
-        : weighted;
-    const normalizedTotal = normalized.reduce((sum, w) => sum + w.weight, 0);
-    const remaining = Math.max(0, 1 - normalizedTotal);
-
-    for (const item of normalized) {
-      resolvedWeights[item.key] = item.weight;
-    }
-
-    if (unweighted.length > 0 && remaining > 0) {
-      const each = remaining / unweighted.length;
-      for (const key of unweighted) resolvedWeights[key] = each;
-    }
-
-    return {
-      plugins,
-      enabled: { ...enabled },
-      weightOverrides: { ...overrides },
-      resolvedWeights,
-    };
+    return buildPluginWeightRuntimeState({
+      installed,
+      enabled,
+      overrides,
+    });
   }
 
   private async readState(): Promise<{
@@ -767,27 +755,134 @@ export class PluginManager {
     }
   }
 
-  private didEnableAnyPlugin(
+  private getNewlyEnabledMetricKeys(
     previousEnabled: EnabledMap,
     nextEnabled: EnabledMap,
-  ): boolean {
+  ): string[] {
+    const metricKeys: string[] = [];
+
     for (const [pluginKey, enabled] of Object.entries(nextEnabled)) {
       if (enabled === true && previousEnabled[pluginKey] !== true) {
-        return true;
+        metricKeys.push(pluginKey);
       }
     }
 
-    return false;
+    return metricKeys;
   }
 
-  private triggerValidatorWarmup(): void {
+  private rebuildOverridesForWeightEdit(input: {
+    previousResolvedWeights: Record<string, number>;
+    nextEnabled: EnabledMap;
+    changes: ConfigurePluginsInput["changes"];
+  }): WeightOverrideMap {
+    const editedWeights = new Map<string, number>();
+
+    for (const change of input.changes) {
+      if (
+        change.weightOverride !== undefined &&
+        change.weightOverride !== null
+      ) {
+        editedWeights.set(change.pluginKey, change.weightOverride);
+      }
+    }
+
+    const enabledKeys = Object.entries(input.nextEnabled)
+      .filter(([, enabled]) => enabled === true)
+      .map(([pluginKey]) => pluginKey);
+    const nextOverrides: WeightOverrideMap = {};
+    const explicitTotal = Array.from(editedWeights.values()).reduce(
+      (sum, weight) => sum + weight,
+      0,
+    );
+
+    if (explicitTotal >= 1) {
+      const scale = explicitTotal > 0 ? 1 / explicitTotal : 0;
+      for (const [pluginKey, weight] of editedWeights.entries()) {
+        nextOverrides[pluginKey] = weight * scale;
+      }
+      for (const pluginKey of enabledKeys) {
+        if (!editedWeights.has(pluginKey)) {
+          nextOverrides[pluginKey] = 0;
+        }
+      }
+      return nextOverrides;
+    }
+
+    for (const [pluginKey, weight] of editedWeights.entries()) {
+      nextOverrides[pluginKey] = weight;
+    }
+
+    const untouchedEnabledKeys = enabledKeys.filter(
+      (pluginKey) => !editedWeights.has(pluginKey),
+    );
+    const remainingBudget = 1 - explicitTotal;
+
+    if (untouchedEnabledKeys.length === 0 || remainingBudget <= 0) {
+      return nextOverrides;
+    }
+
+    const previousUntouchedTotal = untouchedEnabledKeys.reduce(
+      (sum, pluginKey) => sum + (input.previousResolvedWeights[pluginKey] ?? 0),
+      0,
+    );
+
+    if (previousUntouchedTotal <= 0) {
+      const each = remainingBudget / untouchedEnabledKeys.length;
+      for (const pluginKey of untouchedEnabledKeys) {
+        nextOverrides[pluginKey] = each;
+      }
+      return nextOverrides;
+    }
+
+    for (const pluginKey of untouchedEnabledKeys) {
+      const previousWeight = input.previousResolvedWeights[pluginKey] ?? 0;
+      nextOverrides[pluginKey] =
+        (previousWeight / previousUntouchedTotal) * remainingBudget;
+    }
+
+    return nextOverrides;
+  }
+
+  private rebuildOverridesForEnabledSet(input: {
+    previousResolvedWeights: Record<string, number>;
+    nextEnabled: EnabledMap;
+  }): WeightOverrideMap {
+    const enabledKeys = Object.entries(input.nextEnabled)
+      .filter(([, enabled]) => enabled === true)
+      .map(([pluginKey]) => pluginKey);
+
+    if (enabledKeys.length === 0) {
+      return {};
+    }
+
+    const enabledTotal = enabledKeys.reduce(
+      (sum, pluginKey) => sum + (input.previousResolvedWeights[pluginKey] ?? 0),
+      0,
+    );
+
+    if (enabledTotal <= 0) {
+      const equalWeight = 1 / enabledKeys.length;
+      return Object.fromEntries(
+        enabledKeys.map((pluginKey) => [pluginKey, equalWeight]),
+      );
+    }
+
+    return Object.fromEntries(
+      enabledKeys.map((pluginKey) => [
+        pluginKey,
+        (input.previousResolvedWeights[pluginKey] ?? 0) / enabledTotal,
+      ]),
+    );
+  }
+
+  private triggerValidatorWarmup(metricKeys?: string[]): void {
     const onValidatorsChanged = this.callbacks.onValidatorsChanged;
     if (!onValidatorsChanged) {
       return;
     }
 
     queueMicrotask(() => {
-      Promise.resolve(onValidatorsChanged()).catch((error) => {
+      Promise.resolve(onValidatorsChanged({ metricKeys })).catch((error) => {
         logger.warn(
           "Plugin validator warm-up trigger failed:",
           error instanceof Error ? error.message : String(error),

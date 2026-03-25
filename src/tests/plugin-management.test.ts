@@ -11,6 +11,7 @@ import { join } from "path";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { neventEncode } from "nostr-tools/nip19";
 import { Observable } from "rxjs";
+import { resolvePluginWeights } from "@/plugins/resolvePluginWeights";
 
 function mkPlugin(
   pubkey: string,
@@ -46,6 +47,247 @@ function mkPlugin(
 }
 
 describe("PluginManager v1 list/runtime", () => {
+  test("resolvePluginWeights keeps manual overrides pinned and splits the remainder equally", () => {
+    const plugins = [
+      mkPlugin("pk1", "a", 1 / 3),
+      mkPlugin("pk2", "b", 1 / 3),
+      mkPlugin("pk3", "c", 1 / 3),
+      mkPlugin("pk4", "d", 1 / 3),
+    ];
+
+    const resolved = resolvePluginWeights({
+      plugins,
+      overrides: {
+        "pk4:d": 0.25,
+      },
+    });
+
+    expect(resolved["pk1:a"]).toBeCloseTo(0.25, 6);
+    expect(resolved["pk2:b"]).toBeCloseTo(0.25, 6);
+    expect(resolved["pk3:c"]).toBeCloseTo(0.25, 6);
+    expect(resolved["pk4:d"]).toBeCloseTo(0.25, 6);
+  });
+
+  test("resolvePluginWeights normalizes overrides that over-allocate total weight", () => {
+    const plugins = [mkPlugin("pk1", "a", null), mkPlugin("pk2", "b", null)];
+
+    const resolved = resolvePluginWeights({
+      plugins,
+      overrides: {
+        "pk1:a": 0.8,
+        "pk2:b": 0.4,
+      },
+    });
+
+    expect(resolved["pk1:a"]).toBeCloseTo(2 / 3, 6);
+    expect(resolved["pk2:b"]).toBeCloseTo(1 / 3, 6);
+  });
+
+  test("configure can clear an explicit override so the plugin returns to equal remainder splitting", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const plugins = {
+      "pk1:a": mkPlugin("pk1", "a", null),
+      "pk2:b": mkPlugin("pk2", "b", null),
+      "pk3:c": mkPlugin("pk3", "c", null),
+      "pk4:d": mkPlugin("pk4", "d", null),
+    };
+
+    await settings.set("plugins.installed.v1", JSON.stringify(plugins));
+    await settings.set(
+      "plugins.enabled.v1",
+      JSON.stringify({
+        "pk1:a": true,
+        "pk2:b": true,
+        "pk3:c": true,
+        "pk4:d": true,
+      }),
+    );
+    await settings.set(
+      "plugins.weightOverrides.v1",
+      JSON.stringify({
+        "pk4:d": 0.25,
+      }),
+    );
+
+    let runtime: ReturnType<IEloPluginEngine["getRuntimeState"]> = {
+      plugins: Object.values(plugins),
+      enabled: {
+        "pk1:a": true,
+        "pk2:b": true,
+        "pk3:c": true,
+        "pk4:d": true,
+      },
+      weightOverrides: {
+        "pk4:d": 0.25,
+      },
+      resolvedWeights: {
+        "pk1:a": 0.25,
+        "pk2:b": 0.25,
+        "pk3:c": 0.25,
+        "pk4:d": 0.25,
+      },
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => runtime,
+      reloadFromPlugins: async (input) => {
+        runtime = {
+          plugins: [...input.plugins],
+          enabled: { ...input.enabled },
+          weightOverrides: { ...input.weightOverrides },
+          resolvedWeights: { ...input.resolvedWeights },
+        };
+      },
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      {} as RelayPool,
+      [],
+    );
+
+    await manager.configure({
+      changes: [{ pluginKey: "pk4:d", weightOverride: null }],
+    });
+
+    expect(runtime.weightOverrides["pk4:d"]).toBeUndefined();
+    expect(runtime.resolvedWeights["pk1:a"]).toBeCloseTo(0.25, 6);
+    expect(runtime.resolvedWeights["pk2:b"]).toBeCloseTo(0.25, 6);
+    expect(runtime.resolvedWeights["pk3:c"]).toBeCloseTo(0.25, 6);
+    expect(runtime.resolvedWeights["pk4:d"]).toBeCloseTo(0.25, 6);
+  });
+
+  test("configure redistributes untouched plugins proportionally when one plugin gets a new explicit weight", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const plugins = {
+      "pk1:a": mkPlugin("pk1", "a", null),
+      "pk2:b": mkPlugin("pk2", "b", null),
+      "pk3:c": mkPlugin("pk3", "c", null),
+      "pk4:d": mkPlugin("pk4", "d", null),
+    };
+
+    await settings.set("plugins.installed.v1", JSON.stringify(plugins));
+    await settings.set(
+      "plugins.enabled.v1",
+      JSON.stringify({
+        "pk1:a": true,
+        "pk2:b": true,
+        "pk3:c": true,
+        "pk4:d": true,
+      }),
+    );
+    await settings.set(
+      "plugins.weightOverrides.v1",
+      JSON.stringify({
+        "pk2:b": 0.27,
+        "pk3:c": 0.25,
+        "pk4:d": 0.27,
+      }),
+    );
+
+    let runtime: ReturnType<IEloPluginEngine["getRuntimeState"]> = {
+      plugins: Object.values(plugins),
+      enabled: {
+        "pk1:a": true,
+        "pk2:b": true,
+        "pk3:c": true,
+        "pk4:d": true,
+      },
+      weightOverrides: {
+        "pk2:b": 0.27,
+        "pk3:c": 0.25,
+        "pk4:d": 0.27,
+      },
+      resolvedWeights: {
+        "pk1:a": 0.21,
+        "pk2:b": 0.27,
+        "pk3:c": 0.25,
+        "pk4:d": 0.27,
+      },
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => runtime,
+      reloadFromPlugins: async (input) => {
+        runtime = {
+          plugins: [...input.plugins],
+          enabled: { ...input.enabled },
+          weightOverrides: { ...input.weightOverrides },
+          resolvedWeights: { ...input.resolvedWeights },
+        };
+      },
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      {} as RelayPool,
+      [],
+    );
+
+    await manager.configure({
+      changes: [{ pluginKey: "pk1:a", weightOverride: 0.8 }],
+    });
+
+    expect(runtime.weightOverrides["pk1:a"]).toBeCloseTo(0.8, 6);
+    expect(runtime.weightOverrides["pk2:b"]).toBeCloseTo(
+      0.06835443037974683,
+      6,
+    );
+    expect(runtime.weightOverrides["pk3:c"]).toBeCloseTo(
+      0.06329113924050633,
+      6,
+    );
+    expect(runtime.weightOverrides["pk4:d"]).toBeCloseTo(
+      0.06835443037974683,
+      6,
+    );
+    expect(runtime.resolvedWeights["pk1:a"]).toBeCloseTo(0.8, 6);
+    expect(runtime.resolvedWeights["pk2:b"]).toBeCloseTo(
+      0.06835443037974683,
+      6,
+    );
+    expect(runtime.resolvedWeights["pk3:c"]).toBeCloseTo(
+      0.06329113924050633,
+      6,
+    );
+    expect(runtime.resolvedWeights["pk4:d"]).toBeCloseTo(
+      0.06835443037974683,
+      6,
+    );
+  });
+
   test("list concise vs verbose contract", async () => {
     const store = new Map<string, string>();
     const settings: Pick<SettingsRepository, "get" | "set"> = {
@@ -491,6 +733,133 @@ describe("PluginManager v1 list/runtime", () => {
     expect(runtime.plugins).toHaveLength(0);
   });
 
+  test("uninstall redistributes remaining enabled plugin weights back to a total of 1", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const plugins = {
+      "pk1:a": mkPlugin("pk1", "a", null),
+      "pk2:b": mkPlugin("pk2", "b", null),
+      "pk3:c": mkPlugin("pk3", "c", null),
+      "pk4:d": mkPlugin("pk4", "d", null),
+    };
+
+    const dir = await mkdtemp(
+      join(tmpdir(), "relatr-plugin-uninstall-weights-"),
+    );
+    await writeFile(
+      join(dir, "a.json"),
+      JSON.stringify(plugins["pk1:a"].rawEvent),
+      "utf-8",
+    );
+    await writeFile(
+      join(dir, "b.json"),
+      JSON.stringify(plugins["pk2:b"].rawEvent),
+      "utf-8",
+    );
+    await writeFile(
+      join(dir, "c.json"),
+      JSON.stringify(plugins["pk3:c"].rawEvent),
+      "utf-8",
+    );
+    await writeFile(
+      join(dir, "d.json"),
+      JSON.stringify(plugins["pk4:d"].rawEvent),
+      "utf-8",
+    );
+
+    await settings.set("plugins.installed.v1", JSON.stringify(plugins));
+    await settings.set(
+      "plugins.enabled.v1",
+      JSON.stringify({
+        "pk1:a": true,
+        "pk2:b": true,
+        "pk3:c": true,
+        "pk4:d": true,
+      }),
+    );
+    await settings.set(
+      "plugins.weightOverrides.v1",
+      JSON.stringify({
+        "pk1:a": 0.16,
+        "pk2:b": 0.08,
+        "pk3:c": 0.16,
+      }),
+    );
+
+    let runtime: ReturnType<IEloPluginEngine["getRuntimeState"]> = {
+      plugins: Object.values(plugins),
+      enabled: {
+        "pk1:a": true,
+        "pk2:b": true,
+        "pk3:c": true,
+        "pk4:d": true,
+      },
+      weightOverrides: {
+        "pk1:a": 0.16,
+        "pk2:b": 0.08,
+        "pk3:c": 0.16,
+      },
+      resolvedWeights: {
+        "pk1:a": 0.16,
+        "pk2:b": 0.08,
+        "pk3:c": 0.16,
+        "pk4:d": 0.6,
+      },
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => runtime,
+      reloadFromPlugins: async (input) => {
+        runtime = {
+          plugins: [...input.plugins],
+          enabled: { ...input.enabled },
+          weightOverrides: { ...input.weightOverrides },
+          resolvedWeights: { ...input.resolvedWeights },
+        };
+      },
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      {} as RelayPool,
+      [],
+      dir,
+    );
+
+    await manager.uninstall({
+      pluginKeys: ["pk4:d"],
+    });
+
+    expect(runtime.plugins).toHaveLength(3);
+    expect(runtime.weightOverrides["pk1:a"]).toBeCloseTo(0.4, 6);
+    expect(runtime.weightOverrides["pk2:b"]).toBeCloseTo(0.2, 6);
+    expect(runtime.weightOverrides["pk3:c"]).toBeCloseTo(0.4, 6);
+    expect(runtime.resolvedWeights["pk1:a"]).toBeCloseTo(0.4, 6);
+    expect(runtime.resolvedWeights["pk2:b"]).toBeCloseTo(0.2, 6);
+    expect(runtime.resolvedWeights["pk3:c"]).toBeCloseTo(0.4, 6);
+    expect(
+      Object.values(runtime.resolvedWeights).reduce(
+        (sum, weight) => sum + weight,
+        0,
+      ),
+    ).toBeCloseTo(1, 6);
+  });
+
   test("install persists plugin artifact to filesystem", async () => {
     const store = new Map<string, string>();
     const settings: Pick<SettingsRepository, "get" | "set"> = {
@@ -610,7 +979,7 @@ describe("PluginManager v1 list/runtime", () => {
     };
 
     const dir = await mkdtemp(join(tmpdir(), "relatr-plugin-warmup-"));
-    let warmupCalls = 0;
+    const warmupMetricKeys: string[][] = [];
     const manager = new PluginManager(
       settings,
       engine,
@@ -619,8 +988,8 @@ describe("PluginManager v1 list/runtime", () => {
       [],
       dir,
       {
-        onValidatorsChanged: () => {
-          warmupCalls++;
+        onValidatorsChanged: (input) => {
+          warmupMetricKeys.push([...(input?.metricKeys ?? [])]);
         },
       },
     );
@@ -628,7 +997,7 @@ describe("PluginManager v1 list/runtime", () => {
     await manager.install({ eventId: signed.id, enable: true });
     await Promise.resolve();
 
-    expect(warmupCalls).toBe(1);
+    expect(warmupMetricKeys).toEqual([[`${signed.pubkey}:warmup-plugin`]]);
   });
 
   test("configure triggers validator warm-up only when enabling a plugin", async () => {
@@ -678,7 +1047,7 @@ describe("PluginManager v1 list/runtime", () => {
       setPluginWeights: () => {},
     };
 
-    let warmupCalls = 0;
+    const warmupMetricKeys: string[][] = [];
     const manager = new PluginManager(
       settings,
       engine,
@@ -687,8 +1056,8 @@ describe("PluginManager v1 list/runtime", () => {
       [],
       undefined,
       {
-        onValidatorsChanged: () => {
-          warmupCalls++;
+        onValidatorsChanged: (input) => {
+          warmupMetricKeys.push([...(input?.metricKeys ?? [])]);
         },
       },
     );
@@ -697,12 +1066,85 @@ describe("PluginManager v1 list/runtime", () => {
       changes: [{ pluginKey, weightOverride: 0.7 }],
     });
     await Promise.resolve();
-    expect(warmupCalls).toBe(0);
+    expect(warmupMetricKeys).toEqual([]);
 
     await manager.configure({
       changes: [{ pluginKey, enabled: true }],
     });
     await Promise.resolve();
-    expect(warmupCalls).toBe(1);
+    expect(warmupMetricKeys).toEqual([[pluginKey]]);
+  });
+
+  test("configure does not trigger validator warm-up when only an enabled plugin weight changes", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const plugin = mkPlugin("pk-weight", "weight_scope", 0.3);
+    const pluginKey = "pk-weight:weight_scope";
+    await settings.set(
+      "plugins.installed.v1",
+      JSON.stringify({ [pluginKey]: plugin }),
+    );
+    await settings.set(
+      "plugins.enabled.v1",
+      JSON.stringify({ [pluginKey]: true }),
+    );
+    await settings.set(
+      "plugins.weightOverrides.v1",
+      JSON.stringify({ [pluginKey]: 0.4 }),
+    );
+
+    let runtime: ReturnType<IEloPluginEngine["getRuntimeState"]> = {
+      plugins: [plugin],
+      enabled: { [pluginKey]: true },
+      weightOverrides: { [pluginKey]: 0.4 },
+      resolvedWeights: { [pluginKey]: 0.4 },
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => runtime,
+      reloadFromPlugins: async (input) => {
+        runtime = {
+          plugins: [...input.plugins],
+          enabled: { ...input.enabled },
+          weightOverrides: { ...input.weightOverrides },
+          resolvedWeights: { ...input.resolvedWeights },
+        };
+      },
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    const warmupMetricKeys: string[][] = [];
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      {} as RelayPool,
+      [],
+      undefined,
+      {
+        onValidatorsChanged: (input) => {
+          warmupMetricKeys.push([...(input?.metricKeys ?? [])]);
+        },
+      },
+    );
+
+    await manager.configure({
+      changes: [{ pluginKey, weightOverride: 0.8 }],
+    });
+    await Promise.resolve();
+
+    expect(warmupMetricKeys).toEqual([]);
   });
 });

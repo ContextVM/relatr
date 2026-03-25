@@ -34,6 +34,36 @@ export type HostPolicyLimits = {
   maxTotalRequestsPerPlugin?: number;
 };
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex++;
+
+      if (currentIndex >= items.length) {
+        return;
+      }
+
+      results[currentIndex] = await worker(items[currentIndex]!);
+    }
+  };
+
+  const workerCount = Math.min(Math.max(limit, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
+
 const DEFAULT_HOST_POLICY_LIMITS: Required<HostPolicyLimits> = {
   // Conservative defaults; override via runPlugin/runPlugins config.
   maxRoundsPerPlugin: 8,
@@ -51,6 +81,9 @@ export async function runPlugin(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
+    nip05ResolveTimeoutMs: number;
+    nip05CacheTtlSeconds: number;
+    nip05DomainCooldownSeconds: number;
   } & HostPolicyLimits,
   planningStore?: PlanningStore,
   now?: number,
@@ -82,6 +115,9 @@ export async function runPluginWithDebug(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
+    nip05ResolveTimeoutMs: number;
+    nip05CacheTtlSeconds: number;
+    nip05DomainCooldownSeconds: number;
   } & HostPolicyLimits,
   planningStore?: PlanningStore,
   now?: number,
@@ -100,6 +136,9 @@ async function runPluginInternal(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
+    nip05ResolveTimeoutMs: number;
+    nip05CacheTtlSeconds: number;
+    nip05DomainCooldownSeconds: number;
   } & HostPolicyLimits,
   opts: {
     planningStore?: PlanningStore;
@@ -136,11 +175,15 @@ async function runPluginInternal(
       sourcePubkey: context.sourcePubkey,
       config: {
         capTimeoutMs: config.capTimeoutMs,
+        nip05ResolveTimeoutMs: config.nip05ResolveTimeoutMs,
+        nip05CacheTtlSeconds: config.nip05CacheTtlSeconds,
+        nip05DomainCooldownSeconds: config.nip05DomainCooldownSeconds,
       },
       graph: context.graph,
       pool: context.pool,
       relays: context.relays,
       capRunCache: context.capRunCache,
+      nip05CacheStore: context.nip05CacheStore,
     };
 
     const main = async (): Promise<number> => {
@@ -380,6 +423,9 @@ export async function runPlugins(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
+    nip05ResolveTimeoutMs: number;
+    nip05CacheTtlSeconds: number;
+    nip05DomainCooldownSeconds: number;
   } & HostPolicyLimits,
 ): Promise<Record<string, number>> {
   const metrics: Record<string, number> = {};
@@ -435,16 +481,24 @@ export async function runPluginsBatch(
   config: {
     eloPluginTimeoutMs: number;
     capTimeoutMs: number;
+    nip05ResolveTimeoutMs: number;
+    nip05CacheTtlSeconds: number;
+    nip05DomainCooldownSeconds: number;
+    eloBatchPubkeyConcurrency?: number;
   } & HostPolicyLimits,
 ): Promise<Map<string, Record<string, number>>> {
   const results = new Map<string, Record<string, number>>();
+  const concurrency = config.eloBatchPubkeyConcurrency ?? 8;
 
-  logger.info(`Running plugins in batch mode for ${contexts.length} pubkeys`);
+  logger.info(
+    `Running plugins in batch mode for ${contexts.length} pubkeys (concurrency ${concurrency})`,
+  );
 
-  for (const context of contexts) {
+  await mapWithConcurrency(contexts, concurrency, async (context) => {
     const metrics = await runPlugins(plugins, context, executor, config);
     results.set(context.targetPubkey, metrics);
-  }
+    return metrics;
+  });
 
   logger.info(`Batch processing completed`);
 

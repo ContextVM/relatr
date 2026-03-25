@@ -2,7 +2,11 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import type { NostrEvent } from "nostr-tools";
 import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
-import { runPlugin, runPlugins } from "../plugins/EloPluginRunner";
+import {
+  runPlugin,
+  runPlugins,
+  runPluginsBatch,
+} from "../plugins/EloPluginRunner";
 import type {
   PortablePlugin,
   CapabilityRunCache,
@@ -702,5 +706,112 @@ describe("NIP-05 Domain Fail-Fast Cache", () => {
     expect(shouldMarkNip05DomainBad(new Error("unexpected parser state"))).toBe(
       false,
     );
+  });
+
+  test("runPluginsBatch evaluates multiple pubkeys concurrently", async () => {
+    const registry = new CapabilityRegistry();
+    const executor = new CapabilityExecutor(registry);
+    const started: string[] = [];
+    const released: string[] = [];
+    let activeCalls = 0;
+    let maxActiveCalls = 0;
+
+    registry.register("test.blocking_echo", async (args) => {
+      const targetPubkey = (args as { targetPubkey: string }).targetPubkey;
+      started.push(targetPubkey);
+      activeCalls++;
+      maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      activeCalls--;
+      released.push(targetPubkey);
+      return { ok: true };
+    });
+
+    const plugin: PortablePlugin = {
+      id: "p_batch_test",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.blocking_echo' { targetPubkey: _.targetPubkey } in if res.ok then 1.0 else 0.0",
+      manifest: {
+        name: "p_batch_test",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const results = await runPluginsBatch(
+      [plugin],
+      [{ targetPubkey: "t1" }, { targetPubkey: "t2" }],
+      executor,
+      {
+        eloPluginTimeoutMs: 1000,
+        capTimeoutMs: 1000,
+        nip05ResolveTimeoutMs: 250,
+        nip05CacheTtlSeconds: 3600,
+        nip05DomainCooldownSeconds: 600,
+        eloBatchPubkeyConcurrency: 2,
+      },
+    );
+
+    expect(results.get("t1")).toEqual({ "pk:p_batch_test": 1 });
+    expect(results.get("t2")).toEqual({ "pk:p_batch_test": 1 });
+    expect(started.sort()).toEqual(["t1", "t2"]);
+    expect(released.sort()).toEqual(["t1", "t2"]);
+    expect(maxActiveCalls).toBeGreaterThan(1);
+  });
+
+  test("runPluginsBatch bounds concurrent pubkey evaluation", async () => {
+    const registry = new CapabilityRegistry();
+    const executor = new CapabilityExecutor(registry);
+    let activeCalls = 0;
+    let maxActiveCalls = 0;
+
+    registry.register("test.blocking_echo", async () => {
+      activeCalls++;
+      maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      activeCalls--;
+      return { ok: true };
+    });
+
+    const plugin: PortablePlugin = {
+      id: "p_batch_limit_test",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.blocking_echo' {} in if res.ok then 1.0 else 0.0",
+      manifest: {
+        name: "p_batch_limit_test",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    await runPluginsBatch(
+      [plugin],
+      [{ targetPubkey: "t1" }, { targetPubkey: "t2" }, { targetPubkey: "t3" }],
+      executor,
+      {
+        eloPluginTimeoutMs: 1000,
+        capTimeoutMs: 1000,
+        nip05ResolveTimeoutMs: 250,
+        nip05CacheTtlSeconds: 3600,
+        nip05DomainCooldownSeconds: 600,
+        eloBatchPubkeyConcurrency: 2,
+      },
+    );
+
+    expect(maxActiveCalls).toBe(2);
   });
 });

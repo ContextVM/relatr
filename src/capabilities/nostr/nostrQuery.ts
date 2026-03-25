@@ -1,5 +1,5 @@
 import { Logger } from "@/utils/Logger";
-import type { NostrEvent, Filter } from "nostr-tools";
+import type { Filter, NostrEvent } from "nostr-tools";
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { withTimeout } from "@/utils/utils";
 
@@ -38,8 +38,7 @@ export const nostrQuery: CapabilityHandler = async (args, context) => {
     return [];
   }
 
-  // args is already a JSON object (Filter)
-  const filter = args as Filter;
+  const filter = { ...(args as Filter) };
 
   // Enforce deterministic constraints
   // Max limit of 1000 events

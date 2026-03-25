@@ -33,6 +33,7 @@ import {
 } from "../plugins/EloPluginEngine";
 import { nowMs } from "@/utils/utils";
 import { PluginManager } from "@/plugins/PluginManager";
+import { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
 
 export class RelatrFactory {
   static async createRelatrService(
@@ -80,6 +81,7 @@ export class RelatrFactory {
       const metadataRepository: IMetadataRepository = new MetadataRepository(
         readConnection,
         writeConnection,
+        validatedConfig.cacheTtlHours * 3600,
       );
       const settingsRepository: ISettingsRepository = new SettingsRepository(
         readConnection,
@@ -102,6 +104,7 @@ export class RelatrFactory {
         pool,
         metadataRepository,
       );
+      const nip05CacheStore = new Nip05CacheStore(settingsRepository);
 
       // Step 5: Check if social graph exists and handle first-time setup
       let graphExists = false;
@@ -154,6 +157,7 @@ export class RelatrFactory {
         pool,
         relays: validatedConfig.nostrRelays,
         graph: socialGraph,
+        nip05CacheStore,
       });
       await eloEngine.initialize();
       logger.info(
@@ -166,7 +170,10 @@ export class RelatrFactory {
         eloEngine.getResolvedWeights(),
       );
 
-      let scheduleValidationWarmup = () => {};
+      let scheduleValidationWarmup = (
+        _sourcePubkey?: string,
+        _metricKeys?: string[],
+      ) => {};
 
       const pluginManager = new PluginManager(
         settingsRepository,
@@ -176,7 +183,8 @@ export class RelatrFactory {
         validatedConfig.nostrRelays,
         validatedConfig.eloPluginsDir,
         {
-          onValidatorsChanged: () => scheduleValidationWarmup(),
+          onValidatorsChanged: (input) =>
+            scheduleValidationWarmup(undefined, input?.metricKeys),
         },
       );
 
@@ -254,8 +262,10 @@ export class RelatrFactory {
         pool,
         taService || undefined,
       );
-      scheduleValidationWarmup = () =>
-        schedulerService.scheduleValidationWarmup();
+      scheduleValidationWarmup = (
+        sourcePubkey?: string,
+        metricKeys?: string[],
+      ) => schedulerService.scheduleValidationWarmup(sourcePubkey, metricKeys);
 
       // Update serviceDependencies with the actual schedulerService
       serviceDependencies.schedulerService = schedulerService;
@@ -279,6 +289,10 @@ export class RelatrFactory {
             pubkeys,
             sourcePubkey: validatedConfig.defaultSourcePubkey,
           });
+          schedulerService.markBootstrapMetadataFresh(
+            pubkeys,
+            validatedConfig.defaultSourcePubkey,
+          );
         } catch (error) {
           logger.warn(
             "Initial metadata fetch failed:",

@@ -56,7 +56,11 @@ export interface ISchedulerService {
     hops?: number,
     sourcePubkey?: string,
   ): Promise<void>;
-  syncValidations(batchSize?: number, sourcePubkey?: string): Promise<void>;
+  syncValidations(
+    batchSize?: number,
+    sourcePubkey?: string,
+    metricKeys?: string[],
+  ): Promise<void>;
   processDiscoveryQueue(): Promise<void>;
   queuePubkeyForDiscovery(pubkey: string): void;
   isRunning(): boolean;

@@ -17,6 +17,9 @@ export type CapabilityHandler = (
 export interface CapabilityContext extends BaseContext {
   config: {
     capTimeoutMs: number;
+    nip05ResolveTimeoutMs: number;
+    nip05CacheTtlSeconds: number;
+    nip05DomainCooldownSeconds: number;
   };
 }
 

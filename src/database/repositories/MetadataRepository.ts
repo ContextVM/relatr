@@ -15,13 +15,16 @@ export interface SearchResult {
 export class MetadataRepository {
   private readConnection: DuckDBConnection;
   private writeConnection: DuckDBConnection;
+  private ttlSeconds: number;
 
   constructor(
     readConnection: DuckDBConnection,
     writeConnection: DuckDBConnection,
+    ttlSeconds: number = 60 * 60 * 48,
   ) {
     this.readConnection = readConnection;
     this.writeConnection = writeConnection;
+    this.ttlSeconds = ttlSeconds;
   }
 
   async save(profile: NostrProfile): Promise<void> {
@@ -113,11 +116,13 @@ export class MetadataRepository {
   async get(pubkey: string): Promise<NostrProfile | null> {
     try {
       return await executeWithRetry(async () => {
+        const staleThreshold = nowSeconds() - this.ttlSeconds;
         const result = await this.readConnection.run(
           `SELECT pubkey, name, display_name, nip05, lud16, about
            FROM pubkey_metadata
-           WHERE pubkey = $1`,
-          { 1: pubkey },
+           WHERE pubkey = $1
+             AND created_at > $2`,
+          { 1: pubkey, 2: staleThreshold },
         );
 
         const rows = await result.getRows();
@@ -154,17 +159,20 @@ export class MetadataRepository {
 
     try {
       return await executeWithRetry(async () => {
+        const staleThreshold = nowSeconds() - this.ttlSeconds;
         // Create placeholders for IN clause
         const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
-        const params: Record<string, string> = {};
+        const params: Record<string, string | number> = {};
         pubkeys.forEach((pubkey, i) => {
           params[(i + 1).toString()] = pubkey;
         });
+        params[(pubkeys.length + 1).toString()] = staleThreshold;
 
         const result = await this.readConnection.run(
           `SELECT pubkey, name, display_name, nip05, lud16, about
            FROM pubkey_metadata
-           WHERE pubkey IN (${placeholders})`,
+           WHERE pubkey IN (${placeholders})
+             AND created_at > $${pubkeys.length + 1}`,
           params,
         );
 
@@ -215,6 +223,7 @@ export class MetadataRepository {
   ): Promise<SearchResult[]> {
     try {
       return await executeWithRetry(async () => {
+        const staleThreshold = nowSeconds() - this.ttlSeconds;
         // Calculate candidate limit: return enough candidates for trust calculation
         // but not so many that we process thousands of profiles
         const candidateLimit = Math.max(limit * 20, 100);
@@ -290,11 +299,13 @@ export class MetadataRepository {
             FROM profile_metrics
             WHERE expires_at > (EXTRACT(epoch FROM NOW())::INTEGER)
             GROUP BY pubkey
-          ) v ON m.pubkey = v.pubkey
-          WHERE
+           ) v ON m.pubkey = v.pubkey
+           WHERE
+            m.created_at > $4 AND (
             m.name ILIKE '%' || $1 || '%' OR
             m.display_name ILIKE '%' || $1 || '%' OR
             m.nip05 ILIKE '%' || $1 || '%'
+            )
         )
         SELECT
           pubkey,
@@ -308,7 +319,7 @@ export class MetadataRepository {
         ORDER BY pre_rank_score DESC, text_score DESC, distance ASC
         LIMIT $2
         `,
-          { 1: query, 2: candidateLimit, 3: decayFactor },
+          { 1: query, 2: candidateLimit, 3: decayFactor, 4: staleThreshold },
         );
 
         const rows = await result.getRows();

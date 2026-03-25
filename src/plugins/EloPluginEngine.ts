@@ -2,12 +2,14 @@ import type { SocialGraph } from "../graph/SocialGraph";
 import type { RelayPool } from "applesauce-relay";
 import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
+import type { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
 import { registerBuiltInCapabilities } from "../capabilities/registerBuiltInCapabilities";
-import { runPlugins } from "./EloPluginRunner";
+import { runPlugins, runPluginsBatch } from "./EloPluginRunner";
 import type { CapabilityRunCache, PortablePlugin } from "./plugin-types";
 import { Logger } from "../utils/Logger";
 import type { RelatrConfig } from "@/types";
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
+import { resolvePluginWeights } from "./resolvePluginWeights";
 
 const logger = new Logger({ service: "EloPluginEngine" });
 
@@ -15,6 +17,7 @@ export interface EloPluginEngineDeps {
   pool: RelayPool;
   relays: string[];
   graph: SocialGraph;
+  nip05CacheStore?: Nip05CacheStore;
 }
 
 /**
@@ -41,6 +44,12 @@ export interface IEloPluginEngine {
     metricKeys?: string[];
     capRunCache?: CapabilityRunCache;
   }): Promise<Record<string, number>>;
+  evaluateBatchForPubkeys(input: {
+    targetPubkeys: string[];
+    sourcePubkey?: string;
+    metricKeys?: string[];
+    capRunCache?: CapabilityRunCache;
+  }): Promise<Map<string, Record<string, number>>>;
   getPluginCount(): number;
   isInitialized(): boolean;
   getMetricDescriptions(): MetricDescriptionRegistry;
@@ -216,6 +225,7 @@ export class EloPluginEngine implements IEloPluginEngine {
       pool: this.deps.pool,
       relays: this.deps.relays,
       capRunCache: input.capRunCache,
+      nip05CacheStore: this.deps.nip05CacheStore,
     };
 
     // Run plugins using existing runner (which handles capability provisioning)
@@ -237,6 +247,9 @@ export class EloPluginEngine implements IEloPluginEngine {
       {
         eloPluginTimeoutMs: this.config.eloPluginTimeoutMs || 30000,
         capTimeoutMs: this.config.capTimeoutMs || 10000,
+        nip05ResolveTimeoutMs: this.config.nip05ResolveTimeoutMs || 5000,
+        nip05CacheTtlSeconds: this.config.nip05CacheTtlSeconds,
+        nip05DomainCooldownSeconds: this.config.nip05DomainCooldownSeconds,
         maxRoundsPerPlugin: this.config.eloMaxRoundsPerPlugin,
         maxRequestsPerRound: this.config.eloMaxRequestsPerRound,
         maxTotalRequestsPerPlugin: this.config.eloMaxTotalRequestsPerPlugin,
@@ -248,6 +261,72 @@ export class EloPluginEngine implements IEloPluginEngine {
     );
 
     return pluginMetrics;
+  }
+
+  async evaluateBatchForPubkeys(input: {
+    targetPubkeys: string[];
+    sourcePubkey?: string;
+    metricKeys?: string[];
+    capRunCache?: CapabilityRunCache;
+  }): Promise<Map<string, Record<string, number>>> {
+    if (!this.initialized) {
+      throw new Error(
+        "EloPluginEngine not initialized. Call initialize() first.",
+      );
+    }
+
+    const results = new Map<string, Record<string, number>>();
+
+    if (input.targetPubkeys.length === 0 || this.plugins.length === 0) {
+      for (const pubkey of input.targetPubkeys) {
+        results.set(pubkey, {});
+      }
+      return results;
+    }
+
+    const metricKeyFilter =
+      input.metricKeys && input.metricKeys.length > 0
+        ? new Set(input.metricKeys)
+        : null;
+
+    const pluginsToRun = metricKeyFilter
+      ? this.plugins.filter((plugin) =>
+          metricKeyFilter.has(`${plugin.pubkey}:${plugin.manifest.name}`),
+        )
+      : this.plugins;
+
+    if (pluginsToRun.length === 0) {
+      for (const pubkey of input.targetPubkeys) {
+        results.set(pubkey, {});
+      }
+      return results;
+    }
+
+    logger.debug(
+      `Evaluating ${pluginsToRun.length} plugins for ${input.targetPubkeys.length} pubkeys in batch`,
+    );
+
+    const contexts = input.targetPubkeys.map((targetPubkey) => ({
+      targetPubkey,
+      sourcePubkey: input.sourcePubkey,
+      graph: this.deps.graph,
+      pool: this.deps.pool,
+      relays: this.deps.relays,
+      capRunCache: input.capRunCache,
+      nip05CacheStore: this.deps.nip05CacheStore,
+    }));
+
+    return await runPluginsBatch(pluginsToRun, contexts, this.executor, {
+      eloPluginTimeoutMs: this.config.eloPluginTimeoutMs || 30000,
+      capTimeoutMs: this.config.capTimeoutMs || 10000,
+      nip05ResolveTimeoutMs: this.config.nip05ResolveTimeoutMs || 5000,
+      nip05CacheTtlSeconds: this.config.nip05CacheTtlSeconds,
+      nip05DomainCooldownSeconds: this.config.nip05DomainCooldownSeconds,
+      eloBatchPubkeyConcurrency: this.config.eloBatchPubkeyConcurrency,
+      maxRoundsPerPlugin: this.config.eloMaxRoundsPerPlugin,
+      maxRequestsPerRound: this.config.eloMaxRequestsPerRound,
+      maxTotalRequestsPerPlugin: this.config.eloMaxTotalRequestsPerPlugin,
+    });
   }
   /**
    * Get number of loaded plugins
@@ -282,73 +361,14 @@ export class EloPluginEngine implements IEloPluginEngine {
     overrides?: Record<string, number>,
     pluginsInput?: PortablePlugin[],
   ): Record<string, number> {
-    const weights: Record<string, number> = {};
-    const configOverrides = overrides || this.config.eloPluginWeights || {};
     const sourcePlugins = pluginsInput || this.plugins;
-    const weightedPlugins: Array<{ name: string; weight: number }> = [];
-    const unweightedPlugins: string[] = [];
-
-    for (const plugin of sourcePlugins) {
-      const namespacedName = `${plugin.pubkey}:${plugin.manifest.name}`;
-
-      // Tier 1: Config override (highest priority)
-      if (configOverrides[namespacedName] !== undefined) {
-        weightedPlugins.push({
-          name: namespacedName,
-          weight: configOverrides[namespacedName],
-        });
-        continue;
-      }
-
-      // Tier 2: Manifest default
-      if (plugin.manifest.weight != null) {
-        weightedPlugins.push({
-          name: namespacedName,
-          weight: plugin.manifest.weight,
-        });
-        continue;
-      }
-
-      // Tier 3: Unweighted (to be distributed)
-      unweightedPlugins.push(namespacedName);
-    }
-
-    // Calculate total allocated weight
-    const totalAllocated = weightedPlugins.reduce(
-      (sum, p) => sum + p.weight,
-      0,
-    );
-    const remainingWeight = Math.max(0, 1.0 - totalAllocated);
-
-    // Validate and handle overallocation
-    if (totalAllocated > 1.0) {
-      logger.warn(
-        `Total configured weights (${totalAllocated}) exceed 1.0, normalizing...`,
-      );
-      // Normalize weighted plugins proportionally
-      const scale = 1.0 / totalAllocated;
-      weightedPlugins.forEach((p) => (p.weight *= scale));
-    }
-
-    // Assign weights to explicitly weighted plugins
-    for (const plugin of weightedPlugins) {
-      weights[plugin.name] = plugin.weight;
-    }
-
-    // Distribute remaining weight among unweighted plugins
-    if (unweightedPlugins.length > 0 && remainingWeight > 0) {
-      const eachWeight = remainingWeight / unweightedPlugins.length;
-      for (const name of unweightedPlugins) {
-        weights[name] = eachWeight;
-      }
-    }
-
-    // Log resolution summary
-    logger.info(
-      `Weight resolution: ${weightedPlugins.length} explicit, ${unweightedPlugins.length} distributed`,
-    );
+    const configOverrides = overrides || this.config.eloPluginWeights || {};
+    const weights = resolvePluginWeights({
+      plugins: sourcePlugins,
+      overrides: configOverrides,
+    });
+    logger.info(`Resolved weights for ${Object.keys(weights).length} plugins`);
     logger.debug("Resolved weights:", weights);
-
     return weights;
   }
 

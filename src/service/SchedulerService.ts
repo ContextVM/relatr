@@ -12,6 +12,12 @@ import type { TAService } from "./TAService";
 import { RelatrError } from "../types";
 import { logger } from "../utils/Logger";
 import { nowMs } from "@/utils/utils";
+import { ValidationPipeline } from "@/validation/ValidationPipeline";
+import { MetadataFactRefreshStage } from "@/validation/MetadataFactRefreshStage";
+import { CompositeFactRefreshStage } from "@/validation/FactRefreshStage";
+import { Nip05FactRefreshStage } from "@/validation/Nip05FactRefreshStage";
+import { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
+import { MetadataRefreshTracker } from "@/validation/MetadataRefreshTracker";
 
 export class SchedulerService implements ISchedulerService {
   private discoveryQueue: Set<string> = new Set();
@@ -21,6 +27,9 @@ export class SchedulerService implements ISchedulerService {
   private validationRunPromise: Promise<void> | null = null;
   private validationWarmupQueued = false;
   private validationWarmupRerunRequested = false;
+  private validationPipeline: ValidationPipeline;
+  private readonly metadataRefreshTracker = new MetadataRefreshTracker();
+  private readonly nip05FactRefreshStage: Nip05FactRefreshStage;
   private _isRunning = false;
   private _isStarting = false;
   private _isStopping = false;
@@ -35,7 +44,58 @@ export class SchedulerService implements ISchedulerService {
     private settingsRepository: SettingsRepository,
     private pool: RelayPool,
     private taService?: TAService,
-  ) {}
+  ) {
+    const nip05CacheStore = new Nip05CacheStore(settingsRepository);
+    this.nip05FactRefreshStage = new Nip05FactRefreshStage(
+      metadataRepository,
+      nip05CacheStore,
+      config,
+    );
+
+    this.validationPipeline = new ValidationPipeline({
+      config,
+      socialGraph,
+      metricsValidator,
+      factRefreshStage: new CompositeFactRefreshStage([
+        new MetadataFactRefreshStage(
+          metadataRepository,
+          pubkeyMetadataFetcher,
+          this.metadataRefreshTracker,
+        ),
+        this.nip05FactRefreshStage,
+      ]),
+    });
+  }
+
+  markBootstrapMetadataFresh(pubkeys: string[], sourcePubkey?: string): void {
+    this.metadataRefreshTracker.markBootstrapFresh(pubkeys, sourcePubkey);
+  }
+
+  private configureValidationRunCapabilities(): void {
+    if (
+      typeof this.metricsValidator.configureValidationRunCapabilities !==
+      "function"
+    ) {
+      return;
+    }
+
+    this.metricsValidator.configureValidationRunCapabilities((capRunCache) => {
+      this.nip05FactRefreshStage.configureRunCache(capRunCache);
+    });
+  }
+
+  private clearValidationRunCapabilities(): void {
+    if (
+      typeof this.metricsValidator.configureValidationRunCapabilities !==
+      "function"
+    ) {
+      this.nip05FactRefreshStage.clearPreparedResults();
+      return;
+    }
+
+    this.metricsValidator.configureValidationRunCapabilities(undefined);
+    this.nip05FactRefreshStage.clearPreparedResults();
+  }
 
   async start(): Promise<void> {
     if (this._isRunning || this._isStarting) return;
@@ -163,6 +223,7 @@ export class SchedulerService implements ISchedulerService {
   async syncValidations(
     batchSize: number = 250,
     sourcePubkey?: string,
+    metricKeys?: string[],
   ): Promise<void> {
     if (this.validationRunPromise) {
       this.validationWarmupRerunRequested = true;
@@ -172,42 +233,47 @@ export class SchedulerService implements ISchedulerService {
       return this.validationRunPromise;
     }
 
-    const run = this.performValidationSync(batchSize, sourcePubkey).finally(
-      async () => {
-        this.validationRunPromise = null;
+    this.configureValidationRunCapabilities();
 
-        if (!this.validationWarmupRerunRequested) {
-          return;
-        }
+    const run = this.performValidationSync(
+      batchSize,
+      sourcePubkey,
+      metricKeys,
+    ).finally(async () => {
+      this.clearValidationRunCapabilities();
+      this.validationRunPromise = null;
 
-        this.validationWarmupRerunRequested = false;
-        logger.info("🔄 Starting queued follow-up validation sync");
+      if (!this.validationWarmupRerunRequested) {
+        return;
+      }
 
-        try {
-          // Use queueMicrotask to avoid deep recursion if syncs are very fast
-          queueMicrotask(async () => {
-            await this.syncValidations(batchSize, sourcePubkey).catch(
-              (error) => {
-                logger.error(
-                  "Follow-up validation warm-up failed:",
-                  error instanceof Error ? error.message : String(error),
-                );
-              },
-            );
-          });
-        } catch (error) {
-          logger.error(
-            "Failed to trigger follow-up validation sync:",
-            error instanceof Error ? error.message : String(error),
+      this.validationWarmupRerunRequested = false;
+      logger.info("🔄 Starting queued follow-up validation sync");
+
+      try {
+        // Use queueMicrotask to avoid deep recursion if syncs are very fast
+        queueMicrotask(async () => {
+          await this.syncValidations(batchSize, sourcePubkey, metricKeys).catch(
+            (error) => {
+              logger.error(
+                "Follow-up validation warm-up failed:",
+                error instanceof Error ? error.message : String(error),
+              );
+            },
           );
-        }
-      },
-    );
+        });
+      } catch (error) {
+        logger.error(
+          "Failed to trigger follow-up validation sync:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
     this.validationRunPromise = run;
     return run;
   }
 
-  scheduleValidationWarmup(sourcePubkey?: string): void {
+  scheduleValidationWarmup(sourcePubkey?: string, metricKeys?: string[]): void {
     if (this.validationRunPromise) {
       this.validationWarmupRerunRequested = true;
       return;
@@ -221,142 +287,34 @@ export class SchedulerService implements ISchedulerService {
 
     queueMicrotask(() => {
       this.validationWarmupQueued = false;
-      this.syncValidations(undefined, sourcePubkey).catch((error) => {
-        logger.error(
-          "Scheduled validation warm-up failed:",
-          error instanceof Error ? error.message : String(error),
-        );
-      });
+      this.syncValidations(undefined, sourcePubkey, metricKeys).catch(
+        (error) => {
+          logger.error(
+            "Scheduled validation warm-up failed:",
+            error instanceof Error ? error.message : String(error),
+          );
+        },
+      );
     });
   }
 
   private async performValidationSync(
     batchSize: number = 250,
     sourcePubkey?: string,
+    metricKeys?: string[],
   ): Promise<void> {
-    logger.info("Starting validation sync...");
-
-    if (
-      !this.socialGraph ||
-      !this.metricsValidator ||
-      !this.metricsRepository
-    ) {
+    if (!this.metricsRepository) {
       throw new RelatrError(
         "SchedulerService dependencies not properly initialized for validation sync",
         "NOT_INITIALIZED",
       );
     }
 
-    const startTime = nowMs();
-    const effectiveSourcePubkey =
-      sourcePubkey || this.config.defaultSourcePubkey;
-
-    try {
-      if (!this.metricsValidator.hasConfiguredValidators()) {
-        logger.info(
-          "No validator plugins enabled; skipping metric validation sync.",
-        );
-        return;
-      }
-
-      // Step 1: Get all pubkeys from the social graph
-      const allPubkeys = await this.socialGraph.getAllUsersInGraph();
-      logger.info(
-        `📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`,
-      );
-
-      if (allPubkeys.length === 0) {
-        logger.info(
-          "✅ No pubkeys found in social graph, validation sync skipped",
-        );
-        return;
-      }
-
-      logger.info(
-        `🔍 Validating ${allPubkeys.length.toLocaleString()} pubkeys against the current validator set`,
-      );
-
-      // Step 2: Process validations in batches to avoid overwhelming the system
-      let processedCount = 0;
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (let i = 0; i < allPubkeys.length; i += batchSize) {
-        const batch = allPubkeys.slice(i, i + batchSize);
-        logger.info(
-          `🔄 Processing validation batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(allPubkeys.length / batchSize)} (${batch.length} pubkeys)`,
-        );
-
-        try {
-          // Use batch validation for the entire batch
-          const batchResults = await this.metricsValidator.validateAllBatch(
-            batch,
-            effectiveSourcePubkey,
-          );
-
-          // Count successes and errors
-          for (const [pubkey, metrics] of batchResults) {
-            processedCount++;
-            if (metrics && Object.keys(metrics.metrics || {}).length > 0) {
-              successCount++;
-            } else {
-              errorCount++;
-              logger.warn(
-                `⚠️ Validation failed for ${pubkey}: No metrics generated`,
-              );
-            }
-          }
-
-          // Log progress
-          logger.info(
-            `📈 Progress: ${processedCount}/${allPubkeys.length} processed, ${successCount} successful, ${errorCount} failed`,
-          );
-        } catch (error) {
-          // If batch validation fails, fall back to individual validations
-          logger.warn(
-            `Batch validation failed for batch ${Math.floor(i / batchSize) + 1}, falling back to individual validations:`,
-            error instanceof Error ? error.message : String(error),
-          );
-
-          // Process each pubkey individually as fallback
-          for (const pubkey of batch) {
-            try {
-              await this.metricsValidator.validateAll(
-                pubkey,
-                effectiveSourcePubkey,
-              );
-              processedCount++;
-              successCount++;
-            } catch (error) {
-              processedCount++;
-              errorCount++;
-              logger.warn(
-                `⚠️ Validation failed for ${pubkey}:`,
-                error instanceof Error ? error.message : String(error),
-              );
-            }
-          }
-
-          // Log progress after fallback processing
-          logger.info(
-            `📈 Progress: ${processedCount}/${allPubkeys.length} processed, ${successCount} successful, ${errorCount} failed`,
-          );
-        }
-      }
-
-      logger.info(
-        `✅ Validation sync completed in ${nowMs() - startTime}ms. Processed: ${processedCount}, Successful: ${successCount}, Failed: ${errorCount}`,
-      );
-    } catch (error) {
-      logger.error(
-        "Validation sync error:",
-        error instanceof Error ? error.message : String(error),
-      );
-      throw new RelatrError(
-        `Validation sync failed: ${error instanceof Error ? error.message : String(error)}`,
-        "VALIDATION_SYNC_ERROR",
-      );
-    }
+    await this.validationPipeline.runValidationSync(
+      batchSize,
+      sourcePubkey,
+      metricKeys,
+    );
   }
 
   async processDiscoveryQueue(): Promise<void> {

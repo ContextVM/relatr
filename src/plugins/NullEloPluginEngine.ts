@@ -66,6 +66,15 @@ export class NullEloPluginEngine implements IEloPluginEngine {
     return {};
   }
 
+  async evaluateBatchForPubkeys(input: {
+    targetPubkeys: string[];
+    sourcePubkey?: string;
+    metricKeys?: string[];
+    capRunCache?: CapabilityRunCache;
+  }): Promise<Map<string, Record<string, number>>> {
+    return new Map(input.targetPubkeys.map((pubkey) => [pubkey, {}]));
+  }
+
   /**
    * Get number of loaded plugins
    */

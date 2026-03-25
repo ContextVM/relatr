@@ -1,8 +1,7 @@
 import { Logger } from "@/utils/Logger";
-import { queryProfile } from "nostr-tools/nip05";
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { nip05DomainOf, normalizeNip05 } from "./utils/httpNip05Normalize";
-import { withTimeout } from "@/utils/utils";
+import { resolveNip05WithAbortableFetch } from "./utils/resolveNip05Http";
 
 const logger = new Logger({ service: "httpNip05Resolve" });
 
@@ -69,6 +68,22 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
       return { pubkey: null };
     }
 
+    const persistentStore = context.nip05CacheStore;
+    if (domain && persistentStore) {
+      const coolingDown = await persistentStore.isDomainCoolingDown(domain);
+      if (coolingDown) {
+        badDomains?.set(domain, true);
+        return { pubkey: null };
+      }
+    }
+
+    if (persistentStore) {
+      const persisted = await persistentStore.getResolution(formattedNip05);
+      if (persisted) {
+        return persisted;
+      }
+    }
+
     const cache = context.capRunCache?.nip05Resolve;
     if (cache) {
       const cached = cache.get(formattedNip05);
@@ -77,19 +92,49 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
       }
     }
 
-    const timeoutMs = context.config.capTimeoutMs;
+    const preparedResults = context.capRunCache?.nip05PreparedResults;
+    if (preparedResults?.has(formattedNip05)) {
+      return preparedResults.get(formattedNip05) ?? { pubkey: null };
+    }
+
+    if (context.capRunCache?.nip05LiveFetchDisabled) {
+      logger.debug(
+        `Skipping live NIP-05 fetch for ${formattedNip05} because the current run is using prepared facts`,
+      );
+      return { pubkey: null };
+    }
+
+    const timeoutMs = Math.min(
+      context.config.capTimeoutMs,
+      context.config.nip05ResolveTimeoutMs,
+    );
     const promise = (async (): Promise<Nip05ResolveResult> => {
       try {
-        const result = await withTimeout(
-          queryProfile(formattedNip05),
+        const result = await resolveNip05WithAbortableFetch(
+          formattedNip05,
           timeoutMs,
         );
 
         if (result?.pubkey) {
+          if (persistentStore) {
+            await persistentStore.setResolution({
+              nip05: formattedNip05,
+              pubkey: result.pubkey,
+              ttlSeconds: context.config.nip05CacheTtlSeconds,
+            });
+          }
           logger.debug(
             `NIP-05 resolution successful: ${nip05} -> ${result.pubkey}`,
           );
           return { pubkey: result.pubkey };
+        }
+
+        if (persistentStore) {
+          await persistentStore.setResolution({
+            nip05: formattedNip05,
+            pubkey: null,
+            ttlSeconds: context.config.nip05CacheTtlSeconds,
+          });
         }
 
         return { pubkey: null };
@@ -102,6 +147,13 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
         // for clearly terminal or transport-style failures.
         if (domain && badDomains && shouldMarkNip05DomainBad(error)) {
           badDomains.set(domain, true);
+        }
+
+        if (domain && persistentStore && shouldMarkNip05DomainBad(error)) {
+          await persistentStore.markDomainCooldown(
+            domain,
+            context.config.nip05DomainCooldownSeconds,
+          );
         }
 
         return { pubkey: null };
