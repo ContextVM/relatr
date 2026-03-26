@@ -1,6 +1,6 @@
 import { Logger } from "@/utils/Logger";
 import type { CapabilityHandler } from "../CapabilityRegistry";
-import { nip05DomainOf, normalizeNip05 } from "./utils/httpNip05Normalize";
+import { normalizeNip05 } from "./utils/httpNip05Normalize";
 import { resolveNip05WithAbortableFetch } from "./utils/resolveNip05Http";
 
 const logger = new Logger({ service: "httpNip05Resolve" });
@@ -15,32 +15,6 @@ function readNip05Arg(args: unknown): string | null {
 
   const { nip05 } = args as Nip05ResolveArgs;
   return typeof nip05 === "string" ? nip05 : null;
-}
-
-export function shouldMarkNip05DomainBad(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? error.message.toLowerCase()
-      : String(error).toLowerCase();
-
-  return [
-    "operation timed out",
-    "timed out",
-    "timeout",
-    "fetch failed",
-    "network",
-    "econnrefused",
-    "enotfound",
-    "eai_again",
-    "tls",
-    "certificate",
-    "unreachable",
-    "refused",
-    "bad response",
-    "invalid json",
-    "404",
-    "410",
-  ].some((token) => message.includes(token));
 }
 
 /**
@@ -61,22 +35,7 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
       return { pubkey: null };
     }
 
-    // Fail-fast for domains that have already failed terminally in this run.
-    const domain = nip05DomainOf(formattedNip05);
-    const badDomains = context.capRunCache?.nip05BadDomains;
-    if (domain && badDomains?.has(domain)) {
-      return { pubkey: null };
-    }
-
     const persistentStore = context.nip05CacheStore;
-    if (domain && persistentStore) {
-      const coolingDown = await persistentStore.isDomainCoolingDown(domain);
-      if (coolingDown) {
-        badDomains?.set(domain, true);
-        return { pubkey: null };
-      }
-    }
-
     if (persistentStore) {
       const persisted = await persistentStore.getResolution(formattedNip05);
       if (persisted) {
@@ -92,12 +51,12 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
       }
     }
 
-    const preparedResults = context.capRunCache?.nip05PreparedResults;
+    const preparedResults = context.validationRunContext?.nip05PreparedResults;
     if (preparedResults?.has(formattedNip05)) {
       return preparedResults.get(formattedNip05) ?? { pubkey: null };
     }
 
-    if (context.capRunCache?.nip05LiveFetchDisabled) {
+    if (context.validationRunContext?.nip05LiveFetchDisabled) {
       logger.debug(
         `Skipping live NIP-05 fetch for ${formattedNip05} because the current run is using prepared facts`,
       );
@@ -142,19 +101,6 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
         logger.warn(
           `NIP-05 resolution failed for ${nip05}: ${error instanceof Error ? error.message : String(error)}`,
         );
-
-        // Mark this domain as bad for the remainder of the validation run
-        // for clearly terminal or transport-style failures.
-        if (domain && badDomains && shouldMarkNip05DomainBad(error)) {
-          badDomains.set(domain, true);
-        }
-
-        if (domain && persistentStore && shouldMarkNip05DomainBad(error)) {
-          await persistentStore.markDomainCooldown(
-            domain,
-            context.config.nip05DomainCooldownSeconds,
-          );
-        }
 
         return { pubkey: null };
       }

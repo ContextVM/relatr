@@ -4,12 +4,14 @@ import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
 import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import type { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
 import { registerBuiltInCapabilities } from "../capabilities/registerBuiltInCapabilities";
-import { runPlugins, runPluginsBatch } from "./EloPluginRunner";
+import { runPlugins } from "./EloPluginRunner";
 import type { CapabilityRunCache, PortablePlugin } from "./plugin-types";
+import type { ValidationRunContext } from "@/validation/ValidationRunContext";
 import { Logger } from "../utils/Logger";
 import type { RelatrConfig } from "@/types";
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
 import { resolvePluginWeights } from "./resolvePluginWeights";
+import { mapWithConcurrency } from "@/utils/mapWithConcurrency";
 
 const logger = new Logger({ service: "EloPluginEngine" });
 
@@ -43,12 +45,14 @@ export interface IEloPluginEngine {
     sourcePubkey?: string;
     metricKeys?: string[];
     capRunCache?: CapabilityRunCache;
+    validationRunContext?: ValidationRunContext;
   }): Promise<Record<string, number>>;
   evaluateBatchForPubkeys(input: {
     targetPubkeys: string[];
     sourcePubkey?: string;
     metricKeys?: string[];
     capRunCache?: CapabilityRunCache;
+    validationRunContext?: ValidationRunContext;
   }): Promise<Map<string, Record<string, number>>>;
   getPluginCount(): number;
   isInitialized(): boolean;
@@ -200,6 +204,7 @@ export class EloPluginEngine implements IEloPluginEngine {
     sourcePubkey?: string;
     metricKeys?: string[];
     capRunCache?: CapabilityRunCache;
+    validationRunContext?: ValidationRunContext;
   }): Promise<Record<string, number>> {
     if (!this.initialized) {
       throw new Error(
@@ -225,6 +230,7 @@ export class EloPluginEngine implements IEloPluginEngine {
       pool: this.deps.pool,
       relays: this.deps.relays,
       capRunCache: input.capRunCache,
+      validationRunContext: input.validationRunContext,
       nip05CacheStore: this.deps.nip05CacheStore,
     };
 
@@ -268,6 +274,7 @@ export class EloPluginEngine implements IEloPluginEngine {
     sourcePubkey?: string;
     metricKeys?: string[];
     capRunCache?: CapabilityRunCache;
+    validationRunContext?: ValidationRunContext;
   }): Promise<Map<string, Record<string, number>>> {
     if (!this.initialized) {
       throw new Error(
@@ -313,20 +320,28 @@ export class EloPluginEngine implements IEloPluginEngine {
       pool: this.deps.pool,
       relays: this.deps.relays,
       capRunCache: input.capRunCache,
+      validationRunContext: input.validationRunContext,
       nip05CacheStore: this.deps.nip05CacheStore,
     }));
 
-    return await runPluginsBatch(pluginsToRun, contexts, this.executor, {
-      eloPluginTimeoutMs: this.config.eloPluginTimeoutMs || 30000,
-      capTimeoutMs: this.config.capTimeoutMs || 10000,
-      nip05ResolveTimeoutMs: this.config.nip05ResolveTimeoutMs || 5000,
-      nip05CacheTtlSeconds: this.config.nip05CacheTtlSeconds,
-      nip05DomainCooldownSeconds: this.config.nip05DomainCooldownSeconds,
-      eloBatchPubkeyConcurrency: this.config.eloBatchPubkeyConcurrency,
-      maxRoundsPerPlugin: this.config.eloMaxRoundsPerPlugin,
-      maxRequestsPerRound: this.config.eloMaxRequestsPerRound,
-      maxTotalRequestsPerPlugin: this.config.eloMaxTotalRequestsPerPlugin,
+    const concurrency = this.config.eloBatchPubkeyConcurrency ?? 8;
+
+    await mapWithConcurrency(contexts, concurrency, async (context) => {
+      const metrics = await runPlugins(pluginsToRun, context, this.executor, {
+        eloPluginTimeoutMs: this.config.eloPluginTimeoutMs || 30000,
+        capTimeoutMs: this.config.capTimeoutMs || 10000,
+        nip05ResolveTimeoutMs: this.config.nip05ResolveTimeoutMs || 5000,
+        nip05CacheTtlSeconds: this.config.nip05CacheTtlSeconds,
+        nip05DomainCooldownSeconds: this.config.nip05DomainCooldownSeconds,
+        maxRoundsPerPlugin: this.config.eloMaxRoundsPerPlugin,
+        maxRequestsPerRound: this.config.eloMaxRequestsPerRound,
+        maxTotalRequestsPerPlugin: this.config.eloMaxTotalRequestsPerPlugin,
+      });
+      results.set(context.targetPubkey, metrics);
+      return metrics;
     });
+
+    return results;
   }
   /**
    * Get number of loaded plugins

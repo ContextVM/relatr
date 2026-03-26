@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MetricsValidator } from "@/validators/MetricsValidator";
 import type { ProfileMetrics } from "@/types";
+import type { ProfileFetcher } from "@/graph/RelayProfileFetcher";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -111,6 +112,99 @@ describe("MetricsValidator cache completeness", () => {
     expect(upsertedSubset[missingKey] as number).toBe(0.2);
     expect(result.metrics[expectedKeys[0]!]).toBe(0.7);
     expect(result.metrics[expectedKeys[1]!]).toBe(0.2);
+  });
+
+  test("validateAll returns cached metrics immediately when the expected keyset is complete", async () => {
+    const target = "pk-target";
+    const cached = mkCached(target, {
+      "pk:plugin_a": 0.7,
+      "pk:plugin_b": 0.2,
+    });
+
+    let evaluateCalls = 0;
+    const repo = {
+      get: async () => cached,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {
+        throw new Error("upsertMetricSubset should not be called");
+      },
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [
+          { pubkey: "pk", manifest: { name: "plugin_a" } },
+          { pubkey: "pk", manifest: { name: "plugin_b" } },
+        ],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateForPubkey: async () => {
+        evaluateCalls++;
+        return {};
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      {} as never,
+      eloEngine as never,
+    );
+
+    const result = await validator.validateAll(target);
+
+    expect(evaluateCalls).toBe(0);
+    expect(result).toBe(cached);
+  });
+
+  test("validateAll returns default metrics when evaluation throws", async () => {
+    const target = "pk-target";
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateForPubkey: async () => {
+        throw new Error("boom");
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      {} as never,
+      eloEngine as never,
+    );
+
+    const result = await validator.validateAll(target);
+
+    expect(result.pubkey).toBe(target);
+    expect(result.metrics).toEqual({});
   });
 
   test("validateAllBatch uses cache only when expected plugin keyset is complete", async () => {
@@ -228,6 +322,270 @@ describe("MetricsValidator cache completeness", () => {
     ]);
     expect(results.get(completePubkey)?.metrics[expectedKeys[1]!]).toBe(0.4);
     expect(results.get(incompletePubkey)?.metrics[expectedKeys[1]!]).toBe(0.3);
+  });
+
+  test("validateAllBatch prefers metadata prepared in the validation run context", async () => {
+    const targetPubkey = "pk-target";
+    const metricKey = "pk:plugin_a";
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    let metadataRepositoryReads = 0;
+    const metadataRepository = {
+      getBatch: async () => {
+        metadataRepositoryReads++;
+        return new Map([[targetPubkey, { pubkey: targetPubkey }]]);
+      },
+    };
+
+    let evaluateBatchCalls = 0;
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateBatchForPubkeys: async (input: { targetPubkeys: string[] }) => {
+        evaluateBatchCalls++;
+        expect(input.targetPubkeys).toEqual([targetPubkey]);
+        return new Map([[targetPubkey, { [metricKey]: 1 }]]);
+      },
+      evaluateForPubkey: async () => {
+        throw new Error("evaluateForPubkey should not be called");
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      metadataRepository as never,
+      eloEngine as never,
+    );
+
+    const results = await validator.validateAllBatch(
+      [targetPubkey],
+      undefined,
+      undefined,
+      {
+        preparedMetadataProfiles: new Map([
+          [targetPubkey, { pubkey: targetPubkey }],
+        ]),
+        metadataPreparedForPubkeys: new Set([targetPubkey]),
+      },
+    );
+
+    expect(metadataRepositoryReads).toBe(0);
+    expect(evaluateBatchCalls).toBe(1);
+    expect(results.get(targetPubkey)?.metrics[metricKey]).toBe(1);
+  });
+
+  test("validateAllBatch falls back to repository metadata reads when validation run coverage is incomplete", async () => {
+    const targetPubkey = "pk-target";
+    const metricKey = "pk:plugin_a";
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    let metadataRepositoryReads = 0;
+    const metadataRepository = {
+      getBatch: async (pubkeys: string[]) => {
+        metadataRepositoryReads++;
+        expect(pubkeys).toEqual([targetPubkey]);
+        return new Map([[targetPubkey, { pubkey: targetPubkey }]]);
+      },
+    };
+
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateBatchForPubkeys: async () =>
+        new Map([[targetPubkey, { [metricKey]: 1 }]]),
+      evaluateForPubkey: async () => {
+        throw new Error("evaluateForPubkey should not be called");
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      metadataRepository as never,
+      eloEngine as never,
+    );
+
+    await validator.validateAllBatch([targetPubkey], undefined, undefined, {
+      preparedMetadataProfiles: new Map(),
+      metadataPreparedForPubkeys: new Set(),
+    });
+
+    expect(metadataRepositoryReads).toBe(1);
+  });
+
+  test("validateAllBatch falls back to relay profile fetching when prepared metadata coverage contains null profiles", async () => {
+    const targetPubkey = "pk-target";
+    const metricKey = "pk:plugin_a";
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    let metadataRepositoryReads = 0;
+    const metadataRepository = {
+      getBatch: async () => {
+        metadataRepositoryReads++;
+        return new Map([[targetPubkey, { pubkey: targetPubkey }]]);
+      },
+    };
+
+    let fetchedPubkeys: string[] = [];
+    const profileFetcher: ProfileFetcher = {
+      fetchProfiles: async (pubkeys: string[]) => {
+        fetchedPubkeys = [...pubkeys];
+        return new Map([[targetPubkey, { pubkey: targetPubkey }]]);
+      },
+    };
+
+    let evaluateBatchCalls = 0;
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateBatchForPubkeys: async (input: { targetPubkeys: string[] }) => {
+        evaluateBatchCalls++;
+        expect(input.targetPubkeys).toEqual([targetPubkey]);
+        return new Map([[targetPubkey, { [metricKey]: 1 }]]);
+      },
+      evaluateForPubkey: async () => {
+        throw new Error("evaluateForPubkey should not be called");
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      metadataRepository as never,
+      eloEngine as never,
+      undefined,
+      profileFetcher,
+    );
+
+    const results = await validator.validateAllBatch(
+      [targetPubkey],
+      undefined,
+      undefined,
+      {
+        preparedMetadataProfiles: new Map([[targetPubkey, null]]),
+        metadataPreparedForPubkeys: new Set([targetPubkey]),
+      },
+    );
+
+    expect(metadataRepositoryReads).toBe(0);
+    expect(fetchedPubkeys).toEqual([targetPubkey]);
+    expect(evaluateBatchCalls).toBe(1);
+    expect(results.get(targetPubkey)?.metrics[metricKey]).toBe(1);
+  });
+
+  test("validateAllBatch delegates missing relay profile fallback to the injected profile fetcher", async () => {
+    const targetPubkey = "pk-target";
+    const metricKey = "pk:plugin_a";
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    const metadataRepository = {
+      getBatch: async (pubkeys: string[]) => {
+        expect(pubkeys).toEqual([targetPubkey]);
+        return new Map([[targetPubkey, null]]);
+      },
+    };
+
+    let fetchedPubkeys: string[] = [];
+    const profileFetcher: ProfileFetcher = {
+      fetchProfiles: async (pubkeys: string[]) => {
+        fetchedPubkeys = [...pubkeys];
+        return new Map([[targetPubkey, { pubkey: targetPubkey }]]);
+      },
+    };
+
+    let evaluateBatchCalls = 0;
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateBatchForPubkeys: async (input: { targetPubkeys: string[] }) => {
+        evaluateBatchCalls++;
+        expect(input.targetPubkeys).toEqual([targetPubkey]);
+        return new Map([[targetPubkey, { [metricKey]: 1 }]]);
+      },
+      evaluateForPubkey: async () => {
+        throw new Error("evaluateForPubkey should not be called");
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      metadataRepository as never,
+      eloEngine as never,
+      undefined,
+      profileFetcher,
+    );
+
+    const results = await validator.validateAllBatch([targetPubkey]);
+
+    expect(fetchedPubkeys).toEqual([targetPubkey]);
+    expect(evaluateBatchCalls).toBe(1);
+    expect(results.get(targetPubkey)?.metrics[metricKey]).toBe(1);
   });
 
   test("validateAllBatch narrows recomputation to the requested metric scope", async () => {

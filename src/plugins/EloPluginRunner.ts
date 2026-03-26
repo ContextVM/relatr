@@ -34,36 +34,6 @@ export type HostPolicyLimits = {
   maxTotalRequestsPerPlugin?: number;
 };
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<R>,
-): Promise<R[]> {
-  if (items.length === 0) {
-    return [];
-  }
-
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-
-  const runWorker = async () => {
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex++;
-
-      if (currentIndex >= items.length) {
-        return;
-      }
-
-      results[currentIndex] = await worker(items[currentIndex]!);
-    }
-  };
-
-  const workerCount = Math.min(Math.max(limit, 1), items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-  return results;
-}
-
 const DEFAULT_HOST_POLICY_LIMITS: Required<HostPolicyLimits> = {
   // Conservative defaults; override via runPlugin/runPlugins config.
   maxRoundsPerPlugin: 8,
@@ -469,38 +439,4 @@ export async function runPlugins(
   logger.debug(`Completed running ${plugins.length} plugins`);
 
   return metrics;
-}
-
-/**
- * Run plugins in batch mode for multiple pubkeys
- */
-export async function runPluginsBatch(
-  plugins: PortablePlugin[],
-  contexts: PluginRunnerContext[],
-  executor: CapabilityExecutor,
-  config: {
-    eloPluginTimeoutMs: number;
-    capTimeoutMs: number;
-    nip05ResolveTimeoutMs: number;
-    nip05CacheTtlSeconds: number;
-    nip05DomainCooldownSeconds: number;
-    eloBatchPubkeyConcurrency?: number;
-  } & HostPolicyLimits,
-): Promise<Map<string, Record<string, number>>> {
-  const results = new Map<string, Record<string, number>>();
-  const concurrency = config.eloBatchPubkeyConcurrency ?? 8;
-
-  logger.info(
-    `Running plugins in batch mode for ${contexts.length} pubkeys (concurrency ${concurrency})`,
-  );
-
-  await mapWithConcurrency(contexts, concurrency, async (context) => {
-    const metrics = await runPlugins(plugins, context, executor, config);
-    results.set(context.targetPubkey, metrics);
-    return metrics;
-  });
-
-  logger.info(`Batch processing completed`);
-
-  return results;
 }

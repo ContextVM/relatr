@@ -9,19 +9,10 @@ type Nip05ResolutionRecord = {
   expiresAt: number;
 };
 
-type Nip05DomainCooldownRecord = {
-  expiresAt: number;
-};
-
 const NIP05_RESOLUTION_PREFIX = "nip05:resolution:v1:";
-const NIP05_DOMAIN_COOLDOWN_PREFIX = "nip05:domain-cooldown:v1:";
 
 function resolutionKey(nip05: string): string {
   return `${NIP05_RESOLUTION_PREFIX}${nip05}`;
-}
-
-function domainCooldownKey(domain: string): string {
-  return `${NIP05_DOMAIN_COOLDOWN_PREFIX}${domain}`;
 }
 
 export class Nip05CacheStore {
@@ -69,41 +60,6 @@ export class Nip05CacheStore {
     };
     await this.settingsRepository.set(
       resolutionKey(input.nip05),
-      JSON.stringify(record),
-    );
-  }
-
-  async isDomainCoolingDown(domain: string): Promise<boolean> {
-    const raw = await this.settingsRepository.get(domainCooldownKey(domain));
-    if (!raw) {
-      return false;
-    }
-
-    try {
-      const record = JSON.parse(raw) as Nip05DomainCooldownRecord;
-      if (typeof record.expiresAt !== "number") {
-        return false;
-      }
-
-      if (record.expiresAt <= nowSeconds()) {
-        await this.settingsRepository.delete(domainCooldownKey(domain));
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      logger.warn(
-        `Failed to parse NIP-05 cooldown for ${domain}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return false;
-    }
-  }
-
-  async markDomainCooldown(domain: string, ttlSeconds: number): Promise<void> {
-    const expiresAt = nowSeconds() + ttlSeconds;
-    const record: Nip05DomainCooldownRecord = { expiresAt };
-    await this.settingsRepository.set(
-      domainCooldownKey(domain),
       JSON.stringify(record),
     );
   }

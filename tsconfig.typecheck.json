@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@social-graph/*": ["./src/social-graph/*"],
+      "@metrics/*": ["./src/metrics/*"],
+      "@trust/*": ["./src/trust/*"],
+      "@distance/*": ["./src/distance/*"],
+      "@database/*": ["./src/database/*"],
+      "@config/*": ["./src/config/*"],
+      "@services/*": ["./src/services/*"],
+      "@mcp/*": ["./src/mcp/*"],
+      "process-pastry": ["./src/types/process-pastry.d.ts"]
+    }
+  },
+  "include": ["src/**/*", "config-ui/**/*", "manager.ts"],
+  "exclude": ["node_modules", "dist", "elo", "plugins"]
+}

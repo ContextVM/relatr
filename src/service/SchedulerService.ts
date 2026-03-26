@@ -24,9 +24,7 @@ export class SchedulerService implements ISchedulerService {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private syncInterval: NodeJS.Timeout | null = null;
   private validationInterval: NodeJS.Timeout | null = null;
-  private validationRunPromise: Promise<void> | null = null;
   private validationWarmupQueued = false;
-  private validationWarmupRerunRequested = false;
   private validationPipeline: ValidationPipeline;
   private readonly metadataRefreshTracker = new MetadataRefreshTracker();
   private readonly nip05FactRefreshStage: Nip05FactRefreshStage;
@@ -69,32 +67,6 @@ export class SchedulerService implements ISchedulerService {
 
   markBootstrapMetadataFresh(pubkeys: string[], sourcePubkey?: string): void {
     this.metadataRefreshTracker.markBootstrapFresh(pubkeys, sourcePubkey);
-  }
-
-  private configureValidationRunCapabilities(): void {
-    if (
-      typeof this.metricsValidator.configureValidationRunCapabilities !==
-      "function"
-    ) {
-      return;
-    }
-
-    this.metricsValidator.configureValidationRunCapabilities((capRunCache) => {
-      this.nip05FactRefreshStage.configureRunCache(capRunCache);
-    });
-  }
-
-  private clearValidationRunCapabilities(): void {
-    if (
-      typeof this.metricsValidator.configureValidationRunCapabilities !==
-      "function"
-    ) {
-      this.nip05FactRefreshStage.clearPreparedResults();
-      return;
-    }
-
-    this.metricsValidator.configureValidationRunCapabilities(undefined);
-    this.nip05FactRefreshStage.clearPreparedResults();
   }
 
   async start(): Promise<void> {
@@ -225,60 +197,14 @@ export class SchedulerService implements ISchedulerService {
     sourcePubkey?: string,
     metricKeys?: string[],
   ): Promise<void> {
-    if (this.validationRunPromise) {
-      this.validationWarmupRerunRequested = true;
-      logger.info(
-        "⏳ Validation sync already in progress, queuing follow-up run",
-      );
-      return this.validationRunPromise;
-    }
-
-    this.configureValidationRunCapabilities();
-
-    const run = this.performValidationSync(
+    return this.validationPipeline.scheduleValidationSync(
       batchSize,
       sourcePubkey,
       metricKeys,
-    ).finally(async () => {
-      this.clearValidationRunCapabilities();
-      this.validationRunPromise = null;
-
-      if (!this.validationWarmupRerunRequested) {
-        return;
-      }
-
-      this.validationWarmupRerunRequested = false;
-      logger.info("🔄 Starting queued follow-up validation sync");
-
-      try {
-        // Use queueMicrotask to avoid deep recursion if syncs are very fast
-        queueMicrotask(async () => {
-          await this.syncValidations(batchSize, sourcePubkey, metricKeys).catch(
-            (error) => {
-              logger.error(
-                "Follow-up validation warm-up failed:",
-                error instanceof Error ? error.message : String(error),
-              );
-            },
-          );
-        });
-      } catch (error) {
-        logger.error(
-          "Failed to trigger follow-up validation sync:",
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    });
-    this.validationRunPromise = run;
-    return run;
+    );
   }
 
   scheduleValidationWarmup(sourcePubkey?: string, metricKeys?: string[]): void {
-    if (this.validationRunPromise) {
-      this.validationWarmupRerunRequested = true;
-      return;
-    }
-
     if (this.validationWarmupQueued) {
       return;
     }
@@ -296,25 +222,6 @@ export class SchedulerService implements ISchedulerService {
         },
       );
     });
-  }
-
-  private async performValidationSync(
-    batchSize: number = 250,
-    sourcePubkey?: string,
-    metricKeys?: string[],
-  ): Promise<void> {
-    if (!this.metricsRepository) {
-      throw new RelatrError(
-        "SchedulerService dependencies not properly initialized for validation sync",
-        "NOT_INITIALIZED",
-      );
-    }
-
-    await this.validationPipeline.runValidationSync(
-      batchSize,
-      sourcePubkey,
-      metricKeys,
-    );
   }
 
   async processDiscoveryQueue(): Promise<void> {

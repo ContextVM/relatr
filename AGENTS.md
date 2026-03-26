@@ -64,6 +64,7 @@ This executes the [`mcp`](package.json:9) script and starts [`src/mcp/server.ts`
 
 ```bash
 bun run lint
+bun run typecheck
 bun run format
 bun run generate:version
 bun run build
@@ -71,10 +72,11 @@ bun run compile
 ```
 
 - [`lint`](package.json:10): runs ESLint against [`src/`](src).
-- [`format`](package.json:11): runs Prettier across the repository.
-- [`generate:version`](package.json:12): regenerates [`src/version.ts`](src/version.ts) from [`package.json`](package.json) before builds.
-- [`build`](package.json:13): builds the MCP server JS bundle into [`dist/`](dist).
-- [`compile`](package.json:14): produces a standalone binary named [`relatr`](package.json:14).
+- [`typecheck`](package.json:11): runs the TypeScript compiler in no-emit mode to catch assignability and interface errors that ESLint alone will not report.
+- [`format`](package.json:12): runs Prettier across the repository.
+- [`generate:version`](package.json:13): regenerates [`src/version.ts`](src/version.ts) from [`package.json`](package.json) before builds.
+- [`build`](package.json:14): builds the MCP server JS bundle into [`dist/`](dist).
+- [`compile`](package.json:15): produces a standalone binary named [`relatr`](package.json:15).
 
 ### Docker workflow
 
@@ -207,7 +209,7 @@ This repository is primarily a single Bun application with a nested package in [
 ## Pull Request Guidance
 
 - Keep changes focused and small when possible.
-- Before finalizing code changes, run at minimum [`bun run lint`](package.json:10) for root source changes.
+- Before finalizing code changes, run at minimum [`bun run lint`](package.json:10) and [`bun run typecheck`](package.json:11) for root source changes.
 - Run the most relevant Bun tests for the area you changed.
 - If Docker packaging is affected, inspect [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml), and CI workflow alignment together.
 

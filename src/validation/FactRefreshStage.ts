@@ -1,6 +1,9 @@
+import type { ValidationRunContext } from "@/validation/ValidationRunContext";
+
 export interface FactRefreshStageContext {
   pubkeys: string[];
   sourcePubkey?: string;
+  validationRunContext?: ValidationRunContext;
 }
 
 export interface FactRefreshStage {

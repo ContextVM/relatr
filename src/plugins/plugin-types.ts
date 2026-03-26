@@ -7,6 +7,7 @@ import type { SocialGraph } from "../graph/SocialGraph";
 import type { RelayPool } from "applesauce-relay";
 import type { LruCache } from "../utils/lru-cache";
 import type { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
+import type { ValidationRunContext } from "@/validation/ValidationRunContext";
 
 /**
  * Per-run capability cache container.
@@ -17,15 +18,6 @@ import type { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
 export type CapabilityRunCache = {
   /** Cache for `http.nip05_resolve({ nip05 })` results keyed by normalized nip05 string */
   nip05Resolve?: LruCache<Promise<{ pubkey: string | null }>>;
-
-  /** Cache of NIP-05 domains that have proven unresponsive during this run (fail-fast). */
-  nip05BadDomains?: LruCache<true>;
-
-  /** Pre-materialized NIP-05 results for the current validation run. */
-  nip05PreparedResults?: LruCache<{ pubkey: string | null }>;
-
-  /** When true, NIP-05 resolution should not fall back to live network requests. */
-  nip05LiveFetchDisabled?: boolean;
 };
 
 /**
@@ -42,7 +34,10 @@ export interface BaseContext {
   /** Optional per-run cache for capability results (cross-pubkey dedupe). */
   capRunCache?: CapabilityRunCache;
 
-  /** Optional persistent NIP-05 cache/cooldown store shared across runs. */
+  /** Optional explicit context for prepared validation facts scoped to a validation run. */
+  validationRunContext?: ValidationRunContext;
+
+  /** Optional persistent NIP-05 cache shared across runs. */
   nip05CacheStore?: Nip05CacheStore;
 }
 

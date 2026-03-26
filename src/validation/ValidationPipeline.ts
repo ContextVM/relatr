@@ -9,6 +9,7 @@ import {
   NoopFactRefreshStage,
   type FactRefreshStage,
 } from "@/validation/FactRefreshStage";
+import type { ValidationRunContext } from "@/validation/ValidationRunContext";
 
 interface ValidationStageTimings {
   factRefresh: Array<{ label: string; durationMs: number }>;
@@ -31,7 +32,62 @@ interface ValidationSyncProgress {
 }
 
 export class ValidationPipeline {
+  private validationRunPromise: Promise<void> | null = null;
+  private validationRerunRequested = false;
+
   constructor(private readonly deps: ValidationPipelineDeps) {}
+
+  async scheduleValidationSync(
+    batchSize: number = 250,
+    sourcePubkey?: string,
+    metricKeys?: string[],
+  ): Promise<void> {
+    if (this.validationRunPromise) {
+      this.validationRerunRequested = true;
+      logger.info(
+        "⏳ Validation sync already in progress, queuing follow-up run",
+      );
+      return this.validationRunPromise;
+    }
+
+    const run = this.runValidationSync(
+      batchSize,
+      sourcePubkey,
+      metricKeys,
+    ).finally(async () => {
+      this.validationRunPromise = null;
+
+      if (!this.validationRerunRequested) {
+        return;
+      }
+
+      this.validationRerunRequested = false;
+      logger.info("🔄 Starting queued follow-up validation sync");
+
+      try {
+        queueMicrotask(async () => {
+          await this.scheduleValidationSync(
+            batchSize,
+            sourcePubkey,
+            metricKeys,
+          ).catch((error) => {
+            logger.error(
+              "Follow-up validation warm-up failed:",
+              error instanceof Error ? error.message : String(error),
+            );
+          });
+        });
+      } catch (error) {
+        logger.error(
+          "Failed to trigger follow-up validation sync:",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+
+    this.validationRunPromise = run;
+    return run;
+  }
 
   async runValidationSync(
     batchSize: number = 250,
@@ -51,6 +107,7 @@ export class ValidationPipeline {
 
     const startTime = nowMs();
     const effectiveSourcePubkey = sourcePubkey || config.defaultSourcePubkey;
+    const validationRunContext: ValidationRunContext = {};
     const timings: ValidationStageTimings = {
       factRefresh: [],
       batchScoringMs: 0,
@@ -93,6 +150,7 @@ export class ValidationPipeline {
         {
           pubkeys: allPubkeys,
           sourcePubkey: effectiveSourcePubkey,
+          validationRunContext,
         },
         timings,
       );
@@ -112,11 +170,13 @@ export class ValidationPipeline {
 
         try {
           const batchStartTime = nowMs();
-          const batchResults = await metricsValidator.validateAllBatch(
+          const batchResults = await this.runBatchValidation({
             batch,
-            effectiveSourcePubkey,
+            sourcePubkey: effectiveSourcePubkey,
             metricKeys,
-          );
+            metricsValidator,
+            validationRunContext,
+          });
           timings.batchScoringMs += nowMs() - batchStartTime;
 
           const persistenceStartTime = nowMs();
@@ -130,14 +190,18 @@ export class ValidationPipeline {
           );
 
           const fallbackStartTime = nowMs();
-          await this.runBatchFallback({
+          const fallbackResults = await this.runBatchFallback({
             batch,
             sourcePubkey: effectiveSourcePubkey,
             metricKeys,
             metricsValidator,
-            progress,
+            validationRunContext,
           });
           timings.fallbackMs += nowMs() - fallbackStartTime;
+
+          const persistenceStartTime = nowMs();
+          this.recordBatchResults(fallbackResults, progress);
+          timings.persistenceMs += nowMs() - persistenceStartTime;
           this.logProgress(progress, allPubkeys.length);
         }
       }
@@ -159,13 +223,42 @@ export class ValidationPipeline {
     }
   }
 
+  private async runBatchValidation(input: {
+    batch: string[];
+    sourcePubkey?: string;
+    metricKeys?: string[];
+    metricsValidator: MetricsValidator;
+    validationRunContext: ValidationRunContext;
+  }): Promise<Map<string, ProfileMetrics | undefined>> {
+    const {
+      batch,
+      sourcePubkey,
+      metricKeys,
+      metricsValidator,
+      validationRunContext,
+    } = input;
+
+    return new Map(
+      await metricsValidator.validateAllBatch(
+        batch,
+        sourcePubkey,
+        metricKeys,
+        validationRunContext,
+      ),
+    );
+  }
+
   private getFactRefreshStage(): FactRefreshStage {
     return this.deps.factRefreshStage ?? new NoopFactRefreshStage();
   }
 
   private async runFactRefreshStages(
     stage: FactRefreshStage,
-    context: { pubkeys: string[]; sourcePubkey?: string },
+    context: {
+      pubkeys: string[];
+      sourcePubkey?: string;
+      validationRunContext?: ValidationRunContext;
+    },
     timings: ValidationStageTimings,
   ): Promise<void> {
     if (stage instanceof CompositeFactRefreshStage) {
@@ -192,7 +285,7 @@ export class ValidationPipeline {
   }
 
   private recordBatchResults(
-    batchResults: Map<string, ProfileMetrics>,
+    batchResults: Map<string, ProfileMetrics | undefined>,
     progress: ValidationSyncProgress,
   ): void {
     for (const [pubkey, metrics] of batchResults) {
@@ -205,10 +298,16 @@ export class ValidationPipeline {
     sourcePubkey?: string;
     metricKeys?: string[];
     metricsValidator: MetricsValidator;
-    progress: ValidationSyncProgress;
-  }): Promise<void> {
-    const { batch, sourcePubkey, metricKeys, metricsValidator, progress } =
-      input;
+    validationRunContext: ValidationRunContext;
+  }): Promise<Map<string, ProfileMetrics | undefined>> {
+    const {
+      batch,
+      sourcePubkey,
+      metricKeys,
+      metricsValidator,
+      validationRunContext,
+    } = input;
+    const results = new Map<string, ProfileMetrics | undefined>();
 
     for (const pubkey of batch) {
       try {
@@ -216,17 +315,19 @@ export class ValidationPipeline {
           pubkey,
           sourcePubkey,
           metricKeys,
+          validationRunContext,
         );
-        this.recordResult(pubkey, metrics, progress);
+        results.set(pubkey, metrics);
       } catch (error) {
-        progress.processedCount++;
-        progress.errorCount++;
         logger.warn(
           `⚠️ Validation failed for ${pubkey}:`,
           error instanceof Error ? error.message : String(error),
         );
+        results.set(pubkey, undefined);
       }
     }
+
+    return results;
   }
 
   private recordResult(
@@ -236,7 +337,7 @@ export class ValidationPipeline {
   ): void {
     progress.processedCount++;
 
-    if (this.hasMetrics(metrics)) {
+    if (metrics) {
       progress.successCount++;
       return;
     }
@@ -269,9 +370,5 @@ export class ValidationPipeline {
     if (timings.fallbackMs > 0) {
       logger.info(`⏱️ Validation stage fallback: ${timings.fallbackMs}ms`);
     }
-  }
-
-  private hasMetrics(metrics: ProfileMetrics | undefined): boolean {
-    return Boolean(metrics && Object.keys(metrics.metrics || {}).length > 0);
   }
 }

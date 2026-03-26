@@ -1,4 +1,3 @@
-import type { MetadataRepository } from "@/database/repositories/MetadataRepository";
 import type { MetricsRepository } from "@/database/repositories/MetricsRepository";
 import type { NostrProfile, ProfileMetrics } from "@/types";
 import { logger } from "@/utils/Logger";
@@ -10,6 +9,7 @@ export type ValidationBatchMapWithConcurrency = <T, R>(
 ) => Promise<R[]>;
 
 export interface ValidationBatchExecutionContext {
+  profiles: NostrProfile[];
   pubkeys: string[];
   chunkNumber: number;
   totalChunks: number;
@@ -17,25 +17,114 @@ export interface ValidationBatchExecutionContext {
   cacheTtlSeconds: number;
   expectedMetricKeys: Set<string>;
   cachedMetrics: Map<string, ProfileMetrics | null>;
-  metadataRepository: MetadataRepository;
   metricsRepository: MetricsRepository;
-  profileFetchConcurrency: number;
   validationPubkeyConcurrency: number;
   mapWithConcurrency: ValidationBatchMapWithConcurrency;
-  fetchProfile: (pubkey: string) => Promise<NostrProfile>;
-  evaluateMetrics: (input: {
+  batchMetricResults: Map<string, Record<string, number>> | null;
+  evaluatePubkeyMetrics: (input: {
+    pubkey: string;
+    missingMetricKeys: string[];
+  }) => Promise<Record<string, number>>;
+  buildResult: (input: {
     profile: NostrProfile;
     cached: ProfileMetrics | null;
-    missingMetricKeys: string[];
-  }) => Promise<{
+    computedMetrics: Record<string, number>;
+  }) => {
     result: ProfileMetrics;
     computedMetrics: Record<string, number>;
     success: boolean;
-  }>;
+  };
   getMissingExpectedMetricKeys: (
     metrics: Record<string, number>,
     expectedKeys: Set<string>,
   ) => string[];
+}
+
+export interface ValidationChunkRuntime {
+  batchMetricResults: Map<string, Record<string, number>> | null;
+  evaluatePubkeyMetrics: (input: {
+    pubkey: string;
+    missingMetricKeys: string[];
+  }) => Promise<Record<string, number>>;
+  buildResult: (input: {
+    profile: NostrProfile;
+    cached: ProfileMetrics | null;
+    computedMetrics: Record<string, number>;
+  }) => {
+    result: ProfileMetrics;
+    computedMetrics: Record<string, number>;
+    success: boolean;
+  };
+}
+
+export interface ValidationChunkPlan {
+  pubkeys: string[];
+  chunkNumber: number;
+  totalChunks: number;
+}
+
+export interface ValidationChunkPreparationInput {
+  plan: ValidationChunkPlan;
+  profileByPubkey: Map<string, NostrProfile | null>;
+  runtime: ValidationChunkRuntime;
+}
+
+export interface PreparedValidationProfiles {
+  profilesByPubkey: Map<string, NostrProfile | null>;
+  missingPubkeys: string[];
+}
+
+export function buildPreparedValidationProfiles(
+  pubkeys: string[],
+  profileByPubkey: Map<string, NostrProfile | null>,
+): PreparedValidationProfiles {
+  const profilesByPubkey = new Map<string, NostrProfile | null>();
+  const missingPubkeys: string[] = [];
+
+  for (const pubkey of pubkeys) {
+    const profile = profileByPubkey.get(pubkey) ?? null;
+    profilesByPubkey.set(pubkey, profile);
+
+    if (profile === null) {
+      missingPubkeys.push(pubkey);
+    }
+  }
+
+  return {
+    profilesByPubkey,
+    missingPubkeys,
+  };
+}
+
+export function buildValidationChunkContext(
+  input: ValidationChunkPreparationInput,
+  shared: Omit<
+    ValidationBatchExecutionContext,
+    | "profiles"
+    | "pubkeys"
+    | "chunkNumber"
+    | "totalChunks"
+    | "batchMetricResults"
+    | "evaluatePubkeyMetrics"
+    | "buildResult"
+  >,
+): ValidationBatchExecutionContext {
+  const preparedProfiles = buildPreparedValidationProfiles(
+    input.plan.pubkeys,
+    input.profileByPubkey,
+  );
+  const profiles = Array.from(
+    preparedProfiles.profilesByPubkey.values(),
+  ).filter((profile): profile is NostrProfile => profile !== null);
+
+  return {
+    ...shared,
+    pubkeys: input.plan.pubkeys,
+    chunkNumber: input.plan.chunkNumber,
+    totalChunks: input.plan.totalChunks,
+    profiles,
+    ...input.runtime,
+  };
 }
 
 export interface ValidationChunkExecutionResult {
@@ -58,13 +147,12 @@ export async function executeValidationChunk(
     cacheTtlSeconds,
     expectedMetricKeys,
     cachedMetrics,
-    metadataRepository,
     metricsRepository,
-    profileFetchConcurrency,
     validationPubkeyConcurrency,
     mapWithConcurrency,
-    fetchProfile,
-    evaluateMetrics,
+    batchMetricResults,
+    evaluatePubkeyMetrics,
+    buildResult,
     getMissingExpectedMetricKeys,
   } = context;
 
@@ -72,29 +160,15 @@ export async function executeValidationChunk(
     `🔄 Processing validation chunk ${chunkNumber} of ${totalChunks} (${pubkeys.length} pubkeys)`,
   );
 
-  const cachedProfiles = await metadataRepository.getBatch(pubkeys);
-  const chunkProfiles: NostrProfile[] = [];
-  const chunkPubkeysToFetch: string[] = [];
+  const chunkProfiles = context.profiles;
+  const missingProfiles = pubkeys.filter(
+    (pubkey) => !chunkProfiles.some((profile) => profile.pubkey === pubkey),
+  );
 
-  for (const pubkey of pubkeys) {
-    const cachedProfile = cachedProfiles.get(pubkey);
-    if (cachedProfile) {
-      chunkProfiles.push(cachedProfile);
-    } else {
-      chunkPubkeysToFetch.push(pubkey);
-    }
-  }
-
-  if (chunkPubkeysToFetch.length > 0) {
-    logger.info(
-      `🌐 Fetching ${chunkPubkeysToFetch.length} missing profiles from relays for chunk ${chunkNumber}`,
+  if (missingProfiles.length > 0) {
+    logger.warn(
+      `Validation chunk ${chunkNumber} started without ${missingProfiles.length} prepared metadata profiles; those pubkeys will be skipped in batch scoring`,
     );
-    const fetchedProfiles = await mapWithConcurrency(
-      chunkPubkeysToFetch,
-      profileFetchConcurrency,
-      async (pubkey) => await fetchProfile(pubkey),
-    );
-    chunkProfiles.push(...fetchedProfiles);
   }
 
   const results = await mapWithConcurrency(
@@ -108,13 +182,24 @@ export async function executeValidationChunk(
           expectedMetricKeys,
         );
 
+        const computedMetrics = batchMetricResults
+          ? Object.fromEntries(
+              Object.entries(
+                batchMetricResults.get(profile.pubkey) ?? {},
+              ).filter(([key]) => missingMetricKeys.includes(key)),
+            )
+          : await evaluatePubkeyMetrics({
+              pubkey: profile.pubkey,
+              missingMetricKeys,
+            });
+
         return {
           pubkey: profile.pubkey,
-          ...(await evaluateMetrics({
+          ...buildResult({
             profile,
             cached,
-            missingMetricKeys,
-          })),
+            computedMetrics,
+          }),
         };
       } catch (error) {
         logger.warn(

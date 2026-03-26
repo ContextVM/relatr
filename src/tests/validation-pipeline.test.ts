@@ -3,6 +3,30 @@ import type { ProfileMetrics } from "@/types";
 import { CompositeFactRefreshStage } from "@/validation/FactRefreshStage";
 import { ValidationPipeline } from "@/validation/ValidationPipeline";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs: number = 100,
+): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start >= timeoutMs) {
+      throw new Error("Timed out waiting for condition");
+    }
+    await Promise.resolve();
+  }
+}
+
 function mkMetrics(
   pubkey: string,
   metrics: Record<string, number>,
@@ -61,6 +85,62 @@ describe("ValidationPipeline", () => {
         validateAll: async (pubkey: string, sourcePubkey?: string) => {
           expect(sourcePubkey).toBe("pk-source");
           validatedPubkeys.push(pubkey);
+          return mkMetrics(pubkey, { "pk:plugin_a": 1 });
+        },
+      } as never,
+    });
+
+    await pipeline.runValidationSync(10);
+
+    expect(validatedPubkeys).toEqual(["pk-a", "pk-b"]);
+  });
+
+  test("owns fallback recovery when metrics validator batch execution throws", async () => {
+    const validatedPubkeys: string[] = [];
+
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async () => {
+          throw new Error("validator batch execution failed");
+        },
+        validateAll: async (pubkey: string, sourcePubkey?: string) => {
+          expect(sourcePubkey).toBe("pk-source");
+          validatedPubkeys.push(pubkey);
+          return mkMetrics(pubkey, { "pk:plugin_a": 1 });
+        },
+      } as never,
+    });
+
+    await pipeline.runValidationSync(10);
+
+    expect(validatedPubkeys).toEqual(["pk-a", "pk-b"]);
+  });
+
+  test("fallback accounting records failed pubkeys through the shared batch result path", async () => {
+    const validatedPubkeys: string[] = [];
+
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async () => {
+          throw new Error("batch failed");
+        },
+        validateAll: async (pubkey: string) => {
+          validatedPubkeys.push(pubkey);
+
+          if (pubkey === "pk-b") {
+            throw new Error("fallback failed");
+          }
+
           return mkMetrics(pubkey, { "pk:plugin_a": 1 });
         },
       } as never,
@@ -139,6 +219,58 @@ describe("ValidationPipeline", () => {
     ]);
   });
 
+  test("threads validation run context from fact refresh into batch validation", async () => {
+    let receivedPreparedProfiles:
+      | Map<string, { pubkey: string } | null>
+      | undefined;
+    let receivedPreparedCoverage: Set<string> | undefined;
+
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (
+          pubkeys: string[],
+          _sourcePubkey?: string,
+          _metricKeys?: string[],
+          validationRunContext?: {
+            preparedMetadataProfiles?: Map<string, { pubkey: string } | null>;
+            metadataPreparedForPubkeys?: Set<string>;
+          },
+        ) => {
+          receivedPreparedProfiles =
+            validationRunContext?.preparedMetadataProfiles;
+          receivedPreparedCoverage =
+            validationRunContext?.metadataPreparedForPubkeys;
+          return new Map(
+            pubkeys.map((pubkey) => [pubkey, mkMetrics(pubkey, { metric: 1 })]),
+          );
+        },
+      } as never,
+      factRefreshStage: {
+        refresh: async ({ pubkeys, validationRunContext }) => {
+          validationRunContext!.preparedMetadataProfiles = new Map(
+            pubkeys.map((pubkey) => [pubkey, { pubkey }]),
+          );
+          validationRunContext!.metadataPreparedForPubkeys = new Set(pubkeys);
+        },
+      },
+    });
+
+    await pipeline.runValidationSync(10);
+
+    expect(receivedPreparedProfiles).toEqual(
+      new Map([
+        ["pk-a", { pubkey: "pk-a" }],
+        ["pk-b", { pubkey: "pk-b" }],
+      ]),
+    );
+    expect(receivedPreparedCoverage).toEqual(new Set(["pk-a", "pk-b"]));
+  });
+
   test("threads narrowed metric keys through batch validation", async () => {
     const seenMetricKeys: string[][] = [];
 
@@ -201,6 +333,25 @@ describe("ValidationPipeline", () => {
     expect(seenMetricKeys).toEqual([["pk:plugin_a"], ["pk:plugin_a"]]);
   });
 
+  test("counts empty metric payloads as successful handled results", async () => {
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) => {
+          return new Map(
+            pubkeys.map((pubkey) => [pubkey, mkMetrics(pubkey, {})]),
+          );
+        },
+      } as never,
+    });
+
+    await expect(pipeline.runValidationSync(10)).resolves.toBeUndefined();
+  });
+
   test("times composite fact refresh stages individually", async () => {
     const executionOrder: string[] = [];
 
@@ -235,5 +386,51 @@ describe("ValidationPipeline", () => {
     await pipeline.runValidationSync(10);
 
     expect(executionOrder).toEqual(["metadata refresh", "NIP-05 refresh"]);
+  });
+
+  test("scheduleValidationSync coalesces overlapping runs into a follow-up rerun", async () => {
+    const firstRunGate = deferred<void>();
+    const secondRunGate = deferred<void>();
+    let runCount = 0;
+
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async () => {
+          runCount++;
+
+          if (runCount === 1) {
+            await firstRunGate.promise;
+          } else if (runCount === 2) {
+            await secondRunGate.promise;
+          }
+
+          return new Map([["pk-a", mkMetrics("pk-a", { "pk:plugin_a": 1 })]]);
+        },
+      } as never,
+    });
+
+    pipeline.scheduleValidationSync();
+    await waitFor(() => runCount === 1);
+
+    expect(runCount).toBe(1);
+
+    pipeline.scheduleValidationSync();
+    pipeline.scheduleValidationSync();
+    await Promise.resolve();
+
+    expect(runCount).toBe(1);
+
+    firstRunGate.resolve();
+    await waitFor(() => runCount === 2);
+
+    expect(runCount).toBe(2);
+
+    secondRunGate.resolve();
+    await Promise.resolve();
   });
 });

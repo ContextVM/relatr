@@ -267,13 +267,14 @@ export class PluginManager {
 
       const previousRuntime = this.eloEngine.getRuntimeState();
       const candidateEnabled: EnabledMap = { ...state.enabled };
+      const hasWeightOverrideEdits = input.changes.some(
+        (change) => change.weightOverride !== undefined,
+      );
       const hasExplicitWeightAssignments = input.changes.some(
         (change) =>
           change.weightOverride !== undefined && change.weightOverride !== null,
       );
-      let candidateOverrides: WeightOverrideMap = hasExplicitWeightAssignments
-        ? {}
-        : { ...state.overrides };
+      let candidateOverrides: WeightOverrideMap = { ...state.overrides };
 
       for (const change of input.changes) {
         if (change.enabled !== undefined) {
@@ -281,13 +282,29 @@ export class PluginManager {
         }
       }
 
+      const hasEnabledSetChanges = Object.keys({
+        ...state.enabled,
+        ...candidateEnabled,
+      }).some(
+        (pluginKey) => state.enabled[pluginKey] !== candidateEnabled[pluginKey],
+      );
+
       if (hasExplicitWeightAssignments) {
         candidateOverrides = this.rebuildOverridesForWeightEdit({
           previousResolvedWeights: previousRuntime.resolvedWeights,
           nextEnabled: candidateEnabled,
           changes: input.changes,
         });
-      } else {
+      } else if (hasEnabledSetChanges) {
+        candidateOverrides = this.rebuildOverridesForEnabledSet({
+          previousResolvedWeights: previousRuntime.resolvedWeights,
+          previousEnabled: state.enabled,
+          previousOverrides: state.overrides,
+          nextEnabled: candidateEnabled,
+        });
+      }
+
+      if (hasWeightOverrideEdits && !hasExplicitWeightAssignments) {
         for (const change of input.changes) {
           if (change.weightOverride !== undefined) {
             if (change.weightOverride === null) {
@@ -391,6 +408,8 @@ export class PluginManager {
       const previousRuntime = this.eloEngine.getRuntimeState();
       const candidateOverrides = this.rebuildOverridesForEnabledSet({
         previousResolvedWeights: previousRuntime.resolvedWeights,
+        previousEnabled: state.enabled,
+        previousOverrides: state.overrides,
         nextEnabled: candidateEnabled,
       });
       const candidateRuntime = this.buildRuntimeState(
@@ -845,6 +864,8 @@ export class PluginManager {
 
   private rebuildOverridesForEnabledSet(input: {
     previousResolvedWeights: Record<string, number>;
+    previousEnabled: EnabledMap;
+    previousOverrides: WeightOverrideMap;
     nextEnabled: EnabledMap;
   }): WeightOverrideMap {
     const enabledKeys = Object.entries(input.nextEnabled)
@@ -855,8 +876,27 @@ export class PluginManager {
       return {};
     }
 
-    const enabledTotal = enabledKeys.reduce(
-      (sum, pluginKey) => sum + (input.previousResolvedWeights[pluginKey] ?? 0),
+    const hasUnseededNewlyEnabledPlugin = enabledKeys.some(
+      (pluginKey) =>
+        input.previousEnabled[pluginKey] !== true &&
+        input.previousOverrides[pluginKey] === undefined,
+    );
+
+    if (hasUnseededNewlyEnabledPlugin) {
+      return {};
+    }
+
+    const baselineWeights = Object.fromEntries(
+      enabledKeys.map((pluginKey) => [
+        pluginKey,
+        input.previousResolvedWeights[pluginKey] ??
+          input.previousOverrides[pluginKey] ??
+          0,
+      ]),
+    );
+
+    const enabledTotal = Object.values(baselineWeights).reduce(
+      (sum, weight) => sum + weight,
       0,
     );
 
@@ -870,7 +910,7 @@ export class PluginManager {
     return Object.fromEntries(
       enabledKeys.map((pluginKey) => [
         pluginKey,
-        (input.previousResolvedWeights[pluginKey] ?? 0) / enabledTotal,
+        (baselineWeights[pluginKey] ?? 0) / enabledTotal,
       ]),
     );
   }
