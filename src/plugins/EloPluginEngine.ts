@@ -12,6 +12,10 @@ import type { RelatrConfig } from "@/types";
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
 import { resolvePluginWeights } from "./resolvePluginWeights";
 import { mapWithConcurrency } from "@/utils/mapWithConcurrency";
+import {
+  buildMetricFactDependencyIndex,
+  type FactDomain,
+} from "@/validation/fact-dependencies";
 
 const logger = new Logger({ service: "EloPluginEngine" });
 
@@ -39,6 +43,7 @@ export interface IEloPluginEngine {
     enabled: Record<string, boolean>;
     weightOverrides: Record<string, number>;
     resolvedWeights: Record<string, number>;
+    metricFactDependencies?: Map<string, Set<FactDomain>>;
   };
   evaluateForPubkey(input: {
     targetPubkey: string;
@@ -127,16 +132,12 @@ export class EloPluginEngine implements IEloPluginEngine {
       logger.info("Built-in capabilities registered");
 
       // Resolve plugin weights (Tier 1: Config override, Tier 2: Manifest default, Tier 3: Proportional distribution)
-      logger.info("Resolving plugin weights");
       this.resolvedWeights = this.resolvePluginWeights(
         this.weightOverridesByKey,
       );
-      logger.info(
-        `Resolved weights for ${Object.keys(this.resolvedWeights).length} plugins`,
-      );
 
       this.initialized = true;
-      logger.info("EloPluginEngine initialization complete");
+      logger.info("EloPluginEngine initialization complete with empty runtime");
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to initialize EloPluginEngine: ${errorMsg}`);
@@ -177,6 +178,10 @@ export class EloPluginEngine implements IEloPluginEngine {
     this.weightOverridesByKey = nextOverrides;
     this.metricDescriptions = nextMetricDescriptions;
     this.resolvedWeights = nextResolvedWeights;
+
+    logger.info(
+      `Loaded ${this.plugins.length} enabled plugin(s) with ${Object.keys(this.resolvedWeights).length} resolved weight entr${Object.keys(this.resolvedWeights).length === 1 ? "y" : "ies"}`,
+    );
   }
 
   getRuntimeState(): {
@@ -184,12 +189,14 @@ export class EloPluginEngine implements IEloPluginEngine {
     enabled: Record<string, boolean>;
     weightOverrides: Record<string, number>;
     resolvedWeights: Record<string, number>;
+    metricFactDependencies?: Map<string, Set<FactDomain>>;
   } {
     return {
       plugins: [...this.plugins],
       enabled: { ...this.enabledByKey },
       weightOverrides: { ...this.weightOverridesByKey },
       resolvedWeights: { ...this.resolvedWeights },
+      metricFactDependencies: buildMetricFactDependencyIndex(this.plugins),
     };
   }
 
@@ -382,7 +389,6 @@ export class EloPluginEngine implements IEloPluginEngine {
       plugins: sourcePlugins,
       overrides: configOverrides,
     });
-    logger.info(`Resolved weights for ${Object.keys(weights).length} plugins`);
     logger.debug("Resolved weights:", weights);
     return weights;
   }

@@ -218,6 +218,8 @@ describe("httpNip05Resolve persistent cache hooks", () => {
         } as never,
         {
           getResolution: async () => null,
+          getResolutionBatch: async (nip05s: string[]) =>
+            new Map(nip05s.map((nip05) => [nip05, null])),
           setResolution: async (input: {
             nip05: string;
             pubkey: string | null;
@@ -280,6 +282,15 @@ describe("httpNip05Resolve persistent cache hooks", () => {
             expect(nip05).toBe("alice@example.com");
             return { pubkey: "cached-pubkey" };
           },
+          getResolutionBatch: async (nip05s: string[]) =>
+            new Map(
+              nip05s.map((nip05) => [
+                nip05,
+                nip05 === "alice@example.com"
+                  ? { pubkey: "cached-pubkey" }
+                  : null,
+              ]),
+            ),
           setResolution: async () => {
             throw new Error(
               "setResolution should not be called on persisted cache hit",
@@ -304,6 +315,78 @@ describe("httpNip05Resolve persistent cache hooks", () => {
       expect(
         validationRunContext.nip05PreparedResults?.get("alice@example.com"),
       ).toEqual({ pubkey: "cached-pubkey" });
+      expect(fetchCalled).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("refresh stage skips live NIP-05 refresh when persisted cache already covers all candidates", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalled = false;
+
+    globalThis.fetch = (async () => {
+      fetchCalled = true;
+      throw new Error("fetch should not be called on cached stage reuse");
+    }) as unknown as typeof fetch;
+
+    try {
+      const validationRunContext: {
+        nip05PreparedResults?: LruCache<{ pubkey: string | null }>;
+        nip05LiveFetchDisabled?: boolean;
+      } = {};
+
+      const stage = new Nip05FactRefreshStage(
+        {
+          getBatch: async () =>
+            new Map([
+              ["pk-a", { nip05: "Alice@Example.com" }],
+              ["pk-b", { nip05: "bob@example.com" }],
+            ]),
+        } as never,
+        {
+          getResolution: async () => {
+            throw new Error(
+              "single lookup should not be used when batch cache is available",
+            );
+          },
+          getResolutionBatch: async (nip05s: string[]) =>
+            new Map(
+              nip05s.map((nip05) => [
+                nip05,
+                { pubkey: `${nip05}-cached-pubkey` },
+              ]),
+            ),
+          setResolution: async () => {
+            throw new Error(
+              "setResolution should not be called on cached stage reuse",
+            );
+          },
+        } as never,
+        {
+          capTimeoutMs: 1000,
+          nip05ResolveTimeoutMs: 500,
+          nip05CacheTtlSeconds: 3600,
+          nip05DomainCooldownSeconds: 600,
+        } as never,
+        1,
+      );
+
+      await stage.refresh({
+        pubkeys: ["pk-a", "pk-b"],
+        validationRunContext,
+      });
+
+      expect(
+        validationRunContext.nip05PreparedResults?.get("alice@example.com"),
+      ).toEqual({
+        pubkey: "alice@example.com-cached-pubkey",
+      });
+      expect(
+        validationRunContext.nip05PreparedResults?.get("bob@example.com"),
+      ).toEqual({
+        pubkey: "bob@example.com-cached-pubkey",
+      });
       expect(fetchCalled).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;

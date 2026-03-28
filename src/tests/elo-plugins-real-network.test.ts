@@ -7,6 +7,14 @@ import { CapabilityExecutor } from "@/capabilities/CapabilityExecutor";
 import { registerBuiltInCapabilities } from "@/capabilities/registerBuiltInCapabilities";
 import { runPlugin } from "@/plugins/EloPluginRunner";
 
+const REAL_NETWORK_PLUGIN_CONFIG = {
+  eloPluginTimeoutMs: 30_000,
+  capTimeoutMs: 12_000,
+  nip05ResolveTimeoutMs: 10_000,
+  nip05CacheTtlSeconds: 3600,
+  nip05DomainCooldownSeconds: 600,
+};
+
 const RUN_REAL_NETWORK_TESTS = process.env.RUN_REAL_NETWORK_TESTS === "true";
 
 // Real-world fixtures (operator-provided)
@@ -92,7 +100,7 @@ describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
           graph,
         },
         executor,
-        { eloPluginTimeoutMs: 30_000, capTimeoutMs: 12_000 },
+        REAL_NETWORK_PLUGIN_CONFIG,
       );
 
       expect(result.success).toBe(true);
@@ -127,7 +135,11 @@ describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
             graph,
           },
           executor,
-          { eloPluginTimeoutMs: 60_000, capTimeoutMs: 20_000 },
+          {
+            ...REAL_NETWORK_PLUGIN_CONFIG,
+            eloPluginTimeoutMs: 60_000,
+            capTimeoutMs: 20_000,
+          },
         );
 
         lastScore = result.score;
@@ -159,7 +171,7 @@ describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
           graph,
         },
         executor,
-        { eloPluginTimeoutMs: 30_000, capTimeoutMs: 12_000 },
+        REAL_NETWORK_PLUGIN_CONFIG,
       );
 
       expect(result.success).toBe(true);
@@ -187,7 +199,7 @@ describe("Elo Plugins - real-network dogfooding (opt-in)", () => {
           graph,
         },
         executor,
-        { eloPluginTimeoutMs: 30_000, capTimeoutMs: 12_000 },
+        REAL_NETWORK_PLUGIN_CONFIG,
       );
 
       expect(result.success).toBe(true);

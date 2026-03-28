@@ -13,7 +13,8 @@ export const graphPubkeyExists: CapabilityHandler = async (args, context) => {
     throw new Error("SocialGraph not available in context");
   }
 
-  const pubkey = args[0];
+  const pubkey =
+    Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
   if (!pubkey) {
     throw new Error("pubkey_exists requires a pubkey argument");
   }

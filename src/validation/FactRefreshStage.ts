@@ -1,13 +1,16 @@
 import type { ValidationRunContext } from "@/validation/ValidationRunContext";
+import type { FactDomain } from "@/validation/fact-dependencies";
 
 export interface FactRefreshStageContext {
   pubkeys: string[];
   sourcePubkey?: string;
   validationRunContext?: ValidationRunContext;
+  requiredFactDomains?: ReadonlySet<FactDomain>;
 }
 
 export interface FactRefreshStage {
   readonly label?: string;
+  readonly factDomain?: FactDomain;
   refresh(context: FactRefreshStageContext): Promise<void>;
 }
 

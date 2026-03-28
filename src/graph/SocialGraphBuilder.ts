@@ -141,7 +141,9 @@ export class SocialGraphBuilder {
     const pubkeysToCrawl: Set<string> = new Set([sourcePubkey]);
     let totalEventsFetched = 0;
 
-    for (let hop = 0; hop <= hops; hop++) {
+    const maxHopIndex = this.resolveMaxHopIndex(hops);
+
+    for (let hop = 0; hop <= maxHopIndex; hop++) {
       if (pubkeysToCrawl.size === 0) {
         logger.info(`🏁 Hop ${hop}: No new pubkeys to crawl.`);
         break;
@@ -226,5 +228,9 @@ export class SocialGraphBuilder {
       pubkeys: Array.from(crawledPubkeys),
       eventsFetched: totalEventsFetched,
     };
+  }
+
+  private resolveMaxHopIndex(hops: number): number {
+    return Math.max(0, hops - 1);
   }
 }

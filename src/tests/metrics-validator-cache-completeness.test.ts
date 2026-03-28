@@ -461,6 +461,7 @@ describe("MetricsValidator cache completeness", () => {
 
     let metadataRepositoryReads = 0;
     const metadataRepository = {
+      saveMany: async () => {},
       getBatch: async () => {
         metadataRepositoryReads++;
         return new Map([[targetPubkey, { pubkey: targetPubkey }]]);
@@ -525,6 +526,7 @@ describe("MetricsValidator cache completeness", () => {
   test("validateAllBatch delegates missing relay profile fallback to the injected profile fetcher", async () => {
     const targetPubkey = "pk-target";
     const metricKey = "pk:plugin_a";
+    let persistedProfiles: Array<{ pubkey: string }> = [];
 
     const repo = {
       get: async () => null,
@@ -536,6 +538,9 @@ describe("MetricsValidator cache completeness", () => {
     };
 
     const metadataRepository = {
+      saveMany: async (profiles: Array<{ pubkey: string }>) => {
+        persistedProfiles = profiles.map((profile) => ({ ...profile }));
+      },
       getBatch: async (pubkeys: string[]) => {
         expect(pubkeys).toEqual([targetPubkey]);
         return new Map([[targetPubkey, null]]);
@@ -584,8 +589,81 @@ describe("MetricsValidator cache completeness", () => {
     const results = await validator.validateAllBatch([targetPubkey]);
 
     expect(fetchedPubkeys).toEqual([targetPubkey]);
+    expect(persistedProfiles).toEqual([{ pubkey: targetPubkey }]);
     expect(evaluateBatchCalls).toBe(1);
     expect(results.get(targetPubkey)?.metrics[metricKey]).toBe(1);
+  });
+
+  test("validateAllBatch reuses persisted fallback placeholder metadata on the next run", async () => {
+    const targetPubkey = "pk-target";
+    const metricKey = "pk:plugin_a";
+    let savedProfiles = new Map<string, { pubkey: string } | null>([
+      [targetPubkey, null],
+    ]);
+
+    const repo = {
+      get: async () => null,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {},
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    const metadataRepository = {
+      getBatch: async (pubkeys: string[]) => {
+        return new Map(
+          pubkeys.map((pubkey) => [pubkey, savedProfiles.get(pubkey) ?? null]),
+        );
+      },
+      saveMany: async (profiles: Array<{ pubkey: string }>) => {
+        savedProfiles = new Map(
+          profiles.map((profile) => [profile.pubkey, { ...profile }]),
+        );
+      },
+    };
+
+    let fetchCalls = 0;
+    const profileFetcher: ProfileFetcher = {
+      fetchProfiles: async (pubkeys: string[]) => {
+        fetchCalls++;
+        return new Map(pubkeys.map((pubkey) => [pubkey, { pubkey }]));
+      },
+    };
+
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [{ pubkey: "pk", manifest: { name: "plugin_a" } }],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateBatchForPubkeys: async (input: { targetPubkeys: string[] }) =>
+        new Map(
+          input.targetPubkeys.map((pubkey) => [pubkey, { [metricKey]: 1 }]),
+        ),
+      evaluateForPubkey: async () => {
+        throw new Error("evaluateForPubkey should not be called");
+      },
+      getMetricDescriptions: () => ({ get: () => undefined }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      metadataRepository as never,
+      eloEngine as never,
+      undefined,
+      profileFetcher,
+    );
+
+    await validator.validateAllBatch([targetPubkey]);
+    await validator.validateAllBatch([targetPubkey]);
+
+    expect(fetchCalls).toBe(1);
   });
 
   test("validateAllBatch narrows recomputation to the requested metric scope", async () => {

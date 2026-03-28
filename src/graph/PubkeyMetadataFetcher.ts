@@ -98,6 +98,7 @@ export class PubkeyMetadataFetcher {
     );
 
     let totalProfilesFetched = 0;
+    const fetchedPubkeys = new Set<string>();
 
     try {
       // Fetch profile metadata with streaming to avoid memory accumulation
@@ -107,7 +108,10 @@ export class PubkeyMetadataFetcher {
         onBatch: async (events, batchIndex, totalBatches) => {
           if (events.length === 0) return;
 
-          const batchProfilesFetched = await this.processAndStoreBatch(events);
+          const batchProfilesFetched = await this.processAndStoreBatch(
+            events,
+            fetchedPubkeys,
+          );
           totalProfilesFetched += batchProfilesFetched;
 
           logger.debug(
@@ -115,6 +119,18 @@ export class PubkeyMetadataFetcher {
           );
         },
       });
+
+      const missingPubkeys = pubkeys.filter(
+        (pubkey) => !fetchedPubkeys.has(pubkey),
+      );
+      if (missingPubkeys.length > 0) {
+        await this.metadataRepository.saveMany(
+          missingPubkeys.map((pubkey) => ({ pubkey })),
+        );
+        logger.debug(
+          `✅ Persisted ${missingPubkeys.length.toLocaleString()} placeholder metadata entr${missingPubkeys.length === 1 ? "y" : "ies"} for pubkeys with no kind 0 event`,
+        );
+      }
 
       if (totalProfilesFetched === 0) {
         logger.warn("⚠️ No profile events found.");
@@ -145,7 +161,10 @@ export class PubkeyMetadataFetcher {
    * @param events Batch of profile events to process
    * @returns Number of profiles successfully processed and stored
    */
-  private async processAndStoreBatch(events: NostrEvent[]): Promise<number> {
+  private async processAndStoreBatch(
+    events: NostrEvent[],
+    fetchedPubkeys: Set<string>,
+  ): Promise<number> {
     const BATCH_SIZE = 250;
     let profilesStored = 0;
 
@@ -168,6 +187,8 @@ export class PubkeyMetadataFetcher {
       // Process validation for this batch (CPU intensive)
       for (const event of batchEvents) {
         try {
+          fetchedPubkeys.add(event.pubkey);
+
           if (!event.content) continue;
 
           const content = JSON.parse(event.content);

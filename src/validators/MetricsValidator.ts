@@ -460,6 +460,10 @@ export class MetricsValidator {
       missingProfilePubkeys,
     );
 
+    await this.metadataRepository.saveMany(
+      Array.from(fetchedProfiles.values()),
+    );
+
     for (const pubkey of missingProfilePubkeys) {
       cachedProfiles.set(pubkey, fetchedProfiles.get(pubkey) ?? { pubkey });
     }

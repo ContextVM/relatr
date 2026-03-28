@@ -55,6 +55,25 @@ export const CAPABILITY_CATALOG: CapabilityDefinition[] = [
     description: "Check if two pubkeys mutually follow each other",
   },
   {
+    name: "graph.distance_from_root",
+    envVar: "ENABLE_CAP_GRAPH_DISTANCE_FROM_ROOT",
+    defaultEnabled: true,
+    description: "Get the hop distance from the current graph root to a pubkey",
+  },
+  {
+    name: "graph.distance_between",
+    envVar: "ENABLE_CAP_GRAPH_DISTANCE_BETWEEN",
+    defaultEnabled: true,
+    description: "Get the hop distance between two pubkeys",
+  },
+  {
+    name: "graph.users_within_distance",
+    envVar: "ENABLE_CAP_GRAPH_USERS_WITHIN_DISTANCE",
+    defaultEnabled: true,
+    description:
+      "Get all pubkeys reachable within a given hop distance from the current root",
+  },
+  {
     name: "graph.degree",
     envVar: "ENABLE_CAP_GRAPH_DEGREE",
     defaultEnabled: true,

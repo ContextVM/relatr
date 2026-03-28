@@ -4,9 +4,18 @@
   "pubkey": "0f0c15457799aac79848730a6d466cd89bec73ad59973b4c52431bd2890974fe",
   "created_at": 1760000000,
   "tags": [
-    ["n", "nip05_valid"],
-    ["relatr-version", "^0.1.16"],
-    ["title", "NIP-05 valid"],
+    [
+      "n",
+      "nip05_valid"
+    ],
+    [
+      "relatr-version",
+      "^0.1.16"
+    ],
+    [
+      "title",
+      "NIP-05 valid"
+    ],
     [
       "description",
       "Scores 1.0 if a known NIP-05 identifier resolves to the target pubkey (fixed nip05 string for deterministic planning)."

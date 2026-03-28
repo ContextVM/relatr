@@ -4,9 +4,18 @@
   "pubkey": "0f0c15457799aac79848730a6d466cd89bec73ad59973b4c52431bd2890974fe",
   "created_at": 1760000000,
   "tags": [
-    ["n", "root_nip05"],
-    ["relatr-version", "^0.1.16"],
-    ["title", "Root NIP-05"],
+    [
+      "n",
+      "root_nip05"
+    ],
+    [
+      "relatr-version",
+      "^0.1.16"
+    ],
+    [
+      "title",
+      "Root NIP-05"
+    ],
     [
       "description",
       "Scores 1.0 if profile nip05 normalizes to '_@domain' (root)."

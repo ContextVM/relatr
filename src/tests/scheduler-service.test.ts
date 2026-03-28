@@ -259,6 +259,139 @@ describe("SchedulerService validation sync", () => {
     expect(refreshedPubkeys).toEqual([]);
   });
 
+  test("syncValidations reuses fallback-persisted metadata on the next run", async () => {
+    const allPubkeys = ["pk-a", "pk-b"];
+    const storedProfiles = new Map<string, { pubkey: string } | null>([
+      ["pk-a", { pubkey: "pk-a" }],
+      ["pk-b", null],
+    ]);
+    const refreshedPubkeys: string[][] = [];
+    const persistedProfiles: string[][] = [];
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => allPubkeys,
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              mkMetrics(pubkey, { "pk:plugin_b": 1 }),
+            ]),
+          ),
+      } as never,
+      {
+        getBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              storedProfiles.get(pubkey) ?? null,
+            ]),
+          ),
+        saveMany: async (profiles: Array<{ pubkey: string }>) => {
+          persistedProfiles.push(profiles.map((profile) => profile.pubkey));
+          for (const profile of profiles) {
+            storedProfiles.set(profile.pubkey, { ...profile });
+          }
+        },
+      } as never,
+      {
+        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
+          refreshedPubkeys.push([...pubkeys]);
+          for (const pubkey of pubkeys) {
+            storedProfiles.set(pubkey, { pubkey });
+          }
+          return {
+            success: true,
+            message: "ok",
+            profilesFetched: pubkeys.length,
+          };
+        },
+      } as never,
+      mkSettingsRepository() as never,
+      {} as never,
+      {} as never,
+    );
+
+    await scheduler.syncValidations(10);
+    await scheduler.syncValidations(10);
+
+    expect(refreshedPubkeys).toEqual([["pk-b"]]);
+    expect(persistedProfiles).toEqual([]);
+  });
+
+  test("syncValidations reuses placeholder metadata misses on the next run", async () => {
+    const allPubkeys = ["pk-a", "pk-b"];
+    const storedProfiles = new Map<string, { pubkey: string } | null>([
+      ["pk-a", { pubkey: "pk-a" }],
+      ["pk-b", null],
+    ]);
+    const refreshedPubkeys: string[][] = [];
+    const persistedProfiles: string[][] = [];
+
+    const metadataRepository = {
+      getBatch: async (pubkeys: string[]) =>
+        new Map(
+          pubkeys.map((pubkey) => [pubkey, storedProfiles.get(pubkey) ?? null]),
+        ),
+      saveMany: async (profiles: Array<{ pubkey: string }>) => {
+        persistedProfiles.push(profiles.map((profile) => profile.pubkey));
+        for (const profile of profiles) {
+          storedProfiles.set(profile.pubkey, { ...profile });
+        }
+      },
+    };
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => allPubkeys,
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [
+              pubkey,
+              mkMetrics(pubkey, { "pk:plugin_b": 1 }),
+            ]),
+          ),
+      } as never,
+      metadataRepository as never,
+      {
+        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
+          refreshedPubkeys.push([...pubkeys]);
+          await metadataRepository.saveMany(
+            pubkeys.map((pubkey) => ({ pubkey })),
+          );
+          return {
+            success: true,
+            message: "ok",
+            profilesFetched: 0,
+          };
+        },
+      } as never,
+      mkSettingsRepository() as never,
+      {} as never,
+      {} as never,
+    );
+
+    await scheduler.syncValidations(10);
+    await scheduler.syncValidations(10);
+
+    expect(refreshedPubkeys).toEqual([["pk-b"]]);
+    expect(persistedProfiles).toEqual([["pk-b"]]);
+  });
+
   test("syncValidations skips cleanly when the graph is empty", async () => {
     let validateAllBatchCalls = 0;
 
@@ -394,5 +527,68 @@ describe("SchedulerService validation sync", () => {
     await waitFor(() => seenMetricKeys.length === 1);
 
     expect(seenMetricKeys).toEqual([["pk:plugin_a"]]);
+  });
+
+  test("scheduleValidationWarmup preserves the latest queued metric keys while a run is active", async () => {
+    const firstRunGate = deferred<void>();
+    const secondRunGate = deferred<void>();
+    const seenMetricKeys: string[][] = [];
+    let runCount = 0;
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => ["pk-a"],
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (
+          _pubkeys: string[],
+          _sourcePubkey?: string,
+          metricKeys?: string[],
+        ) => {
+          runCount++;
+          seenMetricKeys.push([...(metricKeys ?? [])]);
+
+          if (runCount === 1) {
+            await firstRunGate.promise;
+          } else if (runCount === 2) {
+            await secondRunGate.promise;
+          }
+
+          return new Map([["pk-a", mkMetrics("pk-a", { "pk:plugin_a": 1 })]]);
+        },
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        fetchMetadata: async () => ({
+          success: true,
+          message: "ok",
+          profilesFetched: 1,
+        }),
+      } as never,
+      mkSettingsRepository() as never,
+      {} as never,
+      {} as never,
+    );
+
+    scheduler.scheduleValidationWarmup(undefined, ["pk:first"]);
+    await waitFor(() => runCount === 1);
+
+    scheduler.scheduleValidationWarmup(undefined, ["pk:second"]);
+    await Promise.resolve();
+    scheduler.scheduleValidationWarmup(undefined, ["pk:third"]);
+    await Promise.resolve();
+
+    firstRunGate.resolve();
+    await waitFor(() => runCount === 2);
+
+    expect(seenMetricKeys).toEqual([["pk:first"], ["pk:third"]]);
+
+    secondRunGate.resolve();
+    await Promise.resolve();
   });
 });

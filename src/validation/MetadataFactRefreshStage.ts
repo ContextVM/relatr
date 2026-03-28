@@ -12,6 +12,7 @@ type PreparedMetadataProfiles = Map<string, NostrProfile | null>;
 
 export class MetadataFactRefreshStage implements FactRefreshStage {
   readonly label = "metadata refresh";
+  readonly factDomain = "metadata" as const;
 
   constructor(
     private readonly metadataRepository: MetadataRepository,

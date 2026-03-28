@@ -10,12 +10,23 @@ import {
   type FactRefreshStage,
 } from "@/validation/FactRefreshStage";
 import type { ValidationRunContext } from "@/validation/ValidationRunContext";
+import {
+  resolveRequiredFactDomains,
+  type FactDomain,
+} from "@/validation/fact-dependencies";
 
 interface ValidationStageTimings {
   factRefresh: Array<{ label: string; durationMs: number }>;
   batchScoringMs: number;
   persistenceMs: number;
   fallbackMs: number;
+}
+
+interface ValidationRunSummary {
+  totalPubkeys: number;
+  metricKeyCount: number;
+  progress: ValidationSyncProgress;
+  timings: ValidationStageTimings;
 }
 
 export interface ValidationPipelineDeps {
@@ -31,9 +42,23 @@ interface ValidationSyncProgress {
   errorCount: number;
 }
 
+interface FactRefreshExecutionContext {
+  pubkeys: string[];
+  sourcePubkey?: string;
+  validationRunContext?: ValidationRunContext;
+  requiredFactDomains?: ReadonlySet<FactDomain>;
+}
+
+interface QueuedValidationSyncRequest {
+  batchSize: number;
+  sourcePubkey?: string;
+  metricKeys?: string[];
+}
+
 export class ValidationPipeline {
   private validationRunPromise: Promise<void> | null = null;
-  private validationRerunRequested = false;
+  private queuedValidationSyncRequest: QueuedValidationSyncRequest | null =
+    null;
 
   constructor(private readonly deps: ValidationPipelineDeps) {}
 
@@ -43,7 +68,11 @@ export class ValidationPipeline {
     metricKeys?: string[],
   ): Promise<void> {
     if (this.validationRunPromise) {
-      this.validationRerunRequested = true;
+      this.queuedValidationSyncRequest = {
+        batchSize,
+        sourcePubkey,
+        metricKeys: metricKeys ? [...metricKeys] : undefined,
+      };
       logger.info(
         "⏳ Validation sync already in progress, queuing follow-up run",
       );
@@ -57,19 +86,21 @@ export class ValidationPipeline {
     ).finally(async () => {
       this.validationRunPromise = null;
 
-      if (!this.validationRerunRequested) {
+      const queuedRequest = this.queuedValidationSyncRequest;
+      this.queuedValidationSyncRequest = null;
+
+      if (!queuedRequest) {
         return;
       }
 
-      this.validationRerunRequested = false;
       logger.info("🔄 Starting queued follow-up validation sync");
 
       try {
         queueMicrotask(async () => {
           await this.scheduleValidationSync(
-            batchSize,
-            sourcePubkey,
-            metricKeys,
+            queuedRequest.batchSize,
+            queuedRequest.sourcePubkey,
+            queuedRequest.metricKeys,
           ).catch((error) => {
             logger.error(
               "Follow-up validation warm-up failed:",
@@ -136,7 +167,7 @@ export class ValidationPipeline {
       }
 
       logger.info(
-        `🔍 Validating ${allPubkeys.length.toLocaleString()} pubkeys against the current validator set`,
+        `🔍 Reconciling validation coverage for ${allPubkeys.length.toLocaleString()} pubkeys against the current validator set`,
       );
 
       if (metricKeys && metricKeys.length > 0) {
@@ -145,12 +176,15 @@ export class ValidationPipeline {
         );
       }
 
+      const requiredFactDomains = this.resolveRequiredFactDomains(metricKeys);
+
       await this.runFactRefreshStages(
         this.getFactRefreshStage(),
         {
           pubkeys: allPubkeys,
           sourcePubkey: effectiveSourcePubkey,
           validationRunContext,
+          requiredFactDomains,
         },
         timings,
       );
@@ -165,7 +199,7 @@ export class ValidationPipeline {
 
       for (const [index, batch] of batches.entries()) {
         logger.info(
-          `🔄 Processing validation batch ${index + 1} of ${batches.length} (${batch.length} pubkeys)`,
+          `🔄 Checking validation batch ${index + 1} of ${batches.length} (${batch.length} pubkeys)`,
         );
 
         try {
@@ -207,9 +241,14 @@ export class ValidationPipeline {
       }
 
       this.logStageTimings(timings);
-
-      logger.info(
-        `✅ Validation sync completed in ${nowMs() - startTime}ms. Processed: ${progress.processedCount}, Successful: ${progress.successCount}, Failed: ${progress.errorCount}`,
+      this.logCompletionSummary(
+        {
+          totalPubkeys: allPubkeys.length,
+          metricKeyCount: metricKeys?.length ?? 0,
+          progress,
+          timings,
+        },
+        nowMs() - startTime,
       );
     } catch (error) {
       logger.error(
@@ -254,15 +293,22 @@ export class ValidationPipeline {
 
   private async runFactRefreshStages(
     stage: FactRefreshStage,
-    context: {
-      pubkeys: string[];
-      sourcePubkey?: string;
-      validationRunContext?: ValidationRunContext;
-    },
+    context: FactRefreshExecutionContext,
     timings: ValidationStageTimings,
   ): Promise<void> {
     if (stage instanceof CompositeFactRefreshStage) {
       for (const innerStage of stage.getStages()) {
+        if (
+          innerStage.factDomain &&
+          context.requiredFactDomains &&
+          !context.requiredFactDomains.has(innerStage.factDomain)
+        ) {
+          logger.info(
+            `⏭️ Skipping ${innerStage.label ?? innerStage.factDomain} because it is not required for the selected metric scope`,
+          );
+          continue;
+        }
+
         await this.runFactRefreshStages(innerStage, context, timings);
       }
       return;
@@ -272,6 +318,40 @@ export class ValidationPipeline {
     const startedAt = nowMs();
     await stage.refresh(context);
     timings.factRefresh.push({ label, durationMs: nowMs() - startedAt });
+  }
+
+  private resolveRequiredFactDomains(
+    metricKeys?: string[],
+  ): Set<FactDomain> | undefined {
+    const metricsValidatorWithEngine = this.deps
+      .metricsValidator as unknown as {
+      eloEngine?: {
+        getRuntimeState(): {
+          plugins: Array<{ pubkey: string; manifest: { name: string } }>;
+          metricFactDependencies?: Map<string, Set<FactDomain>>;
+        };
+      };
+    };
+
+    if (!metricsValidatorWithEngine.eloEngine) {
+      return undefined;
+    }
+
+    const runtime = metricsValidatorWithEngine.eloEngine.getRuntimeState();
+    const metricDependencies = runtime.metricFactDependencies;
+
+    if (!metricDependencies) {
+      return undefined;
+    }
+
+    return resolveRequiredFactDomains({
+      metricKeys,
+      availableMetricKeys: runtime.plugins.map(
+        (plugin: { pubkey: string; manifest: { name: string } }) =>
+          `${plugin.pubkey}:${plugin.manifest.name}`,
+      ),
+      metricDependencies,
+    });
   }
 
   private createBatches(pubkeys: string[], batchSize: number): string[][] {
@@ -351,7 +431,33 @@ export class ValidationPipeline {
     totalPubkeys: number,
   ): void {
     logger.info(
-      `📈 Progress: ${progress.processedCount}/${totalPubkeys} processed, ${progress.successCount} successful, ${progress.errorCount} failed`,
+      `📈 Validation coverage progress: ${progress.processedCount}/${totalPubkeys} checked, ${progress.successCount} ready, ${progress.errorCount} failed`,
+    );
+  }
+
+  private logCompletionSummary(
+    summary: ValidationRunSummary,
+    durationMs: number,
+  ): void {
+    const { totalPubkeys, metricKeyCount, progress, timings } = summary;
+    const scopeLabel =
+      metricKeyCount > 0
+        ? `${metricKeyCount.toLocaleString()} requested metric${metricKeyCount === 1 ? "" : "s"}`
+        : "full validator set";
+
+    if (
+      progress.errorCount === 0 &&
+      timings.fallbackMs === 0 &&
+      timings.persistenceMs === 0
+    ) {
+      logger.info(
+        `✅ Validation sync completed in ${durationMs}ms. All ${progress.successCount.toLocaleString()}/${totalPubkeys.toLocaleString()} pubkeys were already ready for ${scopeLabel}; no metric persistence or fallback recovery was needed.`,
+      );
+      return;
+    }
+
+    logger.info(
+      `✅ Validation sync completed in ${durationMs}ms. Checked ${progress.processedCount.toLocaleString()}/${totalPubkeys.toLocaleString()} pubkeys for ${scopeLabel}; ${progress.successCount.toLocaleString()} ready, ${progress.errorCount.toLocaleString()} failed.`,
     );
   }
 

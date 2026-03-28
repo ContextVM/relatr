@@ -5,6 +5,7 @@ import type { RelatrConfig, ProfileMetrics } from "../types";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { normalizeDistance, nowSeconds } from "@/utils/utils";
 import { DEFAULT_DISTANCE_WEIGHT } from "../config";
+import { SocialGraphBuilder } from "@/graph/SocialGraphBuilder";
 
 /**
  * Tests for TrustCalculator and SocialGraph core algorithms
@@ -327,6 +328,42 @@ describe("SocialGraph - Basic Operations", () => {
     expect(stats).toHaveProperty("sizeByDistance");
     expect(stats.users).toBeGreaterThanOrEqual(0);
     expect(stats.follows).toBeGreaterThanOrEqual(0);
+  });
+
+  test("should map users to unique graph pubkeys instead of total follows", async () => {
+    const dbManager = DatabaseManager.getInstance(":memory:");
+    const isolatedGraph = new SocialGraph(dbManager.getWriteConnection());
+    const stubGraph = {
+      getStats: async () => ({
+        totalFollows: 696,
+        uniqueFollowers: 128,
+        uniqueFollowed: 256,
+      }),
+      getDistanceDistribution: async () => ({ 1: 2, 2: 126 }),
+    };
+
+    Object.assign(isolatedGraph as unknown as Record<string, unknown>, {
+      initialized: true,
+      graph: stubGraph,
+    });
+
+    await expect(isolatedGraph.getStats()).resolves.toEqual({
+      users: 128,
+      follows: 696,
+      sizeByDistance: { 1: 2, 2: 126 },
+    });
+  });
+
+  test("hop count 1 resolves to a single root expansion", () => {
+    const builder = new SocialGraphBuilder({} as never);
+    const resolveMaxHopIndex = Reflect.get(
+      builder as unknown as Record<string, unknown>,
+      "resolveMaxHopIndex",
+    ) as (hops: number) => number;
+
+    expect(resolveMaxHopIndex(1)).toBe(0);
+    expect(resolveMaxHopIndex(2)).toBe(1);
+    expect(resolveMaxHopIndex(3)).toBe(2);
   });
 
   test("should switch root pubkey", async () => {

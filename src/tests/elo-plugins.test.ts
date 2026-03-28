@@ -13,6 +13,15 @@ import {
   nip05DomainOf,
   normalizeNip05,
 } from "@/capabilities/http/utils/httpNip05Normalize";
+import { registerBuiltInCapabilities } from "@/capabilities/registerBuiltInCapabilities";
+
+const TEST_PLUGIN_CONFIG = {
+  eloPluginTimeoutMs: 1000,
+  capTimeoutMs: 1000,
+  nip05ResolveTimeoutMs: 1000,
+  nip05CacheTtlSeconds: 60,
+  nip05DomainCooldownSeconds: 60,
+};
 
 describe("Elo Plugins - Runner Integration", () => {
   let registry: CapabilityRegistry;
@@ -59,10 +68,7 @@ describe("Elo Plugins - Runner Integration", () => {
       plugin,
       context,
       executor,
-      {
-        eloPluginTimeoutMs: 1000,
-        capTimeoutMs: 1000,
-      },
+      TEST_PLUGIN_CONFIG,
       planningStore,
     );
 
@@ -90,10 +96,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     expect(result.success).toBe(true);
     expect(result.score).toBe(1.0);
@@ -120,10 +128,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     expect(result.success).toBe(true);
     expect(result.score).toBe(1.0);
@@ -165,10 +175,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    await runPlugins([plugin1, plugin2], { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    await runPlugins(
+      [plugin1, plugin2],
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     expect(callCount).toBe(1);
   });
@@ -210,10 +222,7 @@ describe("Elo Plugins - Runner Integration", () => {
       [pluginA, pluginB],
       { targetPubkey: "t1" },
       executor,
-      {
-        eloPluginTimeoutMs: 1000,
-        capTimeoutMs: 1000,
-      },
+      TEST_PLUGIN_CONFIG,
     );
 
     expect(metrics["pk_a:same_name"]).toBe(1.0);
@@ -269,14 +278,14 @@ describe("Elo Plugins - Runner Integration", () => {
       plugin1,
       { targetPubkey: "t1" },
       executor,
-      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1000 },
+      TEST_PLUGIN_CONFIG,
       planningStore,
     );
     const result2 = await runPlugin(
       plugin2,
       { targetPubkey: "t1" },
       executor,
-      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1000 },
+      TEST_PLUGIN_CONFIG,
       planningStore,
     );
 
@@ -315,7 +324,7 @@ describe("Elo Plugins - Runner Integration", () => {
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
+      ...TEST_PLUGIN_CONFIG,
       capTimeoutMs: 1,
     });
 
@@ -342,8 +351,7 @@ describe("Elo Plugins - Runner Integration", () => {
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
+      ...TEST_PLUGIN_CONFIG,
       maxRoundsPerPlugin: 2,
     });
 
@@ -370,8 +378,7 @@ describe("Elo Plugins - Runner Integration", () => {
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
+      ...TEST_PLUGIN_CONFIG,
       maxRequestsPerRound: 1,
     });
 
@@ -398,8 +405,7 @@ describe("Elo Plugins - Runner Integration", () => {
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
+      ...TEST_PLUGIN_CONFIG,
       maxTotalRequestsPerPlugin: 1,
     });
 
@@ -424,10 +430,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     expect(result.success).toBe(false);
     expect(result.score).toBe(0.0);
@@ -451,10 +459,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     expect(result.success).toBe(false);
     expect(result.score).toBe(0.0);
@@ -498,10 +508,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    await runPlugins([plugin1, plugin2], { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    await runPlugins(
+      [plugin1, plugin2],
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     // If canonicalization is stable, these should dedupe.
     expect(callCount).toBe(1);
@@ -532,7 +544,7 @@ describe("Elo Plugins - Runner Integration", () => {
       plugin,
       { targetPubkey: "t1" },
       executor,
-      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1000 },
+      TEST_PLUGIN_CONFIG,
       planningStore,
     );
 
@@ -564,8 +576,7 @@ describe("Elo Plugins - Runner Integration", () => {
     };
 
     const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
+      ...TEST_PLUGIN_CONFIG,
       maxRequestsPerRound: 1,
     });
 
@@ -592,10 +603,12 @@ describe("Elo Plugins - Runner Integration", () => {
       rawEvent: {} as NostrEvent,
     };
 
-    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
-      eloPluginTimeoutMs: 1000,
-      capTimeoutMs: 1000,
-    });
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
 
     expect(result.success).toBe(false);
     expect(result.score).toBe(0.0);
@@ -671,9 +684,124 @@ describe("Capability Run Cache Wiring", () => {
       plugin,
       { targetPubkey: "t1", capRunCache: cache },
       executor,
-      { eloPluginTimeoutMs: 1000, capTimeoutMs: 1000 },
+      TEST_PLUGIN_CONFIG,
     );
 
     expect(receivedCapRunCache).toBe(cache);
+  });
+});
+
+describe("Built-in graph capabilities", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+
+  beforeEach(() => {
+    registry = new CapabilityRegistry();
+    registerBuiltInCapabilities(registry);
+    executor = new CapabilityExecutor(registry);
+  });
+
+  test("graph.distance_from_root should return distance from current root", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_graph_distance_from_root",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan d = do 'graph.distance_from_root' {pubkey: _.targetPubkey} in if d == 3 then 1.0 else 0.0",
+      manifest: {
+        name: "p_graph_distance_from_root",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const graph = {
+      isInitialized: () => true,
+      getDistance: async (pubkey: string) => (pubkey === "target-1" ? 3 : 1000),
+    } as unknown as import("../graph/SocialGraph").SocialGraph;
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "target-1", graph },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+
+  test("graph.distance_between should return distance between two pubkeys", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_graph_distance_between",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan d = do 'graph.distance_between' {sourcePubkey: _.sourcePubkey, targetPubkey: _.targetPubkey} in if d == 2 then 1.0 else 0.0",
+      manifest: {
+        name: "p_graph_distance_between",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const graph = {
+      isInitialized: () => true,
+      getDistanceBetween: async (sourcePubkey: string, targetPubkey: string) =>
+        sourcePubkey === "source-1" && targetPubkey === "target-1" ? 2 : 1000,
+    } as unknown as import("../graph/SocialGraph").SocialGraph;
+
+    const result = await runPlugin(
+      plugin,
+      { sourcePubkey: "source-1", targetPubkey: "target-1", graph },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+
+  test("graph.users_within_distance should return pubkeys reachable within N hops", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_graph_users_within_distance",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan users = do 'graph.users_within_distance' {distance: 2} in if length(users | []) == 3 then 1.0 else 0.0",
+      manifest: {
+        name: "p_graph_users_within_distance",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const graph = {
+      isInitialized: () => true,
+      getUsersUpToDistance: async (distance: number) =>
+        distance === 2 ? ["pk-a", "pk-b", "pk-c"] : [],
+    } as unknown as import("../graph/SocialGraph").SocialGraph;
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "target-1", graph },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
   });
 });

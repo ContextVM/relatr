@@ -1,6 +1,7 @@
 import { MetricDescriptionRegistry } from "../validators/MetricDescriptionRegistry";
 import type { IEloPluginEngine } from "./EloPluginEngine";
 import type { CapabilityRunCache, PortablePlugin } from "./plugin-types";
+import type { FactDomain } from "@/validation/fact-dependencies";
 
 /**
  * NullEloPluginEngine - Null-object implementation of EloPluginEngine
@@ -43,12 +44,14 @@ export class NullEloPluginEngine implements IEloPluginEngine {
     enabled: Record<string, boolean>;
     weightOverrides: Record<string, number>;
     resolvedWeights: Record<string, number>;
+    metricFactDependencies?: Map<string, Set<FactDomain>>;
   } {
     return {
       plugins: [],
       enabled: {},
       weightOverrides: {},
       resolvedWeights: {},
+      metricFactDependencies: new Map(),
     };
   }
 

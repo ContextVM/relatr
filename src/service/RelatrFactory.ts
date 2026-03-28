@@ -35,6 +35,15 @@ import { nowMs } from "@/utils/utils";
 import { PluginManager } from "@/plugins/PluginManager";
 import { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
 
+const GRAPH_BOOTSTRAP_SIGNATURE_KEY = "graph.bootstrap.signature.v1";
+
+type GraphBootstrapSignature = {
+  status: "in_progress" | "complete";
+  sourcePubkey: string;
+  hops: number;
+  completedAt?: number;
+};
+
 export class RelatrFactory {
   static async createRelatrService(
     config: RelatrConfig,
@@ -107,7 +116,7 @@ export class RelatrFactory {
       const nip05CacheStore = new Nip05CacheStore(settingsRepository);
 
       // Step 5: Check if social graph exists and handle first-time setup
-      let graphExists = false;
+      let graphTablesExist = false;
       try {
         const result = await readConnection.run(`
                     SELECT EXISTS (
@@ -118,26 +127,62 @@ export class RelatrFactory {
                 `);
         const rows = await result.getRows();
         const row = rows[0] as unknown[];
-        graphExists = Boolean(row[0]);
+        graphTablesExist = Boolean(row[0]);
       } catch (error) {
         logger.warn(
           "Failed to check if social graph exists (expected during first-time setup):",
           error instanceof Error ? error.message : String(error),
         );
-        graphExists = false;
+        graphTablesExist = false;
       }
+
+      const graphBootstrapSignature =
+        await RelatrFactory.readGraphBootstrapSignature(settingsRepository);
+      const shouldReuseExistingGraph =
+        graphTablesExist &&
+        graphBootstrapSignature?.status === "complete" &&
+        graphBootstrapSignature.sourcePubkey ===
+          validatedConfig.defaultSourcePubkey &&
+        graphBootstrapSignature.hops === validatedConfig.numberOfHops;
 
       let creationResult: SocialGraphCreationResult | undefined;
 
-      if (!graphExists) {
-        logger.info(
-          "Social graph tables not found in database. Creating new graph...",
-        );
+      if (!shouldReuseExistingGraph) {
+        if (!graphTablesExist) {
+          logger.info(
+            "Social graph tables not found in database. Creating new graph...",
+          );
+        } else if (!graphBootstrapSignature) {
+          logger.info(
+            "Social graph bootstrap signature missing. Rebuilding graph...",
+          );
+        } else if (graphBootstrapSignature.status !== "complete") {
+          logger.info(
+            "Social graph bootstrap was interrupted. Rebuilding graph...",
+          );
+        } else {
+          logger.info(
+            "Social graph bootstrap signature does not match current configuration. Rebuilding graph...",
+          );
+        }
+
+        await RelatrFactory.writeGraphBootstrapSignature(settingsRepository, {
+          status: "in_progress",
+          sourcePubkey: validatedConfig.defaultSourcePubkey,
+          hops: validatedConfig.numberOfHops,
+        });
 
         creationResult = await socialGraphBuilder.createGraph({
           sourcePubkey: validatedConfig.defaultSourcePubkey,
           hops: validatedConfig.numberOfHops,
           connection: writeConnection,
+        });
+
+        await RelatrFactory.writeGraphBootstrapSignature(settingsRepository, {
+          status: "complete",
+          sourcePubkey: validatedConfig.defaultSourcePubkey,
+          hops: validatedConfig.numberOfHops,
+          completedAt: nowMs(),
         });
         logger.info("Social graph created successfully.");
       }
@@ -272,7 +317,7 @@ export class RelatrFactory {
 
       // Step 11: If this is the first time running, fetch initial metadata
       if (
-        !graphExists &&
+        !shouldReuseExistingGraph &&
         (await metadataRepository.getStats()).totalEntries === 0
       ) {
         logger.info("Fetching initial profile metadata...");
@@ -392,5 +437,52 @@ export class RelatrFactory {
    */
   private static extractDataDirectory(filePath: string): string {
     return dirname(filePath);
+  }
+
+  private static async readGraphBootstrapSignature(
+    settingsRepository: ISettingsRepository,
+  ): Promise<GraphBootstrapSignature | null> {
+    const raw = await settingsRepository.get(GRAPH_BOOTSTRAP_SIGNATURE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<GraphBootstrapSignature>;
+
+      if (
+        (parsed.status !== "in_progress" && parsed.status !== "complete") ||
+        typeof parsed.sourcePubkey !== "string" ||
+        typeof parsed.hops !== "number"
+      ) {
+        return null;
+      }
+
+      return {
+        status: parsed.status,
+        sourcePubkey: parsed.sourcePubkey,
+        hops: parsed.hops,
+        completedAt:
+          typeof parsed.completedAt === "number"
+            ? parsed.completedAt
+            : undefined,
+      };
+    } catch (error) {
+      logger.warn(
+        "Failed to parse social graph bootstrap signature:",
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    }
+  }
+
+  private static async writeGraphBootstrapSignature(
+    settingsRepository: ISettingsRepository,
+    signature: GraphBootstrapSignature,
+  ): Promise<void> {
+    await settingsRepository.set(
+      GRAPH_BOOTSTRAP_SIGNATURE_KEY,
+      JSON.stringify(signature),
+    );
   }
 }

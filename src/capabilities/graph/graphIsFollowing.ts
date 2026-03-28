@@ -13,8 +13,10 @@ export const graphIsFollowing: CapabilityHandler = async (args, context) => {
     throw new Error("SocialGraph not available in context");
   }
 
-  const followerPubkey = args[0];
-  const followedPubkey = args[1];
+  const followerPubkey =
+    Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
+  const followedPubkey =
+    Array.isArray(args) && typeof args[1] === "string" ? args[1] : null;
 
   if (!followerPubkey || !followedPubkey) {
     throw new Error(

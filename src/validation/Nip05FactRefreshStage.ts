@@ -13,6 +13,7 @@ import { mapWithConcurrency } from "@/utils/mapWithConcurrency";
 
 export class Nip05FactRefreshStage implements FactRefreshStage {
   readonly label = "NIP-05 refresh";
+  readonly factDomain = "nip05" as const;
   private readonly preparedResults = new LruCache<{ pubkey: string | null }>(
     10000,
   );
@@ -39,8 +40,29 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
       return;
     }
 
+    const persistedResolutions = await this.nip05CacheStore.getResolutionBatch(
+      Array.from(candidates.keys()),
+    );
+    const refreshTargets = Array.from(candidates.keys()).filter(
+      (formattedNip05) => {
+        const cached = persistedResolutions.get(formattedNip05) ?? null;
+        if (cached) {
+          preparedResults.set(formattedNip05, cached);
+          return false;
+        }
+        return true;
+      },
+    );
+
+    if (refreshTargets.length === 0) {
+      logger.info(
+        `🪪 Reused ${candidates.size.toLocaleString()} cached NIP-05 facts before scoring`,
+      );
+      return;
+    }
+
     logger.info(
-      `🪪 Refreshing ${candidates.size.toLocaleString()} unique NIP-05 facts before scoring`,
+      `🪪 Refreshing ${refreshTargets.length.toLocaleString()} unique NIP-05 facts before scoring (${(candidates.size - refreshTargets.length).toLocaleString()} reused from cache)`,
     );
 
     const timeoutMs = Math.min(
@@ -49,7 +71,7 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
     );
 
     await mapWithConcurrency(
-      Array.from(candidates.keys()),
+      refreshTargets,
       this.concurrency,
       async (formattedNip05) => {
         await this.prepareResolution(
