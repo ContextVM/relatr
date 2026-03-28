@@ -1,5 +1,6 @@
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { Logger } from "../../utils/Logger";
+import { readRequiredStringArg, requireGraph } from "./graphRuntimeGuards";
 
 const logger = new Logger({ service: "graphDistanceFromRoot" });
 
@@ -10,24 +11,12 @@ export const graphDistanceFromRoot: CapabilityHandler = async (
   args,
   context,
 ) => {
-  const graph = context.graph;
-
-  if (!graph) {
-    throw new Error("SocialGraph not available in context");
-  }
-
-  const pubkey =
-    args &&
-    typeof args === "object" &&
-    typeof (args as { pubkey?: unknown }).pubkey === "string"
-      ? (args as { pubkey: string }).pubkey
-      : null;
-
-  if (!pubkey) {
-    throw new Error(
-      "graph.distance_from_root requires a 'pubkey' field in the arguments object",
-    );
-  }
+  const graph = requireGraph(context);
+  const pubkey = readRequiredStringArg(
+    "graph.distance_from_root",
+    args,
+    "pubkey",
+  );
 
   if (!graph.isInitialized()) {
     logger.warn("SocialGraph not initialized, returning safe defaults");

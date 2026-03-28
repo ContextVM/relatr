@@ -1,5 +1,6 @@
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { Logger } from "../../utils/Logger";
+import { readRequiredStringArg, requireGraph } from "./graphRuntimeGuards";
 
 const logger = new Logger({ service: "graphAreMutual" });
 
@@ -7,30 +8,9 @@ const logger = new Logger({ service: "graphAreMutual" });
  * Check if two pubkeys mutually follow each other
  */
 export const graphAreMutual: CapabilityHandler = async (args, context) => {
-  const graph = context.graph;
-
-  if (!graph) {
-    throw new Error("SocialGraph not available in context");
-  }
-
-  const pubkey1 =
-    args &&
-    typeof args === "object" &&
-    typeof (args as { a?: unknown }).a === "string"
-      ? (args as { a: string }).a
-      : null;
-  const pubkey2 =
-    args &&
-    typeof args === "object" &&
-    typeof (args as { b?: unknown }).b === "string"
-      ? (args as { b: string }).b
-      : null;
-
-  if (!pubkey1 || !pubkey2) {
-    throw new Error(
-      "are_mutual requires 'a' and 'b' fields in arguments object",
-    );
-  }
+  const graph = requireGraph(context);
+  const pubkey1 = readRequiredStringArg("graph.are_mutual", args, "a");
+  const pubkey2 = readRequiredStringArg("graph.are_mutual", args, "b");
 
   if (!graph.isInitialized()) {
     logger.warn("SocialGraph not initialized, returning safe defaults");

@@ -1,5 +1,6 @@
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { Logger } from "../../utils/Logger";
+import { readRequiredStringArg, requireGraph } from "./graphRuntimeGuards";
 
 const logger = new Logger({ service: "graphPubkeyExists" });
 
@@ -7,17 +8,8 @@ const logger = new Logger({ service: "graphPubkeyExists" });
  * Check if a pubkey exists in the graph
  */
 export const graphPubkeyExists: CapabilityHandler = async (args, context) => {
-  const graph = context.graph;
-
-  if (!graph) {
-    throw new Error("SocialGraph not available in context");
-  }
-
-  const pubkey =
-    Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
-  if (!pubkey) {
-    throw new Error("pubkey_exists requires a pubkey argument");
-  }
+  const graph = requireGraph(context);
+  const pubkey = readRequiredStringArg("graph.pubkey_exists", args, "pubkey");
 
   if (!graph.isInitialized()) {
     logger.warn("SocialGraph not initialized, returning safe defaults");

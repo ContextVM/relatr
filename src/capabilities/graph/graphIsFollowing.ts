@@ -1,5 +1,6 @@
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { Logger } from "../../utils/Logger";
+import { readRequiredStringArg, requireGraph } from "./graphRuntimeGuards";
 
 const logger = new Logger({ service: "graphIsFollowing" });
 
@@ -7,22 +8,17 @@ const logger = new Logger({ service: "graphIsFollowing" });
  * Check if followerPubkey follows followedPubkey
  */
 export const graphIsFollowing: CapabilityHandler = async (args, context) => {
-  const graph = context.graph;
-
-  if (!graph) {
-    throw new Error("SocialGraph not available in context");
-  }
-
-  const followerPubkey =
-    Array.isArray(args) && typeof args[0] === "string" ? args[0] : null;
-  const followedPubkey =
-    Array.isArray(args) && typeof args[1] === "string" ? args[1] : null;
-
-  if (!followerPubkey || !followedPubkey) {
-    throw new Error(
-      "is_following requires followerPubkey and followedPubkey arguments",
-    );
-  }
+  const graph = requireGraph(context);
+  const followerPubkey = readRequiredStringArg(
+    "graph.is_following",
+    args,
+    "followerPubkey",
+  );
+  const followedPubkey = readRequiredStringArg(
+    "graph.is_following",
+    args,
+    "followedPubkey",
+  );
 
   if (!graph.isInitialized()) {
     logger.warn("SocialGraph not initialized, returning safe defaults");

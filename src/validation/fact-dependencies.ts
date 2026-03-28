@@ -1,6 +1,8 @@
+import { RELATR_CAPABILITIES } from "@contextvm/relo";
+
 export type FactDomain = "metadata" | "nip05";
 
-const HTTP_NIP05_RESOLVE_CAPABILITY = "http.nip05_resolve";
+const HTTP_NIP05_RESOLVE_CAPABILITY = RELATR_CAPABILITIES.httpNip05Resolve;
 
 function pluginKeyOf(plugin: {
   pubkey: string;

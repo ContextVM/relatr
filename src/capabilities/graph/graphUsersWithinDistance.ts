@@ -1,5 +1,9 @@
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { Logger } from "../../utils/Logger";
+import {
+  readRequiredNonNegativeNumberArg,
+  requireGraph,
+} from "./graphRuntimeGuards";
 
 const logger = new Logger({ service: "graphUsersWithinDistance" });
 
@@ -10,24 +14,12 @@ export const graphUsersWithinDistance: CapabilityHandler = async (
   args,
   context,
 ) => {
-  const graph = context.graph;
-
-  if (!graph) {
-    throw new Error("SocialGraph not available in context");
-  }
-
-  const distance =
-    args &&
-    typeof args === "object" &&
-    typeof (args as { distance?: unknown }).distance === "number"
-      ? (args as { distance: number }).distance
-      : null;
-
-  if (distance === null || !Number.isFinite(distance) || distance < 0) {
-    throw new Error(
-      "graph.users_within_distance requires a non-negative numeric 'distance' field in the arguments object",
-    );
-  }
+  const graph = requireGraph(context);
+  const distance = readRequiredNonNegativeNumberArg(
+    "graph.users_within_distance",
+    args,
+    "distance",
+  );
 
   if (!graph.isInitialized()) {
     logger.warn("SocialGraph not initialized, returning safe defaults");

@@ -12,7 +12,8 @@
       "@config/*": ["./src/config/*"],
       "@services/*": ["./src/services/*"],
       "@mcp/*": ["./src/mcp/*"],
-      "process-pastry": ["./src/types/process-pastry.d.ts"]
+      "process-pastry": ["./src/types/process-pastry.d.ts"],
+      "relo": ["./relo/src/index.ts"]
     }
   },
   "include": ["src/**/*", "config-ui/**/*", "manager.ts"],

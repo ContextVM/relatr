@@ -8,6 +8,7 @@ import type {
 import type { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
 import { Logger } from "../utils/Logger";
 import { PlanningStore } from "./PlanningStore";
+import { RELATR_CAPABILITIES } from "@contextvm/relo";
 import {
   compilePluginProgram,
   evalExprAtPlanTime,
@@ -217,7 +218,8 @@ async function runPluginInternal(
               // This improves request-key dedupe and downstream caching while
               // keeping plugin semantics unchanged.
               if (
-                binding.value.capName === "http.nip05_resolve" &&
+                binding.value.capName ===
+                  RELATR_CAPABILITIES.httpNip05Resolve &&
                 argsValue &&
                 typeof argsValue === "object" &&
                 typeof (argsValue as { nip05?: string }).nip05 === "string"

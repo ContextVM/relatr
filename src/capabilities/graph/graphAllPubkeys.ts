@@ -1,5 +1,6 @@
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { Logger } from "../../utils/Logger";
+import { requireGraph } from "./graphRuntimeGuards";
 
 const logger = new Logger({ service: "graphAllPubkeys" });
 
@@ -7,11 +8,7 @@ const logger = new Logger({ service: "graphAllPubkeys" });
  * Get all unique pubkeys in the social graph
  */
 export const graphAllPubkeys: CapabilityHandler = async (_args, context) => {
-  const graph = context.graph;
-
-  if (!graph) {
-    throw new Error("SocialGraph not available in context");
-  }
+  const graph = requireGraph(context);
 
   if (!graph.isInitialized()) {
     logger.warn("SocialGraph not initialized, returning safe defaults");

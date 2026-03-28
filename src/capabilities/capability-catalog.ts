@@ -1,7 +1,4 @@
-/**
- * Centralized capability catalog
- * Single source of truth for all capability definitions
- */
+import { RELATR_CAPABILITY_DEFINITIONS } from "@contextvm/relo";
 
 export interface CapabilityDefinition {
   name: string;
@@ -10,82 +7,73 @@ export interface CapabilityDefinition {
   description: string;
 }
 
-/**
- * Canonical list of all available capabilities
- * This list drives:
- * - Manifest validation (valid cap names)
- * - Environment variable initialization
- * - Default enablement behavior
- */
-export const CAPABILITY_CATALOG: CapabilityDefinition[] = [
-  {
-    name: "nostr.query",
+const RUNTIME_CAPABILITY_DEFAULTS: Record<
+  string,
+  Pick<CapabilityDefinition, "envVar" | "defaultEnabled">
+> = {
+  "nostr.query": {
     envVar: "ENABLE_CAP_NOSTR_QUERY",
     defaultEnabled: true,
-    description: "Query Nostr relays for events with a filter",
   },
-  {
-    name: "graph.stats",
+  "graph.stats": {
     envVar: "ENABLE_CAP_GRAPH_STATS",
     defaultEnabled: true,
-    description: "Get comprehensive graph statistics",
   },
-  {
-    name: "graph.all_pubkeys",
+  "graph.all_pubkeys": {
     envVar: "ENABLE_CAP_GRAPH_ALL_PUBKEYS",
     defaultEnabled: true,
-    description: "Get all unique pubkeys in the social graph",
   },
-  {
-    name: "graph.pubkey_exists",
+  "graph.pubkey_exists": {
     envVar: "ENABLE_CAP_GRAPH_PUBKEY_EXISTS",
     defaultEnabled: true,
-    description: "Check if a pubkey exists in the graph",
   },
-  {
-    name: "graph.is_following",
+  "graph.is_following": {
     envVar: "ENABLE_CAP_GRAPH_IS_FOLLOWING",
     defaultEnabled: true,
-    description: "Check if a direct follow relationship exists",
   },
-  {
-    name: "graph.are_mutual",
+  "graph.are_mutual": {
     envVar: "ENABLE_CAP_GRAPH_ARE_MUTUAL",
     defaultEnabled: true,
-    description: "Check if two pubkeys mutually follow each other",
   },
-  {
-    name: "graph.distance_from_root",
+  "graph.distance_from_root": {
     envVar: "ENABLE_CAP_GRAPH_DISTANCE_FROM_ROOT",
     defaultEnabled: true,
-    description: "Get the hop distance from the current graph root to a pubkey",
   },
-  {
-    name: "graph.distance_between",
+  "graph.distance_between": {
     envVar: "ENABLE_CAP_GRAPH_DISTANCE_BETWEEN",
     defaultEnabled: true,
-    description: "Get the hop distance between two pubkeys",
   },
-  {
-    name: "graph.users_within_distance",
+  "graph.users_within_distance": {
     envVar: "ENABLE_CAP_GRAPH_USERS_WITHIN_DISTANCE",
     defaultEnabled: true,
-    description:
-      "Get all pubkeys reachable within a given hop distance from the current root",
   },
-  {
-    name: "graph.degree",
+  "graph.degree": {
     envVar: "ENABLE_CAP_GRAPH_DEGREE",
     defaultEnabled: true,
-    description: "Get the degree (number of follows) for a pubkey",
   },
-  {
-    name: "http.nip05_resolve",
+  "http.nip05_resolve": {
     envVar: "ENABLE_CAP_HTTP_NIP05_RESOLVE",
     defaultEnabled: true,
-    description: "Resolve NIP-05 identifier to pubkey",
   },
-];
+};
+
+export const CAPABILITY_CATALOG: CapabilityDefinition[] =
+  RELATR_CAPABILITY_DEFINITIONS.map((definition) => {
+    const runtimeDefaults = RUNTIME_CAPABILITY_DEFAULTS[definition.name];
+
+    if (!runtimeDefaults) {
+      throw new Error(
+        `Missing runtime capability defaults for '${definition.name}'`,
+      );
+    }
+
+    return {
+      name: definition.name,
+      description: definition.description,
+      envVar: runtimeDefaults.envVar,
+      defaultEnabled: runtimeDefaults.defaultEnabled,
+    };
+  });
 
 /**
  * Get a capability definition by name

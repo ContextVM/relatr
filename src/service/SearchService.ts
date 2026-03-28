@@ -76,7 +76,6 @@ export class SearchService implements ISearchService {
     // Process and return final results
     return this.processSearchResults(
       [...profilesForScoring, ...nostrProfiles],
-      nostrProfiles,
       effectiveSourcePubkey,
       limit,
       startTime,
@@ -176,11 +175,6 @@ export class SearchService implements ISearchService {
    */
   private async processSearchResults(
     finalProfiles: {
-      pubkey: string;
-      relevanceMultiplier: number;
-      isExactMatch: boolean;
-    }[],
-    nostrProfiles: {
       pubkey: string;
       relevanceMultiplier: number;
       isExactMatch: boolean;

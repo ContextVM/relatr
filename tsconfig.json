@@ -41,7 +41,8 @@
       "@database/*": ["./src/database/*"],
       "@config/*": ["./src/config/*"],
       "@services/*": ["./src/services/*"],
-      "@mcp/*": ["./src/mcp/*"]
+      "@mcp/*": ["./src/mcp/*"],
+      "relo": ["./relo/src/index.ts"]
     }
   },
   "include": ["src/**/*", "config-ui/**/*", "manager.ts"],

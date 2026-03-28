@@ -225,3 +225,5 @@ This repository is primarily a single Bun application with a nested package in [
 - Prefer reading [`README.md`](README.md), [`.env.example`](.env.example), and [`package.json`](package.json) before making operational changes.
 - When changing commands or runtime behavior, update this file as part of the same change.
 - The closest `AGENTS.md` should govern future nested work; if [`elo/`](elo) starts diverging further, add a dedicated [`elo/AGENTS.md`](elo/AGENTS.md) later.
+- The authoring-time capability name surface now lives in [`relo/src/catalog.ts`](relo/src/catalog.ts:138), including shared runtime-facing constants via [`RELATR_CAPABILITIES`](relo/src/catalog.ts:403).
+- [`relatr`](package.json) should consume [`relo`](relo/package.json) for shared capability names and validation metadata, while keeping runtime handler wiring and policy local in [`src/capabilities/capability-catalog.ts`](src/capabilities/capability-catalog.ts:10), [`src/capabilities/registerBuiltInCapabilities.ts`](src/capabilities/registerBuiltInCapabilities.ts:33), and [`src/capabilities/CapabilityExecutor.ts`](src/capabilities/CapabilityExecutor.ts:27).
