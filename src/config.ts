@@ -60,7 +60,7 @@ export const RelatrConfigSchema = z.object({
     .default(
       "Relatr is a social graph analysis and trust score service for Nostr.",
     ),
-  serverWebsite: z.string().default("https://relatr.xyz"),
+  serverWebsite: z.string().default("https://relatr.net"),
   serverPicture: z
     .string()
     .default(

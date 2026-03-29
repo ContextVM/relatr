@@ -104,7 +104,7 @@ export function ServerSettings({
 
   const handleOpenWebApp = () => {
     if (pubkey) {
-      const webAppUrl = `https://relatr.xyz/?s=${pubkey}`;
+      const webAppUrl = `https://relatr.net/?s=${pubkey}`;
       window.open(webAppUrl, "_blank", "noopener,noreferrer");
     }
   };
@@ -198,7 +198,7 @@ export function ServerSettings({
                   🚀 Open Relatr Web App
                 </button>
                 <span className="label-description">
-                  Opens relatr.xyz with your server connected
+                  Opens relatr.net with your server connected
                 </span>
               </div>
             </div>
