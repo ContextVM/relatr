@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runCliFromProcess } from "./cli";
+import { runCliFromProcess } from "./cli.js";
 
 runCliFromProcess().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);

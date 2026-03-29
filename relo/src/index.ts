@@ -1,5 +1,3 @@
-export { runCli, runCliFromProcess } from "./cli";
-
 export {
   RELATR_PLUGIN_KIND,
   ZERO_PUBKEY,
@@ -13,7 +11,7 @@ export {
   stringifyRelatrPluginEvent,
   validateRelatrManifest,
   validateRelatrPluginEvent,
-} from "./artifact";
+} from "./artifact.js";
 
 export {
   RELATR_CAPABILITIES,
@@ -21,14 +19,14 @@ export {
   RELATR_VALIDATION_CAPABILITIES,
   getRelatrCapabilityNames,
   isRelatrCapabilityName,
-} from "./catalog";
+} from "./catalog.js";
 
 export {
   validateRelatrExpressionAst,
   validateRelatrPluginProgram,
-} from "./wrappers";
+} from "./wrappers.js";
 
 export type {
   RelatrCapabilityArgRule,
   RelatrCapabilityDefinition,
-} from "./types";
+} from "./types.js";

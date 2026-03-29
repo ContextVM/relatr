@@ -1,4 +1,4 @@
-import { validateRelatrPluginProgram } from "./wrappers";
+import { validateRelatrPluginProgram } from "./wrappers.js";
 
 export const RELATR_PLUGIN_KIND = 765;
 

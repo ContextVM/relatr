@@ -7,7 +7,7 @@ import {
   type PluginDiagnostic,
 } from "@contextvm/elo";
 
-import { RELATR_VALIDATION_CAPABILITIES } from "./catalog";
+import { RELATR_VALIDATION_CAPABILITIES } from "./catalog.js";
 
 export function validateRelatrPluginProgram(
   source: string,

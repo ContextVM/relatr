@@ -4,7 +4,7 @@ import type { Expr, PluginDiagnostic } from "@contextvm/elo";
 import type {
   RelatrCapabilityArgValidator,
   RelatrCapabilityDefinition,
-} from "./types";
+} from "./types.js";
 
 function diagnostic(message: string): PluginDiagnostic {
   return {

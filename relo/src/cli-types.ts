@@ -1,4 +1,4 @@
-import type { RelatrPluginEvent } from "./artifact";
+import type { RelatrPluginEvent } from "./artifact.js";
 
 export type RelatrCheckResult = {
   ok: boolean;

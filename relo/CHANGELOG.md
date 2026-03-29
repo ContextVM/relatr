@@ -1,5 +1,11 @@
 # relo
 
+## 0.1.3
+
+### Patch Changes
+
+- style(relo): add .js extensions to relative imports for ES modules compatibility
+
 ## 0.1.2
 
 ### Patch Changes

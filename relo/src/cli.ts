@@ -21,7 +21,7 @@ import {
   type RelatrManifest,
   type RelatrPluginEvent,
   validateRelatrPluginEvent,
-} from "./artifact";
+} from "./artifact.js";
 
 type CommandName = "build" | "check" | "publish";
 
