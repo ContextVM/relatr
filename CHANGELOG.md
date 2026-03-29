@@ -1,6 +1,83 @@
 # relatr
 
-## 0.1.21
+## 0.2.0
+
+### Minor Changes
+
+This release introduces **Elo Plugins**, a portable plugin system for extending relatr's trust metric calculation with custom validation logic written in the Elo expression language.
+
+- feat(plugins): replace TypeScript validators with Elo portable plugins
+  - Add new plugin architecture using kind 765 Nostr events for plugin distribution
+  - Implement `EloPluginEngine` for runtime execution of Elo-based validators
+  - Add `PluginManager` for plugin lifecycle management (install, uninstall, enable/disable)
+  - Introduce `PortablePluginLoader` for loading plugins from Nostr relays or local filesystem
+  - Add `PlanningStore` for caching plugin planning results
+  - Implement plugin deduplication and namespaced metrics to avoid collisions across authors
+
+- feat(plugins): implement v1 plugin program format with multi-round chaining
+  - Replace v0 RELATR blocks with explicit `plan`/`then` rounds and `do` syntax
+  - Add host policy limits (max rounds, requests per round, total requests per plugin)
+  - Enforce strict JSON boundary for capability arguments with clear failure semantics
+  - Add capability run cache for cross-pubkey deduplication during validation runs
+  - Support semver range for plugin host compatibility checks
+
+- feat(plugins): implement Nostr event format with single-letter 'n' tag
+  - Plugin names use the 'n' tag for better relay indexing (kind 765 events)
+  - Add comprehensive event format, tag schema, and versioning documentation
+
+- feat(relo): introduce @contextvm/relo package for shared capability definitions
+  - New workspace package providing authoring-time capability definitions
+  - Exposes `RELATR_CAPABILITIES`, `RELATR_CAPABILITY_DEFINITIONS`, and validation functions
+  - Runtime imports capability names from this shared package for consistency
+
+- feat(relo): add CLI for building, checking, and publishing Relatr plugins
+  - `relo build`: Create canonical plugin artifacts from source or event JSON, with optional signing
+  - `relo check`: Validate raw ELO source or plugin event JSON artifacts
+  - `relo publish`: Publish signed plugin events to Nostr relays
+
+- feat(validation): implement persistent NIP-05 caching and batch evaluation
+  - Add `Nip05CacheStore` for persistent resolution caching with configurable TTL
+  - Add domain cooldown tracking for failed NIP-05 lookups
+  - Implement batch evaluation in `EloPluginEngine` for concurrent pubkey processing
+  - Add `ValidationPipeline` with explicit fact refresh and scoring stages
+  - New config options: `nip05ResolveTimeoutMs`, `nip05CacheTtlSeconds`, `nip05DomainCooldownSeconds`
+
+- feat: add graph distance capabilities and validation pipeline improvements
+  - Add three new graph capabilities: `graph.distance_from_root`, `graph.distance_between`, `graph.users_within_distance`
+  - Implement graph bootstrap signature tracking to reuse existing graphs
+  - Add fact-dependencies system to skip unnecessary refresh stages
+  - Add batch operations to NIP-05 cache store
+
+- feat: add validator warm-up system and relatr-web submodule
+  - Validator warm-up triggers metric validation when plugins are enabled
+  - Add validation coalescing and early exit when no validators are configured
+  - New `relatr-web` Svelte 5 UI package for configuration management
+
+- feat(mcp): add version tracking and admin check to stats tool
+  - Add `HOST_VERSION` to stats output
+  - Include `isAdmin` flag based on client pubkey matching admin pubkeys
+  - Auto-generated `src/version.ts` from package.json
+
+- refactor: consolidate validation pipeline and metrics validation
+  - Add `ValidationRunContext` for shared execution state
+  - Refactor `ValidationBatchExecution` with improved scheduling
+  - Move metrics validation logic into dedicated `MetricsValidator`
+  - Extract `RelayProfileFetcher` for profile fetching concerns
+
+- build(deps): update elo dependency from @enspirit to @contextvm
+  - Updated `@contextvm/elo` package with improved type safety
+  - Updated `@contextvm/sdk` to v0.7.x
+  - Updated TypeScript to 5.x with stricter compiler options
+  - Updated react/react-dom to 19.x, prettier to 3.x, nostr-tools to 2.20.0
+
+### Breaking Changes
+
+- Plugin name tag changed from `name` to `n` for relay indexing
+- Plugin format changed from v0 RELATR blocks to v1 multi-round programs with `plan`/`then` syntax
+- Old TypeScript-based validators are no longer supported; plugins must use Elo expression language
+- The `relatr-version` manifest field now requires a caret semver range (e.g., `^0.2.0`)
+
+## 0.1.22
 
 ### Patch Changes
 
