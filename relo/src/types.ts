@@ -1,4 +1,4 @@
-import type { PluginCapabilitySpec } from '@contextvm/elo';
+import type { PluginCapabilitySpec } from "@contextvm/elo";
 
 export type RelatrCapabilityArgRule = {
   requiredKeys?: string[];
@@ -7,8 +7,9 @@ export type RelatrCapabilityArgRule = {
   example?: unknown;
 };
 
-export type RelatrCapabilityArgValidator =
-  NonNullable<PluginCapabilitySpec['validateArgs']>;
+export type RelatrCapabilityArgValidator = NonNullable<
+  PluginCapabilitySpec["validateArgs"]
+>;
 
 export type RelatrCapabilityDefinition = {
   name: string;

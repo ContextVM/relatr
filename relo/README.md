@@ -41,10 +41,43 @@ The package currently exposes:
 
 ## Basic usage
 
+### CLI usage
+
+The package also ships a small authoring CLI via the published [`relo`](package.json:7) binary.
+
+```bash
+npx @contextvm/relo --help
+```
+
+After installation, you can also invoke the binary directly as `relo`.
+
+Core commands:
+
+- `build`: turn raw plugin source or existing event JSON into canonical Relatr artifact JSON
+- `check`: validate raw source or an existing artifact
+- `publish`: sign if needed, validate, and publish to one or more relays
+
+Examples:
+
+```bash
+npx @contextvm/relo build plugin.elo --name activity_notes --relatr-version '^0.1.16'
+npx @contextvm/relo check test-plugins/activity_notes.json
+npx @contextvm/relo publish test-plugins/activity_notes.json --relay ws://localhost:10547 --sec <hex-or-nsec>
+npx @contextvm/relo publish test-plugins/activity_notes.json --relay ws://localhost:10547 --bunker 'bunker://<pubkey>?relay=wss://relay.example'
+```
+
+Helpful CLI notes:
+
+- Raw source passed to `build` or `publish` needs manifest context such as `--name` and `--relatr-version`.
+- Existing event JSON keeps its manifest tags during `build` and `publish` unless you explicitly override them with flags.
+- Signing can use either `--sec <hex|nsec>` for local keys or `--bunker <nostrconnect://...|bunker://...|name@domain>` for NIP-46 remote signing.
+- Use `--json` when you want machine-readable success or failure output.
+- Use `relo <command> --help` to see command-specific flags and examples.
+
 Validate a Relatr plugin with the built-in capability catalog:
 
 ```ts
-import { validateRelatrPluginProgram } from '@contextvm/relo';
+import { validateRelatrPluginProgram } from "@contextvm/relo";
 
 const result = validateRelatrPluginProgram(`
 plugin "demo"
@@ -65,7 +98,7 @@ if (!result.ok) {
 Use the named capability constants when generating or analyzing plugin code:
 
 ```ts
-import { RELATR_CAPABILITIES } from '@contextvm/relo';
+import { RELATR_CAPABILITIES } from "@contextvm/relo";
 
 console.log(RELATR_CAPABILITIES.graphPubkeyExists);
 // => 'graph.pubkey_exists'
@@ -74,7 +107,7 @@ console.log(RELATR_CAPABILITIES.graphPubkeyExists);
 Inspect metadata for editor hints, autocomplete, or docs generation:
 
 ```ts
-import { RELATR_CAPABILITY_DEFINITIONS } from '@contextvm/relo';
+import { RELATR_CAPABILITY_DEFINITIONS } from "@contextvm/relo";
 
 for (const capability of RELATR_CAPABILITY_DEFINITIONS) {
   console.log(capability.name, capability.argRule?.example);

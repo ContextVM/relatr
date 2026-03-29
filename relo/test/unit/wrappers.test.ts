@@ -1,14 +1,14 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it } from "bun:test";
 
-import { parsePluginProgram } from '@contextvm/elo';
+import { parsePluginProgram } from "@contextvm/elo";
 
 import {
   validateRelatrExpressionAst,
   validateRelatrPluginProgram,
-} from '../../src/index';
+} from "../../src/index";
 
-describe('relo validation wrappers', () => {
-  it('validates a Relatr plugin without caller-provided capability wiring', () => {
+describe("relo validation wrappers", () => {
+  it("validates a Relatr plugin without caller-provided capability wiring", () => {
     const source =
       "plan events = do 'nostr.query' {kinds: [1]}, firstEvent = first(events) in firstEvent | null";
 
@@ -19,21 +19,22 @@ describe('relo validation wrappers', () => {
     expect(result.score).toBeDefined();
   });
 
-  it('reports unknown capabilities through the Relatr wrapper', () => {
-    const source = "plan events = do 'nostr.missing' {kinds: [1]} in events | null";
+  it("reports unknown capabilities through the Relatr wrapper", () => {
+    const source =
+      "plan events = do 'nostr.missing' {kinds: [1]} in events | null";
 
     const result = validateRelatrPluginProgram(source);
 
     expect(
       result.diagnostics.some(
         (diagnostic) =>
-          diagnostic.phase === 'capability' &&
+          diagnostic.phase === "capability" &&
           /Unknown capability/i.test(diagnostic.message),
       ),
     ).toBe(true);
   });
 
-  it('reports malformed Relatr capability argument objects', () => {
+  it("reports malformed Relatr capability argument objects", () => {
     const source =
       "plan d = do 'graph.distance_between' {sourcePubkey: 1} in d | null";
 
@@ -51,8 +52,9 @@ describe('relo validation wrappers', () => {
     ).toBe(true);
   });
 
-  it('rejects non-object arguments for object-shaped capabilities', () => {
-    const source = "plan users = do 'graph.users_within_distance' 2 in users | []";
+  it("rejects non-object arguments for object-shaped capabilities", () => {
+    const source =
+      "plan users = do 'graph.users_within_distance' 2 in users | []";
 
     const result = validateRelatrPluginProgram(source);
 
@@ -63,7 +65,7 @@ describe('relo validation wrappers', () => {
     ).toBe(true);
   });
 
-  it('reports invalid numeric literals for distance-based capabilities', () => {
+  it("reports invalid numeric literals for distance-based capabilities", () => {
     const source =
       "plan users = do 'graph.users_within_distance' {distance: -1} in users | []";
 
@@ -76,11 +78,11 @@ describe('relo validation wrappers', () => {
     ).toBe(true);
   });
 
-  it('preserves caller-provided scope for expression validation', () => {
-    const program = parsePluginProgram('plan a = 1 in a + b');
+  it("preserves caller-provided scope for expression validation", () => {
+    const program = parsePluginProgram("plan a = 1 in a + b");
 
     const diagnostics = validateRelatrExpressionAst(program.score, {
-      allowedVariables: ['a'],
+      allowedVariables: ["a"],
     });
 
     expect(

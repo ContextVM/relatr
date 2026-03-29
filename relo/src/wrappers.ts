@@ -5,13 +5,13 @@ import {
   type PluginValidationOptions,
   type ValidatedPluginProgram,
   type PluginDiagnostic,
-} from '@contextvm/elo';
+} from "@contextvm/elo";
 
-import { RELATR_VALIDATION_CAPABILITIES } from './catalog';
+import { RELATR_VALIDATION_CAPABILITIES } from "./catalog";
 
 export function validateRelatrPluginProgram(
   source: string,
-  options: Omit<PluginValidationOptions, 'capabilities'> = {},
+  options: Omit<PluginValidationOptions, "capabilities"> = {},
 ): ValidatedPluginProgram {
   return validatePluginProgram(source, {
     ...options,
@@ -21,7 +21,7 @@ export function validateRelatrPluginProgram(
 
 export function validateRelatrExpressionAst(
   expr: Expr,
-  options: Omit<PluginValidationOptions, 'capabilities'> = {},
+  options: Omit<PluginValidationOptions, "capabilities"> = {},
 ): PluginDiagnostic[] {
   return validateExpressionAst(expr, {
     ...options,

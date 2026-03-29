@@ -50,6 +50,7 @@
       "version": "0.1.1",
       "dependencies": {
         "@contextvm/elo": "^0.10.4",
+        "nostr-tools": "^2.23.3",
       },
       "devDependencies": {
         "typescript": "^5.9.3",

@@ -1,24 +1,28 @@
-import type { PluginCapabilitySpec } from '@contextvm/elo';
-import type { Expr, PluginDiagnostic } from '@contextvm/elo';
+import type { PluginCapabilitySpec } from "@contextvm/elo";
+import type { Expr, PluginDiagnostic } from "@contextvm/elo";
 
 import type {
   RelatrCapabilityArgValidator,
   RelatrCapabilityDefinition,
-} from './types';
+} from "./types";
 
 function diagnostic(message: string): PluginDiagnostic {
   return {
-    severity: 'error',
+    severity: "error",
     message,
   };
 }
 
-function isObjectExpr(expr: Expr): expr is Extract<Expr, { type: 'object' }> {
-  return expr.type === 'object';
+function isObjectExpr(expr: Expr): expr is Extract<Expr, { type: "object" }> {
+  return expr.type === "object";
 }
 
-function getObjectPropertyMap(expr: Extract<Expr, { type: 'object' }>): Map<string, Expr> {
-  return new Map(expr.properties.map((property) => [property.key, property.value]));
+function getObjectPropertyMap(
+  expr: Extract<Expr, { type: "object" }>,
+): Map<string, Expr> {
+  return new Map(
+    expr.properties.map((property) => [property.key, property.value]),
+  );
 }
 
 function validateObjectShape(
@@ -31,7 +35,9 @@ function validateObjectShape(
   } = {},
 ): PluginDiagnostic[] {
   if (!isObjectExpr(argsExpr)) {
-    return [diagnostic(`${capabilityName} requires an object literal argument`)];
+    return [
+      diagnostic(`${capabilityName} requires an object literal argument`),
+    ];
   }
 
   const diagnostics: PluginDiagnostic[] = [];
@@ -42,14 +48,22 @@ function validateObjectShape(
 
   for (const key of requiredKeys) {
     if (!properties.has(key)) {
-      diagnostics.push(diagnostic(`${capabilityName} requires a '${key}' field in the arguments object`));
+      diagnostics.push(
+        diagnostic(
+          `${capabilityName} requires a '${key}' field in the arguments object`,
+        ),
+      );
     }
   }
 
   if (!options.allowExtraKeys) {
     for (const key of properties.keys()) {
       if (!allowedKeys.has(key)) {
-        diagnostics.push(diagnostic(`${capabilityName} does not support an '${key}' field in the arguments object`));
+        diagnostics.push(
+          diagnostic(
+            `${capabilityName} does not support an '${key}' field in the arguments object`,
+          ),
+        );
       }
     }
   }
@@ -63,7 +77,9 @@ function validateStringField(
   fieldName: string,
 ): PluginDiagnostic[] {
   if (!isObjectExpr(argsExpr)) {
-    return [diagnostic(`${capabilityName} requires an object literal argument`)];
+    return [
+      diagnostic(`${capabilityName} requires an object literal argument`),
+    ];
   }
 
   const value = getObjectPropertyMap(argsExpr).get(fieldName);
@@ -71,7 +87,7 @@ function validateStringField(
     return [];
   }
 
-  if (value.type === 'string') {
+  if (value.type === "string") {
     if (value.value.trim().length === 0) {
       return [diagnostic(`${capabilityName}.${fieldName} must not be empty`)];
     }
@@ -79,15 +95,19 @@ function validateStringField(
     return [];
   }
 
-  const definitelyNonStringLiteralTypes: Expr['type'][] = [
-    'literal',
-    'null',
-    'object',
-    'array',
+  const definitelyNonStringLiteralTypes: Expr["type"][] = [
+    "literal",
+    "null",
+    "object",
+    "array",
   ];
 
   if (definitelyNonStringLiteralTypes.includes(value.type)) {
-    return [diagnostic(`${capabilityName}.${fieldName} must be a string literal when provided`)];
+    return [
+      diagnostic(
+        `${capabilityName}.${fieldName} must be a string literal when provided`,
+      ),
+    ];
   }
 
   return [];
@@ -99,7 +119,9 @@ function validateNonNegativeNumberField(
   fieldName: string,
 ): PluginDiagnostic[] {
   if (!isObjectExpr(argsExpr)) {
-    return [diagnostic(`${capabilityName} requires an object literal argument`)];
+    return [
+      diagnostic(`${capabilityName} requires an object literal argument`),
+    ];
   }
 
   const value = getObjectPropertyMap(argsExpr).get(fieldName);
@@ -108,21 +130,29 @@ function validateNonNegativeNumberField(
   }
 
   const numericLiteral =
-    value.type === 'literal' && typeof value.value === 'number'
+    value.type === "literal" && typeof value.value === "number"
       ? value.value
-      : value.type === 'unary' &&
-          value.operator === '-' &&
-          value.operand.type === 'literal' &&
-          typeof value.operand.value === 'number'
+      : value.type === "unary" &&
+          value.operator === "-" &&
+          value.operand.type === "literal" &&
+          typeof value.operand.value === "number"
         ? -value.operand.value
         : null;
 
   if (numericLiteral === null) {
-    return [diagnostic(`${capabilityName}.${fieldName} must be a numeric literal when provided`)];
+    return [
+      diagnostic(
+        `${capabilityName}.${fieldName} must be a numeric literal when provided`,
+      ),
+    ];
   }
 
   if (!Number.isFinite(numericLiteral) || numericLiteral < 0) {
-    return [diagnostic(`${capabilityName}.${fieldName} must be a non-negative number`)];
+    return [
+      diagnostic(
+        `${capabilityName}.${fieldName} must be a non-negative number`,
+      ),
+    ];
   }
 
   return [];
@@ -136,17 +166,17 @@ function createCapabilitySpec(
 }
 
 const RELATR_CAPABILITY_NAME_ENTRIES = [
-  ['nostrQuery', 'nostr.query'],
-  ['graphStats', 'graph.stats'],
-  ['graphAllPubkeys', 'graph.all_pubkeys'],
-  ['graphPubkeyExists', 'graph.pubkey_exists'],
-  ['graphIsFollowing', 'graph.is_following'],
-  ['graphAreMutual', 'graph.are_mutual'],
-  ['graphDistanceFromRoot', 'graph.distance_from_root'],
-  ['graphDistanceBetween', 'graph.distance_between'],
-  ['graphUsersWithinDistance', 'graph.users_within_distance'],
-  ['graphDegree', 'graph.degree'],
-  ['httpNip05Resolve', 'http.nip05_resolve'],
+  ["nostrQuery", "nostr.query"],
+  ["graphStats", "graph.stats"],
+  ["graphAllPubkeys", "graph.all_pubkeys"],
+  ["graphPubkeyExists", "graph.pubkey_exists"],
+  ["graphIsFollowing", "graph.is_following"],
+  ["graphAreMutual", "graph.are_mutual"],
+  ["graphDistanceFromRoot", "graph.distance_from_root"],
+  ["graphDistanceBetween", "graph.distance_between"],
+  ["graphUsersWithinDistance", "graph.users_within_distance"],
+  ["graphDegree", "graph.degree"],
+  ["httpNip05Resolve", "http.nip05_resolve"],
 ] as const;
 
 export const RELATR_CAPABILITIES = Object.freeze(
@@ -161,18 +191,20 @@ export const RELATR_CAPABILITIES = Object.freeze(
 export const RELATR_CAPABILITY_DEFINITIONS: RelatrCapabilityDefinition[] = [
   {
     name: RELATR_CAPABILITIES.nostrQuery,
-    description: 'Query Nostr relays for events with a filter',
+    description: "Query Nostr relays for events with a filter",
     argRule: {
-      description: 'Accepts a Nostr filter object. Any filter keys are allowed.',
-      example: { kinds: [1], authors: ['npub...'], limit: 50 },
+      description:
+        "Accepts a Nostr filter object. Any filter keys are allowed.",
+      example: { kinds: [1], authors: ["npub..."], limit: 50 },
     },
-    toPluginCapabilitySpec: () => createCapabilitySpec(RELATR_CAPABILITIES.nostrQuery),
+    toPluginCapabilitySpec: () =>
+      createCapabilitySpec(RELATR_CAPABILITIES.nostrQuery),
   },
   {
     name: RELATR_CAPABILITIES.graphStats,
-    description: 'Get comprehensive graph statistics',
+    description: "Get comprehensive graph statistics",
     argRule: {
-      description: 'Takes an empty object.',
+      description: "Takes an empty object.",
       example: {},
     },
     validateArgs: ({ argsExpr }) =>
@@ -190,9 +222,9 @@ export const RELATR_CAPABILITY_DEFINITIONS: RelatrCapabilityDefinition[] = [
   },
   {
     name: RELATR_CAPABILITIES.graphAllPubkeys,
-    description: 'Get all unique pubkeys in the social graph',
+    description: "Get all unique pubkeys in the social graph",
     argRule: {
-      description: 'Takes an empty object.',
+      description: "Takes an empty object.",
       example: {},
     },
     validateArgs: ({ argsExpr }) =>
@@ -201,235 +233,368 @@ export const RELATR_CAPABILITY_DEFINITIONS: RelatrCapabilityDefinition[] = [
         optionalKeys: [],
       }),
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphAllPubkeys, ({ argsExpr }) =>
-        validateObjectShape(RELATR_CAPABILITIES.graphAllPubkeys, argsExpr, {
-          requiredKeys: [],
-          optionalKeys: [],
-        }),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphAllPubkeys,
+        ({ argsExpr }) =>
+          validateObjectShape(RELATR_CAPABILITIES.graphAllPubkeys, argsExpr, {
+            requiredKeys: [],
+            optionalKeys: [],
+          }),
       ),
   },
   {
     name: RELATR_CAPABILITIES.graphPubkeyExists,
-    description: 'Check if a pubkey exists in the graph',
+    description: "Check if a pubkey exists in the graph",
     argRule: {
-      requiredKeys: ['pubkey'],
-      description: 'Requires a pubkey field.',
-      example: { pubkey: 'hex-pubkey' },
+      requiredKeys: ["pubkey"],
+      description: "Requires a pubkey field.",
+      example: { pubkey: "hex-pubkey" },
     },
     validateArgs: ({ argsExpr }) => [
       ...validateObjectShape(RELATR_CAPABILITIES.graphPubkeyExists, argsExpr, {
-        requiredKeys: ['pubkey'],
+        requiredKeys: ["pubkey"],
         optionalKeys: [],
       }),
-      ...validateStringField(RELATR_CAPABILITIES.graphPubkeyExists, argsExpr, 'pubkey'),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphPubkeyExists,
+        argsExpr,
+        "pubkey",
+      ),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphPubkeyExists, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.graphPubkeyExists, argsExpr, {
-          requiredKeys: ['pubkey'],
-          optionalKeys: [],
-        }),
-        ...validateStringField(RELATR_CAPABILITIES.graphPubkeyExists, argsExpr, 'pubkey'),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphPubkeyExists,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.graphPubkeyExists,
+            argsExpr,
+            {
+              requiredKeys: ["pubkey"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphPubkeyExists,
+            argsExpr,
+            "pubkey",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.graphIsFollowing,
-    description: 'Check if a direct follow relationship exists',
+    description: "Check if a direct follow relationship exists",
     argRule: {
-      requiredKeys: ['followerPubkey', 'followedPubkey'],
-      description: 'Requires followerPubkey and followedPubkey fields.',
+      requiredKeys: ["followerPubkey", "followedPubkey"],
+      description: "Requires followerPubkey and followedPubkey fields.",
       example: {
-        followerPubkey: 'hex-pubkey-a',
-        followedPubkey: 'hex-pubkey-b',
+        followerPubkey: "hex-pubkey-a",
+        followedPubkey: "hex-pubkey-b",
       },
     },
     validateArgs: ({ argsExpr }) => [
       ...validateObjectShape(RELATR_CAPABILITIES.graphIsFollowing, argsExpr, {
-        requiredKeys: ['followerPubkey', 'followedPubkey'],
+        requiredKeys: ["followerPubkey", "followedPubkey"],
         optionalKeys: [],
       }),
-      ...validateStringField(RELATR_CAPABILITIES.graphIsFollowing, argsExpr, 'followerPubkey'),
-      ...validateStringField(RELATR_CAPABILITIES.graphIsFollowing, argsExpr, 'followedPubkey'),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphIsFollowing,
+        argsExpr,
+        "followerPubkey",
+      ),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphIsFollowing,
+        argsExpr,
+        "followedPubkey",
+      ),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphIsFollowing, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.graphIsFollowing, argsExpr, {
-          requiredKeys: ['followerPubkey', 'followedPubkey'],
-          optionalKeys: [],
-        }),
-        ...validateStringField(RELATR_CAPABILITIES.graphIsFollowing, argsExpr, 'followerPubkey'),
-        ...validateStringField(RELATR_CAPABILITIES.graphIsFollowing, argsExpr, 'followedPubkey'),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphIsFollowing,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.graphIsFollowing,
+            argsExpr,
+            {
+              requiredKeys: ["followerPubkey", "followedPubkey"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphIsFollowing,
+            argsExpr,
+            "followerPubkey",
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphIsFollowing,
+            argsExpr,
+            "followedPubkey",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.graphAreMutual,
-    description: 'Check if two pubkeys mutually follow each other',
+    description: "Check if two pubkeys mutually follow each other",
     argRule: {
-      requiredKeys: ['a', 'b'],
-      description: 'Requires a and b pubkey fields.',
-      example: { a: 'hex-pubkey-a', b: 'hex-pubkey-b' },
+      requiredKeys: ["a", "b"],
+      description: "Requires a and b pubkey fields.",
+      example: { a: "hex-pubkey-a", b: "hex-pubkey-b" },
     },
     validateArgs: ({ argsExpr }) => [
       ...validateObjectShape(RELATR_CAPABILITIES.graphAreMutual, argsExpr, {
-        requiredKeys: ['a', 'b'],
+        requiredKeys: ["a", "b"],
         optionalKeys: [],
       }),
-      ...validateStringField(RELATR_CAPABILITIES.graphAreMutual, argsExpr, 'a'),
-      ...validateStringField(RELATR_CAPABILITIES.graphAreMutual, argsExpr, 'b'),
+      ...validateStringField(RELATR_CAPABILITIES.graphAreMutual, argsExpr, "a"),
+      ...validateStringField(RELATR_CAPABILITIES.graphAreMutual, argsExpr, "b"),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphAreMutual, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.graphAreMutual, argsExpr, {
-          requiredKeys: ['a', 'b'],
-          optionalKeys: [],
-        }),
-        ...validateStringField(RELATR_CAPABILITIES.graphAreMutual, argsExpr, 'a'),
-        ...validateStringField(RELATR_CAPABILITIES.graphAreMutual, argsExpr, 'b'),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphAreMutual,
+        ({ argsExpr }) => [
+          ...validateObjectShape(RELATR_CAPABILITIES.graphAreMutual, argsExpr, {
+            requiredKeys: ["a", "b"],
+            optionalKeys: [],
+          }),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphAreMutual,
+            argsExpr,
+            "a",
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphAreMutual,
+            argsExpr,
+            "b",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.graphDistanceFromRoot,
-    description: 'Get the hop distance from the current graph root to a pubkey',
+    description: "Get the hop distance from the current graph root to a pubkey",
     argRule: {
-      requiredKeys: ['pubkey'],
-      description: 'Requires a pubkey field.',
-      example: { pubkey: 'hex-pubkey' },
+      requiredKeys: ["pubkey"],
+      description: "Requires a pubkey field.",
+      example: { pubkey: "hex-pubkey" },
     },
     validateArgs: ({ argsExpr }) => [
-      ...validateObjectShape(RELATR_CAPABILITIES.graphDistanceFromRoot, argsExpr, {
-        requiredKeys: ['pubkey'],
-        optionalKeys: [],
-      }),
-      ...validateStringField(RELATR_CAPABILITIES.graphDistanceFromRoot, argsExpr, 'pubkey'),
+      ...validateObjectShape(
+        RELATR_CAPABILITIES.graphDistanceFromRoot,
+        argsExpr,
+        {
+          requiredKeys: ["pubkey"],
+          optionalKeys: [],
+        },
+      ),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphDistanceFromRoot,
+        argsExpr,
+        "pubkey",
+      ),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphDistanceFromRoot, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.graphDistanceFromRoot, argsExpr, {
-          requiredKeys: ['pubkey'],
-          optionalKeys: [],
-        }),
-        ...validateStringField(RELATR_CAPABILITIES.graphDistanceFromRoot, argsExpr, 'pubkey'),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphDistanceFromRoot,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.graphDistanceFromRoot,
+            argsExpr,
+            {
+              requiredKeys: ["pubkey"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphDistanceFromRoot,
+            argsExpr,
+            "pubkey",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.graphDistanceBetween,
-    description: 'Get the hop distance between two pubkeys',
+    description: "Get the hop distance between two pubkeys",
     argRule: {
-      requiredKeys: ['sourcePubkey', 'targetPubkey'],
-      description: 'Requires sourcePubkey and targetPubkey fields.',
+      requiredKeys: ["sourcePubkey", "targetPubkey"],
+      description: "Requires sourcePubkey and targetPubkey fields.",
       example: {
-        sourcePubkey: 'hex-pubkey-a',
-        targetPubkey: 'hex-pubkey-b',
+        sourcePubkey: "hex-pubkey-a",
+        targetPubkey: "hex-pubkey-b",
       },
     },
     validateArgs: ({ argsExpr }) => [
-      ...validateObjectShape(RELATR_CAPABILITIES.graphDistanceBetween, argsExpr, {
-        requiredKeys: ['sourcePubkey', 'targetPubkey'],
-        optionalKeys: [],
-      }),
-      ...validateStringField(RELATR_CAPABILITIES.graphDistanceBetween, argsExpr, 'sourcePubkey'),
-      ...validateStringField(RELATR_CAPABILITIES.graphDistanceBetween, argsExpr, 'targetPubkey'),
+      ...validateObjectShape(
+        RELATR_CAPABILITIES.graphDistanceBetween,
+        argsExpr,
+        {
+          requiredKeys: ["sourcePubkey", "targetPubkey"],
+          optionalKeys: [],
+        },
+      ),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphDistanceBetween,
+        argsExpr,
+        "sourcePubkey",
+      ),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphDistanceBetween,
+        argsExpr,
+        "targetPubkey",
+      ),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphDistanceBetween, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.graphDistanceBetween, argsExpr, {
-          requiredKeys: ['sourcePubkey', 'targetPubkey'],
-          optionalKeys: [],
-        }),
-        ...validateStringField(RELATR_CAPABILITIES.graphDistanceBetween, argsExpr, 'sourcePubkey'),
-        ...validateStringField(RELATR_CAPABILITIES.graphDistanceBetween, argsExpr, 'targetPubkey'),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphDistanceBetween,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.graphDistanceBetween,
+            argsExpr,
+            {
+              requiredKeys: ["sourcePubkey", "targetPubkey"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphDistanceBetween,
+            argsExpr,
+            "sourcePubkey",
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphDistanceBetween,
+            argsExpr,
+            "targetPubkey",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.graphUsersWithinDistance,
     description:
-      'Get all pubkeys reachable within a given hop distance from the current root',
+      "Get all pubkeys reachable within a given hop distance from the current root",
     argRule: {
-      requiredKeys: ['distance'],
-      description: 'Requires a non-negative numeric distance field.',
+      requiredKeys: ["distance"],
+      description: "Requires a non-negative numeric distance field.",
       example: { distance: 2 },
     },
     validateArgs: ({ argsExpr }) => [
-      ...validateObjectShape(RELATR_CAPABILITIES.graphUsersWithinDistance, argsExpr, {
-        requiredKeys: ['distance'],
-        optionalKeys: [],
-      }),
+      ...validateObjectShape(
+        RELATR_CAPABILITIES.graphUsersWithinDistance,
+        argsExpr,
+        {
+          requiredKeys: ["distance"],
+          optionalKeys: [],
+        },
+      ),
       ...validateNonNegativeNumberField(
         RELATR_CAPABILITIES.graphUsersWithinDistance,
         argsExpr,
-        'distance',
+        "distance",
       ),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.graphUsersWithinDistance, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.graphUsersWithinDistance, argsExpr, {
-          requiredKeys: ['distance'],
-          optionalKeys: [],
-        }),
-        ...validateNonNegativeNumberField(
-          RELATR_CAPABILITIES.graphUsersWithinDistance,
-          argsExpr,
-          'distance',
-        ),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphUsersWithinDistance,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.graphUsersWithinDistance,
+            argsExpr,
+            {
+              requiredKeys: ["distance"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateNonNegativeNumberField(
+            RELATR_CAPABILITIES.graphUsersWithinDistance,
+            argsExpr,
+            "distance",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.graphDegree,
-    description: 'Get the degree (number of follows) for a pubkey',
+    description: "Get the degree (number of follows) for a pubkey",
     argRule: {
-      requiredKeys: ['pubkey'],
-      description: 'Requires a pubkey field.',
-      example: { pubkey: 'hex-pubkey' },
+      requiredKeys: ["pubkey"],
+      description: "Requires a pubkey field.",
+      example: { pubkey: "hex-pubkey" },
     },
     validateArgs: ({ argsExpr }) => [
       ...validateObjectShape(RELATR_CAPABILITIES.graphDegree, argsExpr, {
-        requiredKeys: ['pubkey'],
+        requiredKeys: ["pubkey"],
         optionalKeys: [],
       }),
-      ...validateStringField(RELATR_CAPABILITIES.graphDegree, argsExpr, 'pubkey'),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphDegree,
+        argsExpr,
+        "pubkey",
+      ),
     ],
     toPluginCapabilitySpec: () =>
       createCapabilitySpec(RELATR_CAPABILITIES.graphDegree, ({ argsExpr }) => [
         ...validateObjectShape(RELATR_CAPABILITIES.graphDegree, argsExpr, {
-          requiredKeys: ['pubkey'],
+          requiredKeys: ["pubkey"],
           optionalKeys: [],
         }),
-        ...validateStringField(RELATR_CAPABILITIES.graphDegree, argsExpr, 'pubkey'),
+        ...validateStringField(
+          RELATR_CAPABILITIES.graphDegree,
+          argsExpr,
+          "pubkey",
+        ),
       ]),
   },
   {
     name: RELATR_CAPABILITIES.httpNip05Resolve,
-    description: 'Resolve NIP-05 identifier to pubkey',
+    description: "Resolve NIP-05 identifier to pubkey",
     argRule: {
-      requiredKeys: ['nip05'],
-      description: 'Requires a nip05 identifier field.',
-      example: { nip05: 'alice@example.com' },
+      requiredKeys: ["nip05"],
+      description: "Requires a nip05 identifier field.",
+      example: { nip05: "alice@example.com" },
     },
     validateArgs: ({ argsExpr }) => [
       ...validateObjectShape(RELATR_CAPABILITIES.httpNip05Resolve, argsExpr, {
-        requiredKeys: ['nip05'],
+        requiredKeys: ["nip05"],
         optionalKeys: [],
       }),
-      ...validateStringField(RELATR_CAPABILITIES.httpNip05Resolve, argsExpr, 'nip05'),
+      ...validateStringField(
+        RELATR_CAPABILITIES.httpNip05Resolve,
+        argsExpr,
+        "nip05",
+      ),
     ],
     toPluginCapabilitySpec: () =>
-      createCapabilitySpec(RELATR_CAPABILITIES.httpNip05Resolve, ({ argsExpr }) => [
-        ...validateObjectShape(RELATR_CAPABILITIES.httpNip05Resolve, argsExpr, {
-          requiredKeys: ['nip05'],
-          optionalKeys: [],
-        }),
-        ...validateStringField(RELATR_CAPABILITIES.httpNip05Resolve, argsExpr, 'nip05'),
-      ]),
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.httpNip05Resolve,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.httpNip05Resolve,
+            argsExpr,
+            {
+              requiredKeys: ["nip05"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.httpNip05Resolve,
+            argsExpr,
+            "nip05",
+          ),
+        ],
+      ),
   },
 ];
 
-export const RELATR_VALIDATION_CAPABILITIES: Record<string, PluginCapabilitySpec> =
-  Object.fromEntries(
-    RELATR_CAPABILITY_DEFINITIONS.map((definition) => [
-      definition.name,
-      definition.toPluginCapabilitySpec(),
-    ]),
-  );
+export const RELATR_VALIDATION_CAPABILITIES: Record<
+  string,
+  PluginCapabilitySpec
+> = Object.fromEntries(
+  RELATR_CAPABILITY_DEFINITIONS.map((definition) => [
+    definition.name,
+    definition.toPluginCapabilitySpec(),
+  ]),
+);
 
 export function getRelatrCapabilityNames(): string[] {
   return RELATR_CAPABILITY_DEFINITIONS.map((definition) => definition.name);
