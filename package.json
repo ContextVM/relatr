@@ -4,9 +4,6 @@
   "version": "0.2.0",
   "type": "module",
   "private": true,
-  "workspaces": [
-    "relo"
-  ],
   "scripts": {
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
