@@ -23,6 +23,14 @@ import type { TARepository } from "../database/repositories/TARepository";
 import type { TrustCalculator } from "../trust/TrustCalculator";
 import type { TAService } from "./TAService";
 import type { RelayPool } from "applesauce-relay";
+import type {
+  ConfigurePluginsInput,
+  InstallPluginInput,
+  ListPluginsInput,
+  PluginListItem,
+  UninstallPluginsInput,
+  PluginManager,
+} from "@/plugins/PluginManager";
 
 export interface ISearchService {
   searchProfiles(params: SearchProfilesParams): Promise<SearchProfilesResult>;
@@ -48,7 +56,11 @@ export interface ISchedulerService {
     hops?: number,
     sourcePubkey?: string,
   ): Promise<void>;
-  syncValidations(batchSize?: number, sourcePubkey?: string): Promise<void>;
+  syncValidations(
+    batchSize?: number,
+    sourcePubkey?: string,
+    metricKeys?: string[],
+  ): Promise<void>;
   processDiscoveryQueue(): Promise<void>;
   queuePubkeyForDiscovery(pubkey: string): void;
   isRunning(): boolean;
@@ -73,6 +85,13 @@ export interface IRelatrService {
   shutdown(): Promise<void>;
   isInitialized(): boolean;
   getConfig(): RelatrConfig;
+  installPlugin(input: InstallPluginInput): Promise<{
+    pluginKey: string;
+    enabled: boolean;
+  }>;
+  uninstallPlugins(input: UninstallPluginsInput): Promise<{ removed: number }>;
+  configurePlugins(input: ConfigurePluginsInput): Promise<{ updated: number }>;
+  listPlugins(input?: ListPluginsInput): Promise<{ plugins: PluginListItem[] }>;
 }
 
 export interface RelatrServiceDependencies {
@@ -97,6 +116,7 @@ export interface RelatrServiceDependencies {
 
   pubkeyMetadataFetcher: PubkeyMetadataFetcher;
   trustCalculator: TrustCalculator;
+  pluginManager: PluginManager;
   searchService: ISearchService;
   schedulerService?: ISchedulerService;
 }

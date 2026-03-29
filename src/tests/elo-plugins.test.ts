@@ -1,0 +1,807 @@
+import { describe, test, expect, beforeEach } from "bun:test";
+import type { NostrEvent } from "nostr-tools";
+import { CapabilityRegistry } from "../capabilities/CapabilityRegistry";
+import { CapabilityExecutor } from "../capabilities/CapabilityExecutor";
+import { runPlugin, runPlugins } from "../plugins/EloPluginRunner";
+import type {
+  PortablePlugin,
+  CapabilityRunCache,
+} from "../plugins/plugin-types";
+import { PlanningStore } from "../plugins/PlanningStore";
+import { LruCache } from "../utils/lru-cache";
+import {
+  nip05DomainOf,
+  normalizeNip05,
+} from "@/capabilities/http/utils/httpNip05Normalize";
+import { registerBuiltInCapabilities } from "@/capabilities/registerBuiltInCapabilities";
+
+const TEST_PLUGIN_CONFIG = {
+  eloPluginTimeoutMs: 1000,
+  capTimeoutMs: 1000,
+  nip05ResolveTimeoutMs: 1000,
+  nip05CacheTtlSeconds: 60,
+  nip05DomainCooldownSeconds: 60,
+};
+
+describe("Elo Plugins - Runner Integration", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+  let callCount: number;
+
+  beforeEach(() => {
+    registry = new CapabilityRegistry();
+    executor = new CapabilityExecutor(registry);
+    callCount = 0;
+
+    registry.register("test.echo", async (args) => {
+      callCount++;
+      return args;
+    });
+  });
+
+  test("should execute multi-round plan/then and consume results in next then", async () => {
+    const plugin: PortablePlugin = {
+      id: "test-001",
+      pubkey: "test-pubkey",
+      createdAt: 1704067200,
+      kind: 31234,
+      // Keep this on a single line to match upstream elo plugin-program parsing fixtures.
+      content:
+        "plan args = {x: 1}, res = do 'test.echo' args in then x = res.x | 0 in if x == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "plugin_multi_round",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const context = {
+      targetPubkey: "target-1",
+      sourcePubkey: "source-1",
+    };
+
+    const planningStore = new PlanningStore();
+    const result = await runPlugin(
+      plugin,
+      context,
+      executor,
+      TEST_PLUGIN_CONFIG,
+      planningStore,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+    expect(planningStore.size).toBe(1);
+  });
+
+  test("should treat non-JSON do args as unplannable and bind null", async () => {
+    // Use an explicit non-JSON value. Undefined is rejected by jsonBoundary.
+    const plugin: PortablePlugin = {
+      id: "test-non-json",
+      pubkey: "test-pubkey",
+      createdAt: 1704067200,
+      kind: 31234,
+      content:
+        "plan res = do 'test.echo' _.missing in if res == null then 1.0 else 0.0",
+      manifest: {
+        name: "plugin_non_json",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+    expect(callCount).toBe(0);
+  });
+
+  test("should treat do-args evaluation exceptions as unplannable and bind null", async () => {
+    // Build an args expression that throws at evaluation time by referencing an
+    // unbound variable. This should *not* fail the plugin; it should bind null.
+    const plugin: PortablePlugin = {
+      id: "test-args-throws",
+      pubkey: "test-pubkey",
+      createdAt: 1704067200,
+      kind: 31234,
+      content:
+        "plan res = do 'test.echo' {x: not_defined} in if res == null then 1.0 else 0.0",
+      manifest: {
+        name: "plugin_args_throws",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+    expect(callCount).toBe(0);
+  });
+
+  test("should deduplicate capability calls across plugins (shared PlanningStore)", async () => {
+    const plugin1: PortablePlugin = {
+      id: "p1",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.echo' {x: 1} in if res.x == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p1",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const plugin2: PortablePlugin = {
+      id: "p2",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.echo' {x: 1} in if res.x == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p2",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    await runPlugins(
+      [plugin1, plugin2],
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(callCount).toBe(1);
+  });
+
+  test("should key metrics by pubkey:name to avoid collisions across authors", async () => {
+    const pluginA: PortablePlugin = {
+      id: "p_same_name_a",
+      pubkey: "pk_a",
+      createdAt: 123,
+      kind: 31234,
+      content: "plan x = 1 in 1.0",
+      manifest: {
+        name: "same_name",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const pluginB: PortablePlugin = {
+      id: "p_same_name_b",
+      pubkey: "pk_b",
+      createdAt: 124,
+      kind: 31234,
+      content: "plan x = 1 in 0.5",
+      manifest: {
+        name: "same_name",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const metrics = await runPlugins(
+      [pluginA, pluginB],
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(metrics["pk_a:same_name"]).toBe(1.0);
+    expect(metrics["pk_b:same_name"]).toBe(0.5);
+    expect(Object.keys(metrics).length).toBe(2);
+  });
+
+  test("should deduplicate failing capability calls across plugins (cache null failures)", async () => {
+    // This test asserts v1 failure semantics + dedupe:
+    // if a capability fails, the host should still treat it as a null value
+    // and avoid re-executing the same requestKey within the same evaluation.
+    registry.register("test.fail", async () => {
+      callCount++;
+      throw new Error("boom");
+    });
+
+    const plugin1: PortablePlugin = {
+      id: "p_fail_1",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.fail' {x: 1} in if res == null then 1.0 else 0.0",
+      manifest: {
+        name: "p_fail_1",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const plugin2: PortablePlugin = {
+      id: "p_fail_2",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.fail' {x: 1} in if res == null then 1.0 else 0.0",
+      manifest: {
+        name: "p_fail_2",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const planningStore = new PlanningStore();
+    const result1 = await runPlugin(
+      plugin1,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+      planningStore,
+    );
+    const result2 = await runPlugin(
+      plugin2,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+      planningStore,
+    );
+
+    expect(result1.success).toBe(true);
+    expect(result2.success).toBe(true);
+    expect(result1.score).toBe(1.0);
+    expect(result2.score).toBe(1.0);
+
+    // If failures are cached as null in the PlanningStore, the handler runs once.
+    expect(callCount).toBe(1);
+  });
+
+  test("should map timed-out capability execution to null and not crash scoring", async () => {
+    registry.register("test.slow", async () => {
+      callCount++;
+      // Sleep longer than the configured capTimeoutMs
+      await new Promise((r) => setTimeout(r, 50));
+      return { ok: true };
+    });
+
+    const plugin: PortablePlugin = {
+      id: "p_timeout",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.slow' {x: 1} in if res == null then 1.0 else 0.0",
+      manifest: {
+        name: "p_timeout",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
+      ...TEST_PLUGIN_CONFIG,
+      capTimeoutMs: 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+    expect(callCount).toBe(1);
+  });
+
+  test("should enforce host policy: maxRoundsPerPlugin", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_policy_rounds",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content: "plan a = 1 in then b = 2 in then c = 3 in a + b + c",
+      manifest: {
+        name: "p_policy_rounds",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
+      ...TEST_PLUGIN_CONFIG,
+      maxRoundsPerPlugin: 2,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+  });
+
+  test("should enforce host policy: maxRequestsPerRound", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_policy_req_round",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan a = do 'test.echo' {x: 1}, b = do 'test.echo' {x: 2} in 0.0",
+      manifest: {
+        name: "p_policy_req_round",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
+      ...TEST_PLUGIN_CONFIG,
+      maxRequestsPerRound: 1,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+  });
+
+  test("should enforce host policy: maxTotalRequestsPerPlugin", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_policy_req_total",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan a = do 'test.echo' {x: 1} in then b = do 'test.echo' {x: 2} in 0.0",
+      manifest: {
+        name: "p_policy_req_total",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
+      ...TEST_PLUGIN_CONFIG,
+      maxTotalRequestsPerPlugin: 1,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+  });
+
+  test("should reject do calls in score expression (compute-only score)", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_do_in_score",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content: "plan a = 1 in do 'test.echo' {x: 1}",
+      manifest: {
+        name: "p_do_in_score",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+  });
+
+  test("should reject nested do inside a binding expression with a clear error", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_nested_do",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan x = if true then do 'test.echo' {x: 1} else null in if x == null then 1.0 else 0.0",
+      manifest: {
+        name: "p_nested_do",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+    expect(result.error).toContain("nested 'do'");
+  });
+
+  test("should keep request keys stable across JSON key order (canonicalization)", async () => {
+    callCount = 0;
+
+    const plugin1: PortablePlugin = {
+      id: "p_key_order_1",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.echo' {a: 1, b: 2} in if res.a == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p_key_order_1",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const plugin2: PortablePlugin = {
+      id: "p_key_order_2",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.echo' {b: 2, a: 1} in if res.a == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p_key_order_2",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    await runPlugins(
+      [plugin1, plugin2],
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    // If canonicalization is stable, these should dedupe.
+    expect(callCount).toBe(1);
+  });
+
+  test("should dedupe identical requests across rounds within a single plugin run", async () => {
+    callCount = 0;
+
+    const plugin: PortablePlugin = {
+      id: "p_round_dedupe",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan a = do 'test.echo' {x: 1} in then b = do 'test.echo' {x: 1} in if b.x == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p_round_dedupe",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const planningStore = new PlanningStore();
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+      planningStore,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+    expect(callCount).toBe(1);
+  });
+
+  test("should not count unplannable do calls toward host policy request limits", async () => {
+    callCount = 0;
+
+    // maxRequestsPerRound = 1. First do is unplannable (non-JSON args) and should
+    // not count; second do is plannable and should be executed.
+    const plugin: PortablePlugin = {
+      id: "p_policy_unplannable_counts",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan a = do 'test.echo' _.missing, b = do 'test.echo' {x: 2} in if a == null and b.x == 2 then 1.0 else 0.0",
+      manifest: {
+        name: "p_policy_unplannable_counts",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(plugin, { targetPubkey: "t1" }, executor, {
+      ...TEST_PLUGIN_CONFIG,
+      maxRequestsPerRound: 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+    expect(callCount).toBe(1);
+  });
+
+  test("should fail on forward reference within a round", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_forward_ref",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      // b references a binding declared later in the same round.
+      content: "plan b = a, a = 1 in b",
+      manifest: {
+        name: "p_forward_ref",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "t1" },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.score).toBe(0.0);
+  });
+
+  // Note: _.provisioned was a v0-era convention. In v1, provisioned values are
+  // accessed directly via binding names (e.g. `res`), and the host does not
+  // populate _.provisioned.
+});
+
+describe("NIP-05 Normalization", () => {
+  test("normalizeNip05 lowercases the identifier", () => {
+    expect(normalizeNip05("Alice@EXAMPLE.COM")).toBe("alice@example.com");
+  });
+
+  test("normalizeNip05 adds _@ prefix when missing", () => {
+    expect(normalizeNip05("example.com")).toBe("_@example.com");
+  });
+
+  test("normalizeNip05 trims whitespace", () => {
+    expect(normalizeNip05("  alice@example.com  ")).toBe("alice@example.com");
+  });
+
+  test("normalizeNip05 handles already-formatted identifiers", () => {
+    expect(normalizeNip05("_@example.com")).toBe("_@example.com");
+  });
+
+  test("nip05DomainOf extracts domain correctly", () => {
+    expect(nip05DomainOf("alice@example.com")).toBe("example.com");
+    expect(nip05DomainOf("_@example.com")).toBe("example.com");
+    expect(nip05DomainOf("invalid")).toBeNull();
+  });
+});
+
+describe("Capability Run Cache Wiring", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+  let receivedCapRunCache: CapabilityRunCache | undefined;
+
+  beforeEach(() => {
+    registry = new CapabilityRegistry();
+    executor = new CapabilityExecutor(registry);
+    receivedCapRunCache = undefined;
+
+    registry.register("test.cache_check", async (_, ctx) => {
+      receivedCapRunCache = ctx.capRunCache;
+      return { ok: true };
+    });
+  });
+
+  test("capRunCache should be passed to capability handlers", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_cache_test",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content: "plan res = do 'test.cache_check' {x: 1} in res.ok",
+      manifest: {
+        name: "p_cache_test",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const cache: CapabilityRunCache = {
+      nip05Resolve: new LruCache<Promise<{ pubkey: string | null }>>(100),
+    };
+
+    await runPlugin(
+      plugin,
+      { targetPubkey: "t1", capRunCache: cache },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(receivedCapRunCache).toBe(cache);
+  });
+});
+
+describe("Built-in graph capabilities", () => {
+  let registry: CapabilityRegistry;
+  let executor: CapabilityExecutor;
+
+  beforeEach(() => {
+    registry = new CapabilityRegistry();
+    registerBuiltInCapabilities(registry);
+    executor = new CapabilityExecutor(registry);
+  });
+
+  test("graph.distance_from_root should return distance from current root", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_graph_distance_from_root",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan d = do 'graph.distance_from_root' {pubkey: _.targetPubkey} in if d == 3 then 1.0 else 0.0",
+      manifest: {
+        name: "p_graph_distance_from_root",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const graph = {
+      isInitialized: () => true,
+      getDistance: async (pubkey: string) => (pubkey === "target-1" ? 3 : 1000),
+    } as unknown as import("../graph/SocialGraph").SocialGraph;
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "target-1", graph },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+
+  test("graph.distance_between should return distance between two pubkeys", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_graph_distance_between",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan d = do 'graph.distance_between' {sourcePubkey: _.sourcePubkey, targetPubkey: _.targetPubkey} in if d == 2 then 1.0 else 0.0",
+      manifest: {
+        name: "p_graph_distance_between",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const graph = {
+      isInitialized: () => true,
+      getDistanceBetween: async (sourcePubkey: string, targetPubkey: string) =>
+        sourcePubkey === "source-1" && targetPubkey === "target-1" ? 2 : 1000,
+    } as unknown as import("../graph/SocialGraph").SocialGraph;
+
+    const result = await runPlugin(
+      plugin,
+      { sourcePubkey: "source-1", targetPubkey: "target-1", graph },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+
+  test("graph.users_within_distance should return pubkeys reachable within N hops", async () => {
+    const plugin: PortablePlugin = {
+      id: "p_graph_users_within_distance",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan users = do 'graph.users_within_distance' {distance: 2} in if length(users | []) == 3 then 1.0 else 0.0",
+      manifest: {
+        name: "p_graph_users_within_distance",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const graph = {
+      isInitialized: () => true,
+      getUsersUpToDistance: async (distance: number) =>
+        distance === 2 ? ["pk-a", "pk-b", "pk-c"] : [],
+    } as unknown as import("../graph/SocialGraph").SocialGraph;
+
+    const result = await runPlugin(
+      plugin,
+      { targetPubkey: "target-1", graph },
+      executor,
+      TEST_PLUGIN_CONFIG,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.score).toBe(1.0);
+  });
+});

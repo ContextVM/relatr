@@ -1,0 +1,15 @@
+{
+  "kind": 765,
+  "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": 1760000000,
+  "tags": [
+    ["n", "activity_notes"],
+    ["relatr-version", "^0.1.16"],
+    ["title", "Activity score (notes)"],
+    [
+      "description",
+      "Scores higher for more recent notes by targetPubkey (simple heuristic)."
+    ]
+  ],
+  "content": "plan\n  notes = do 'nostr.query' {kinds: [1], authors: [_.targetPubkey], since: _.now - 604800}\nin\nlet\n  events = notes | [],\n  n = length(events)\nin\nif n >= 30 then 1.0\nelse if n >= 20 then 0.9\nelse if n >= 12 then 0.75\nelse if n >= 6 then 0.55\nelse if n >= 2 then 0.3\nelse if n >= 1 then 0.15\nelse 0.0\n"
+}

@@ -1,0 +1,15 @@
+{
+  "kind": 765,
+  "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": 1760000000,
+  "tags": [
+    ["n", "reciprocity_mutual"],
+    ["relatr-version", "^0.1.16"],
+    ["title", "Reciprocity / Mutual follow"],
+    [
+      "description",
+      "Scores 1.0 if source and target mutually follow (graph.are_mutual)."
+    ]
+  ],
+  "content": "plan\n  mutual = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey}\nin\nif _.sourcePubkey == null then 0.0\nelse if mutual == true then 1.0\nelse 0.0\n"
+}

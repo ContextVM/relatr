@@ -210,12 +210,12 @@ describe("RateLimiter", () => {
     });
 
     it("should accurately refill at specified rate", async () => {
-      const limiter = new RateLimiter(10, 2); // 2 tokens/sec
+      const limiter = new RateLimiter(10, 1); // 1 token/sec
       // Use all tokens
       for (let i = 0; i < 10; i++) limiter.acquire();
 
-      // Wait 500ms = 1 token
-      await new Promise((r) => setTimeout(r, 500));
+      // Wait ~1 token interval with margin for scheduler jitter
+      await new Promise((r) => setTimeout(r, 1100));
 
       expect(limiter.acquire()).toBe(true); // Should have 1 token
       expect(limiter.acquire()).toBe(false); // Should be empty again

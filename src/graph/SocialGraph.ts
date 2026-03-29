@@ -283,7 +283,8 @@ export class SocialGraph {
       this.ensureInitialized();
       const statsResult = await this.graph?.getStats();
       const pubkeyDistribution = await this.graph?.getDistanceDistribution();
-      stats.users = statsResult?.totalFollows || 0;
+      stats.users =
+        statsResult?.uniqueFollowers ?? statsResult?.uniqueFollowed ?? 0;
       stats.follows = statsResult?.totalFollows || 0;
       stats.sizeByDistance = Object.fromEntries(
         Object.entries(pubkeyDistribution!).map(([key, value]) => [

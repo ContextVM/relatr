@@ -40,6 +40,45 @@ export class SettingsRepository {
     }
   }
 
+  async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    if (keys.length === 0) {
+      return new Map();
+    }
+
+    try {
+      return await executeWithRetry(async () => {
+        const placeholders = keys.map((_, i) => `$${i + 1}`).join(",");
+        const params: Record<string, string> = {};
+        keys.forEach((key, i) => {
+          params[(i + 1).toString()] = key;
+        });
+
+        const result = await this.readConnection.run(
+          `SELECT key, value FROM settings WHERE key IN (${placeholders})`,
+          params,
+        );
+        const rows = await result.getRows();
+        const values = new Map<string, string | null>();
+
+        keys.forEach((key) => values.set(key, null));
+
+        for (const row of rows) {
+          const rowArray = row as unknown[];
+          values.set(rowArray[0] as string, rowArray[1] as string);
+        }
+
+        return values;
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to get settings batch after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+
+      return new Map(keys.map((key) => [key, null]));
+    }
+  }
+
   async set(key: string, value: string): Promise<void> {
     try {
       return await executeWithRetry(async () => {
@@ -59,6 +98,30 @@ export class SettingsRepository {
       throw new DatabaseError(
         `Failed to set setting ${key}: ${error instanceof Error ? error.message : String(error)}`,
         "SETTINGS_SET",
+      );
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    try {
+      return await executeWithRetry(async () => {
+        return await dbWriteQueue.runExclusive(async () => {
+          await this.writeConnection.run(
+            "DELETE FROM settings WHERE key = $1",
+            {
+              1: key,
+            },
+          );
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to delete setting ${key} after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new DatabaseError(
+        `Failed to delete setting ${key}: ${error instanceof Error ? error.message : String(error)}`,
+        "SETTINGS_DELETE",
       );
     }
   }

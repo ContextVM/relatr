@@ -99,6 +99,197 @@ export class MetricsRepository {
     }
   }
 
+  async upsertMetricSubset(
+    pubkey: string,
+    metrics: Record<string, number>,
+  ): Promise<void> {
+    const rows = Object.entries(metrics).filter(
+      (e): e is [string, number] => typeof e[1] === "number",
+    );
+    if (rows.length === 0) return;
+
+    try {
+      return await executeWithRetry(async () => {
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = nowSeconds();
+          const expiresAt = now + this.ttlSeconds;
+
+          await this.writeConnection.run("BEGIN TRANSACTION");
+          try {
+            const deletePlaceholders = rows
+              .map((_, i) => `$${i + 2}`)
+              .join(",");
+            const deleteParams: Record<string, string | number> = { 1: pubkey };
+            rows.forEach(([metricKey], i) => {
+              deleteParams[i + 2] = metricKey;
+            });
+
+            await this.writeConnection.run(
+              `DELETE FROM profile_metrics WHERE pubkey = $1 AND metric_key IN (${deletePlaceholders})`,
+              deleteParams,
+            );
+
+            const valuesClause = rows
+              .map(
+                (_, i) =>
+                  `($${i * 5 + 1}, $${i * 5 + 2}, $${i * 5 + 3}, $${i * 5 + 4}, $${i * 5 + 5})`,
+              )
+              .join(", ");
+
+            const insertQuery = `
+              INSERT INTO profile_metrics (pubkey, metric_key, metric_value, computed_at, expires_at)
+              VALUES ${valuesClause}
+            `;
+
+            const insertParams: Record<string, string | number> = {};
+            rows.forEach(([metricKey, metricValue], i) => {
+              const base = i * 5;
+              insertParams[base + 1] = pubkey;
+              insertParams[base + 2] = metricKey;
+              insertParams[base + 3] = metricValue;
+              insertParams[base + 4] = now;
+              insertParams[base + 5] = expiresAt;
+            });
+
+            await this.writeConnection.run(insertQuery, insertParams);
+            await this.writeConnection.run("COMMIT");
+          } catch (error) {
+            try {
+              await this.writeConnection.run("ROLLBACK");
+            } catch (rollbackError) {
+              logger.error(
+                "Failed to rollback transaction:",
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
+              );
+            }
+            throw error;
+          }
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        `Failed to upsert metric subset for ${pubkey} after retries:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new DatabaseError(
+        `Failed to upsert metric subset for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        "METRICS_UPSERT_SUBSET",
+      );
+    }
+  }
+
+  async upsertMetricSubsetBatch(
+    entries: Array<{ pubkey: string; metrics: Record<string, number> }>,
+  ): Promise<void> {
+    if (!entries || entries.length === 0) return;
+
+    const rows: Array<{
+      pubkey: string;
+      metricKey: string;
+      metricValue: number;
+    }> = [];
+    const keysByPubkey = new Map<string, Set<string>>();
+
+    for (const entry of entries) {
+      const metricEntries = Object.entries(entry.metrics).filter(
+        (e): e is [string, number] => typeof e[1] === "number",
+      );
+      if (metricEntries.length === 0) continue;
+
+      let keySet = keysByPubkey.get(entry.pubkey);
+      if (!keySet) {
+        keySet = new Set<string>();
+        keysByPubkey.set(entry.pubkey, keySet);
+      }
+
+      for (const [metricKey, metricValue] of metricEntries) {
+        keySet.add(metricKey);
+        rows.push({ pubkey: entry.pubkey, metricKey, metricValue });
+      }
+    }
+
+    if (rows.length === 0) return;
+
+    try {
+      return await executeWithRetry(async () => {
+        return await dbWriteQueue.runExclusive(async () => {
+          const now = nowSeconds();
+          const expiresAt = now + this.ttlSeconds;
+
+          await this.writeConnection.run("BEGIN TRANSACTION");
+          try {
+            for (const [pubkey, keySet] of keysByPubkey) {
+              const keys = [...keySet];
+              const placeholders = keys.map((_, i) => `$${i + 2}`).join(",");
+              const params: Record<string, string | number> = { 1: pubkey };
+              keys.forEach((key, i) => {
+                params[i + 2] = key;
+              });
+
+              await this.writeConnection.run(
+                `DELETE FROM profile_metrics WHERE pubkey = $1 AND metric_key IN (${placeholders})`,
+                params,
+              );
+            }
+
+            const CHUNK_SIZE = 5000;
+            for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+              const chunk = rows.slice(i, i + CHUNK_SIZE);
+              const valuesClause = chunk
+                .map(
+                  (_, j) =>
+                    `($${j * 5 + 1}, $${j * 5 + 2}, $${j * 5 + 3}, $${j * 5 + 4}, $${j * 5 + 5})`,
+                )
+                .join(", ");
+
+              const insertQuery = `
+                INSERT INTO profile_metrics (pubkey, metric_key, metric_value, computed_at, expires_at)
+                VALUES ${valuesClause}
+              `;
+
+              const insertParams: Record<string, string | number> = {};
+              chunk.forEach((row, j) => {
+                const base = j * 5;
+                insertParams[base + 1] = row.pubkey;
+                insertParams[base + 2] = row.metricKey;
+                insertParams[base + 3] = row.metricValue;
+                insertParams[base + 4] = now;
+                insertParams[base + 5] = expiresAt;
+              });
+
+              await this.writeConnection.run(insertQuery, insertParams);
+            }
+
+            await this.writeConnection.run("COMMIT");
+          } catch (error) {
+            try {
+              await this.writeConnection.run("ROLLBACK");
+            } catch (rollbackError) {
+              logger.error(
+                "Failed to rollback transaction:",
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
+              );
+            }
+            throw error;
+          }
+        });
+      });
+    } catch (error) {
+      logger.warn(
+        "Failed to upsert metric subset batch after retries:",
+        error instanceof Error ? error.message : String(error),
+      );
+      throw new DatabaseError(
+        `Failed to upsert metric subset batch: ${error instanceof Error ? error.message : String(error)}`,
+        "METRICS_UPSERT_SUBSET_BATCH",
+      );
+    }
+  }
+
   /**
    * Save multiple profile metrics in a single batch operation
    * @param metricsArray - Array of ProfileMetrics to save

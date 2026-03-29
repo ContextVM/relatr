@@ -21,6 +21,9 @@ FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
+# Generate version module from package.json before compiling
+RUN bun run generate:version
+
 # Compile the MCP server as the main entry point
 RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external "@duckdb/node-api" --external "@duckdb/node-bindings-*"
 RUN bun build --compile --minify --sourcemap ./manager.ts --outfile manager --external "@duckdb/node-api" --external "@duckdb/node-bindings-*"

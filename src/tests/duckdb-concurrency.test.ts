@@ -32,6 +32,7 @@ describe("DuckDB concurrency regression", () => {
     metadataRepository = new MetadataRepository(
       readConnection,
       writeConnection,
+      60,
     );
   });
 
@@ -166,5 +167,31 @@ describe("DuckDB concurrency regression", () => {
     // All should complete without errors
     await expect(Promise.all(writePromises)).resolves.toBeDefined();
     await expect(Promise.all(readPromises)).resolves.toBeDefined();
+  });
+
+  it("should treat stale metadata as missing once ttl expires", async () => {
+    const staleProfile: NostrProfile = {
+      pubkey: "cc".repeat(32),
+      name: "stale-user",
+      display_name: "Stale User",
+      nip05: "stale@example.com",
+      lud16: "stale@ln.example.com",
+      about: "Should expire",
+    };
+
+    await metadataRepository.save(staleProfile);
+
+    const writeConnection = dbManager.getWriteConnection();
+    await writeConnection.run(
+      "UPDATE pubkey_metadata SET created_at = $2 WHERE pubkey = $1",
+      { 1: staleProfile.pubkey, 2: nowSeconds() - 120 },
+    );
+
+    await expect(
+      metadataRepository.get(staleProfile.pubkey),
+    ).resolves.toBeNull();
+
+    const batch = await metadataRepository.getBatch([staleProfile.pubkey]);
+    expect(batch.get(staleProfile.pubkey)).toBeNull();
   });
 });

@@ -1,0 +1,56 @@
+{
+  "name": "@contextvm/relo",
+  "version": "0.1.3",
+  "description": "Relatr-specific Elo validation and authoring metadata",
+  "type": "module",
+  "bin": {
+    "relo": "./dist/src/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    },
+    "./cli": {
+      "types": "./dist/src/cli.d.ts",
+      "import": "./dist/src/cli.js",
+      "default": "./dist/src/cli.js"
+    }
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "cli": "bun run src/cli.ts",
+    "clean": "rm -rf dist",
+    "prepack": "bun run clean && bun run build",
+    "pack:check": "bun pm pack --dry-run",
+    "pretest": "bun run clean",
+    "watch": "tsc --watch",
+    "test": "bun test test/unit/",
+    "format": "prettier --write .",
+    "release": "bun run prepack && bun publish"
+  },
+  "keywords": [
+    "relatr",
+    "elo",
+    "validation",
+    "plugins"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@contextvm/elo": "^0.10.4",
+    "nostr-tools": "^2.23.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

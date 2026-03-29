@@ -28,6 +28,25 @@ export interface RelatrConfig {
   taEnabled: boolean;
 
   /**
+   * Elo plugins configuration
+   */
+  eloPluginsDir: string;
+  eloPluginTimeoutMs: number;
+  capTimeoutMs: number;
+  nip05ResolveTimeoutMs: number;
+  nip05CacheTtlSeconds: number;
+  nip05DomainCooldownSeconds: number;
+  eloBatchPubkeyConcurrency: number;
+  /** Host policy: maximum number of plan/then rounds allowed per plugin */
+  eloMaxRoundsPerPlugin: number;
+  /** Host policy: maximum number of plannable do calls allowed in a single round */
+  eloMaxRequestsPerRound: number;
+  /** Host policy: maximum number of plannable do calls allowed across all rounds */
+  eloMaxTotalRequestsPerPlugin: number;
+  eloPluginWeights: Record<string, number>;
+  adminPubkeys: string[];
+
+  /**
    * MCP server configuration
    */
   isPublicServer: boolean;
@@ -49,7 +68,7 @@ export interface RelatrConfig {
 }
 export interface MetricWeights {
   distanceWeight: number;
-  validators: Record<string, number>; // Dynamic validator weights
+  validators: Record<string, number>; // Dynamic plugin weights (namespaced)
 }
 
 // Data types
@@ -70,7 +89,7 @@ export interface TrustScore {
 
 export interface ScoreComponents {
   distanceWeight: number;
-  validators: Record<string, number>;
+  validators: Record<string, { score: number; description?: string }>;
   socialDistance: number;
   normalizedDistance: number;
 }
@@ -131,21 +150,6 @@ export interface NostrProfile {
   nip05?: string;
   lud16?: string;
   about?: string;
-}
-
-// Validation types
-export interface ValidationResult {
-  valid: boolean;
-  score: number;
-  reason?: string;
-  details?: Record<string, unknown>;
-}
-
-export interface ValidationMetrics {
-  nip05: ValidationResult;
-  lightning: ValidationResult;
-  event: ValidationResult;
-  reciprocity: ValidationResult;
 }
 
 // Error types

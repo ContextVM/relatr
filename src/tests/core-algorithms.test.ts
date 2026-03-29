@@ -4,7 +4,8 @@ import { SocialGraph } from "../graph/SocialGraph";
 import type { RelatrConfig, ProfileMetrics } from "../types";
 import { DatabaseManager } from "../database/DatabaseManager";
 import { normalizeDistance, nowSeconds } from "@/utils/utils";
-import { DEFAULT_METRIC_WEIGHTS } from "../config";
+import { DEFAULT_DISTANCE_WEIGHT } from "../config";
+import { SocialGraphBuilder } from "@/graph/SocialGraphBuilder";
 
 /**
  * Tests for TrustCalculator and SocialGraph core algorithms
@@ -18,6 +19,7 @@ const testConfig: RelatrConfig = {
   nostrRelays: ["wss://relay.example.com"],
   serverSecretKey: "test_server_secret_key",
   serverRelays: ["wss://relay.example.com"],
+  taExtraRelays: [],
   decayFactor: 0.5,
   cacheTtlHours: 1,
   numberOfHops: 1,
@@ -25,28 +27,38 @@ const testConfig: RelatrConfig = {
   cleanupIntervalHours: 1,
   validationSyncIntervalHours: 1,
   taEnabled: false,
+  eloPluginsDir: "/tmp/test-plugins",
+  eloPluginTimeoutMs: 5000,
+  capTimeoutMs: 3000,
+  nip05ResolveTimeoutMs: 3000,
+  nip05CacheTtlSeconds: 300,
+  nip05DomainCooldownSeconds: 300,
+  eloBatchPubkeyConcurrency: 8,
+  eloMaxRoundsPerPlugin: 8,
+  eloMaxRequestsPerRound: 32,
+  eloMaxTotalRequestsPerPlugin: 128,
+  eloPluginWeights: {},
+  adminPubkeys: [],
   isPublicServer: false,
-  taExtraRelays: [],
 };
 
-/**
- * Test weights - match canonical defaults used by TrustCalculator.
- * Keep this in sync by importing the single source of truth.
- */
-const testWeights = DEFAULT_METRIC_WEIGHTS;
-
-// Test data
+// Test data with sample plugin metrics (using namespaced names)
 const testMetrics: ProfileMetrics = {
   pubkey: "0000000000000000000000000000000000000000000000000000000000000002",
   metrics: {
-    nip05Valid: 1.0,
-    lightningAddress: 1.0,
-    eventKind10002: 1.0,
-    reciprocity: 0.8,
-    isRootNip05: 0.5,
+    "npub1test:plugin_a": 1.0,
+    "npub1test:plugin_b": 0.8,
+    "npub1test:plugin_c": 0.5,
   },
   computedAt: nowSeconds(),
   expiresAt: nowSeconds() + 1000,
+};
+
+// Test weights for the sample metrics
+const testWeights: Record<string, number> = {
+  "npub1test:plugin_a": 0.2,
+  "npub1test:plugin_b": 0.15,
+  "npub1test:plugin_c": 0.15,
 };
 
 // Shared instances
@@ -54,7 +66,7 @@ let calculator: TrustCalculator;
 let socialGraph: SocialGraph;
 
 beforeAll(async () => {
-  calculator = new TrustCalculator(testConfig);
+  calculator = new TrustCalculator(testConfig, testWeights);
 
   // Initialize DuckDB connection and social graph once for all tests
   const dbManager = DatabaseManager.getInstance(":memory:");
@@ -117,34 +129,21 @@ describe("TrustCalculator - Score Calculation", () => {
       distance,
     );
 
-    // Verify formula: Score = Σ(wᵢ × vᵢ) / Σ(wᵢ)
-    // Compute expectation the same way as production: apply weights to all present metrics
+    // Verify formula: Score = distanceWeight * normalizedDistance + Σ(wᵢ × vᵢ)
     const normalizedDistance = Math.exp(-testConfig.decayFactor * distance);
-    const weights = testWeights;
 
-    const validatorWeights = weights.validators as Record<string, number>;
-
-    let weightedSum = weights.distanceWeight * normalizedDistance;
+    let weightedSum = DEFAULT_DISTANCE_WEIGHT * normalizedDistance;
     for (const [metricName, metricValue] of Object.entries(
       testMetrics.metrics,
     )) {
-      const w = validatorWeights[metricName];
+      const w = testWeights[metricName];
       if (w !== undefined) {
         weightedSum += w * (metricValue ?? 0);
       }
     }
 
-    const totalWeight =
-      weights.distanceWeight +
-      Object.values(weights.validators).reduce(
-        (sum, weight) => sum + weight,
-        0,
-      );
-
-    const expectedScore = weightedSum / totalWeight;
-
     // Score is rounded to 2 decimal places, so we use precision of 2
-    expect(result.score).toBeCloseTo(expectedScore, 2);
+    expect(result.score).toBeCloseTo(weightedSum, 2);
   });
 
   test("should include all components in result", () => {
@@ -164,10 +163,6 @@ describe("TrustCalculator - Score Calculation", () => {
     // Verify components structure
     expect(result.components).toHaveProperty("distanceWeight");
     expect(result.components).toHaveProperty("validators");
-    expect(result.components.validators).toHaveProperty("nip05Valid");
-    expect(result.components.validators).toHaveProperty("lightningAddress");
-    expect(result.components.validators).toHaveProperty("eventKind10002");
-    expect(result.components.validators).toHaveProperty("reciprocity");
     expect(result.components).toHaveProperty("socialDistance");
     expect(result.components).toHaveProperty("normalizedDistance");
   });
@@ -213,11 +208,9 @@ describe("TrustCalculator - Score Calculation", () => {
       pubkey:
         "000000000000000000000000000000000000000000000000000000000000000d",
       metrics: {
-        nip05Valid: 0,
-        lightningAddress: 0,
-        eventKind10002: 0,
-        reciprocity: 0,
-        isRootNip05: 0,
+        "npub1test:plugin_a": 0,
+        "npub1test:plugin_b": 0,
+        "npub1test:plugin_c": 0,
       },
       computedAt: nowSeconds(),
       expiresAt: nowSeconds() + 1000,
@@ -270,10 +263,12 @@ describe("TrustCalculator - Score Rounding", () => {
     };
 
     checkDecimalPlaces(result.components.distanceWeight);
-    checkDecimalPlaces(result.components.validators.nip05Valid || 0);
-    checkDecimalPlaces(result.components.validators.lightningAddress || 0);
-    checkDecimalPlaces(result.components.validators.eventKind10002 || 0);
-    checkDecimalPlaces(result.components.validators.reciprocity || 0);
+    checkDecimalPlaces(
+      result.components.validators["npub1test:plugin_a"]?.score || 0,
+    );
+    checkDecimalPlaces(
+      result.components.validators["npub1test:plugin_b"]?.score || 0,
+    );
     checkDecimalPlaces(result.components.socialDistance);
     checkDecimalPlaces(result.components.normalizedDistance);
   });
@@ -337,6 +332,42 @@ describe("SocialGraph - Basic Operations", () => {
     expect(stats).toHaveProperty("sizeByDistance");
     expect(stats.users).toBeGreaterThanOrEqual(0);
     expect(stats.follows).toBeGreaterThanOrEqual(0);
+  });
+
+  test("should map users to unique graph pubkeys instead of total follows", async () => {
+    const dbManager = DatabaseManager.getInstance(":memory:");
+    const isolatedGraph = new SocialGraph(dbManager.getWriteConnection());
+    const stubGraph = {
+      getStats: async () => ({
+        totalFollows: 696,
+        uniqueFollowers: 128,
+        uniqueFollowed: 256,
+      }),
+      getDistanceDistribution: async () => ({ 1: 2, 2: 126 }),
+    };
+
+    Object.assign(isolatedGraph as unknown as Record<string, unknown>, {
+      initialized: true,
+      graph: stubGraph,
+    });
+
+    await expect(isolatedGraph.getStats()).resolves.toEqual({
+      users: 128,
+      follows: 696,
+      sizeByDistance: { 1: 2, 2: 126 },
+    });
+  });
+
+  test("hop count 1 resolves to a single root expansion", () => {
+    const builder = new SocialGraphBuilder({} as never);
+    const resolveMaxHopIndex = Reflect.get(
+      builder as unknown as Record<string, unknown>,
+      "resolveMaxHopIndex",
+    ) as (hops: number) => number;
+
+    expect(resolveMaxHopIndex(1)).toBe(0);
+    expect(resolveMaxHopIndex(2)).toBe(1);
+    expect(resolveMaxHopIndex(3)).toBe(2);
   });
 
   test("should switch root pubkey", async () => {

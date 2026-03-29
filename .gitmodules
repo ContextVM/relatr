@@ -1,0 +1,6 @@
+[submodule "elo"]
+	path = elo
+	url = https://github.com/ContextVM-org/elo.git
+[submodule "relatr-web"]
+	path = relatr-web
+	url = git@github.com:ContextVM/relatr-web

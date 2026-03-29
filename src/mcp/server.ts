@@ -1,12 +1,9 @@
 import { validateAndDecodePubkey } from "@/utils/utils.nostr.js";
-import {
-  ApplesauceRelayPool,
-  NostrServerTransport,
-  PrivateKeySigner,
-} from "@contextvm/sdk";
+import { NostrServerTransport, PrivateKeySigner } from "@contextvm/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
+import { HOST_VERSION } from "../version.js";
 import { RelatrFactory } from "../service/RelatrFactory.js";
 import { RelatrService } from "../service/RelatrService.js";
 import { TAService } from "../service/TAService.js";
@@ -16,11 +13,19 @@ import { relaySet } from "applesauce-core/helpers";
 import { RateLimiter } from "./RateLimiter.js";
 import { nowMs } from "@/utils/utils.js";
 
+export function isAdminPubkey(
+  clientPubkey: string | undefined,
+  adminPubkeys: string[],
+): boolean {
+  if (!clientPubkey) return false;
+  return adminPubkeys.includes(clientPubkey);
+}
+
 /**
- * Start the MCP server for Relatr
+ * Start MCP server for Relatr
  *
- * This function initializes the RelatrService, creates and configures the MCP server,
- * registers the required tools, and handles graceful shutdown.
+ * This function initializes RelatrService, creates and configures MCP server,
+ * registers required tools, and handles graceful shutdown.
  */
 export async function startMCPServer(): Promise<void> {
   let relatrService: RelatrService | null = null;
@@ -53,8 +58,27 @@ export async function startMCPServer(): Promise<void> {
     // Register tools with rate limiter
     registerCalculateTrustScoreTool(server, relatrService, rateLimiter);
     registerCalculateTrustScoresTool(server, relatrService, rateLimiter);
-    registerStatsTool(server, relatrService, rateLimiter);
+    registerStatsTool(server, relatrService, rateLimiter, config.adminPubkeys);
     registerSearchProfilesTool(server, relatrService, rateLimiter);
+    registerPluginsListTool(server, relatrService, rateLimiter);
+    registerPluginsInstallTool(
+      server,
+      relatrService,
+      rateLimiter,
+      config.adminPubkeys,
+    );
+    registerPluginsConfigTool(
+      server,
+      relatrService,
+      rateLimiter,
+      config.adminPubkeys,
+    );
+    registerPluginsUninstallTool(
+      server,
+      relatrService,
+      rateLimiter,
+      config.adminPubkeys,
+    );
     if (taService) {
       registerManageTATool(server, taService, rateLimiter);
     }
@@ -62,11 +86,11 @@ export async function startMCPServer(): Promise<void> {
     // Setup graceful shutdown
     setupGracefulShutdown(relatrService);
 
-    // Start the server
+    // Start server
     // const transport = new StdioServerTransport();
     const transport = new NostrServerTransport({
       signer: new PrivateKeySigner(config.serverSecretKey),
-      relayHandler: new ApplesauceRelayPool(config.serverRelays),
+      relayHandler: config.serverRelays,
       injectClientPubkey: true,
       isPublicServer: config.isPublicServer,
       serverInfo: {
@@ -95,6 +119,213 @@ export async function startMCPServer(): Promise<void> {
 
     process.exit(1);
   }
+}
+
+function registerPluginsListTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+): void {
+  const inputSchema = z.object({
+    verbose: z.boolean().optional().default(false),
+  });
+
+  const pluginSchema = z.object({
+    pluginKey: z.string(),
+    name: z.string(),
+    enabled: z.boolean(),
+    effectiveWeight: z.number(),
+    pubkey: z.string().optional(),
+    title: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    versionInfo: z.string().optional(),
+    defaultWeight: z.number().nullable().optional(),
+    installedEventId: z.string().optional(),
+    createdAt: z.number().optional(),
+  });
+
+  const outputSchema = z.object({
+    plugins: z.array(pluginSchema),
+  });
+
+  server.registerTool(
+    "plugins_list",
+    {
+      title: "Plugins List",
+      description: "List plugin runtime state with concise or verbose metadata",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params) => {
+      try {
+        const result = await withRateLimit(rateLimiter, "plugins_list", () =>
+          relatrService.listPlugins({ verbose: params.verbose }),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_list");
+      }
+    },
+  );
+}
+
+function registerPluginsInstallTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+  adminPubkeys: string[],
+): void {
+  const inputSchema = z.object({
+    eventId: z.string().optional(),
+    nevent: z.string().optional(),
+    relays: z.array(z.string()).optional(),
+    enable: z.boolean().optional(),
+  });
+
+  const outputSchema = z.object({
+    pluginKey: z.string(),
+    enabled: z.boolean(),
+  });
+
+  server.registerTool(
+    "plugins_install",
+    {
+      title: "Plugins Install",
+      description: "Install a plugin from event id or nevent (admin-only)",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      const clientPubkey = _meta?.clientPubkey as string | undefined;
+      if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unauthorized: admin pubkey required",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await withRateLimit(rateLimiter, "plugins_install", () =>
+          relatrService.installPlugin(params),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_install", clientPubkey);
+      }
+    },
+  );
+}
+
+function registerPluginsConfigTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+  adminPubkeys: string[],
+): void {
+  const inputSchema = z.object({
+    changes: z
+      .array(
+        z.object({
+          pluginKey: z.string(),
+          enabled: z.boolean().optional(),
+          weightOverride: z.number().min(0).max(1).optional(),
+        }),
+      )
+      .min(1),
+  });
+
+  const outputSchema = z.object({
+    updated: z.number(),
+  });
+
+  server.registerTool(
+    "plugins_config",
+    {
+      title: "Plugins Config",
+      description:
+        "Batch configure plugin enablement/weights atomically (admin-only)",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      const clientPubkey = _meta?.clientPubkey as string | undefined;
+      if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unauthorized: admin pubkey required",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await withRateLimit(rateLimiter, "plugins_config", () =>
+          relatrService.configurePlugins(params),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_config", clientPubkey);
+      }
+    },
+  );
+}
+
+function registerPluginsUninstallTool(
+  server: McpServer,
+  relatrService: RelatrService,
+  rateLimiter: RateLimiter,
+  adminPubkeys: string[],
+): void {
+  const inputSchema = z.object({
+    pluginKeys: z.array(z.string()).min(1),
+  });
+
+  const outputSchema = z.object({
+    removed: z.number(),
+  });
+
+  server.registerTool(
+    "plugins_uninstall",
+    {
+      title: "Plugins Uninstall",
+      description: "Batch uninstall plugins by pluginKey (admin-only)",
+      inputSchema: inputSchema.shape,
+      outputSchema: outputSchema.shape,
+    },
+    async (params, { _meta }) => {
+      const clientPubkey = _meta?.clientPubkey as string | undefined;
+      if (!isAdminPubkey(clientPubkey, adminPubkeys)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Unauthorized: admin pubkey required",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const result = await withRateLimit(
+          rateLimiter,
+          "plugins_uninstall",
+          () => relatrService.uninstallPlugins(params),
+        );
+        return { content: [], structuredContent: result };
+      } catch (error) {
+        return toMcpResponse(error, "plugins_uninstall", clientPubkey);
+      }
+    },
+  );
 }
 
 /**
@@ -194,7 +425,13 @@ function registerCalculateTrustScoreTool(
       score: z.number().min(0).max(1),
       components: z.object({
         distanceWeight: z.number(),
-        validators: z.record(z.string(), z.number()),
+        validators: z.record(
+          z.string(),
+          z.object({
+            score: z.number(),
+            description: z.string().optional(),
+          }),
+        ),
         socialDistance: z.number(),
         normalizedDistance: z.number(),
       }),
@@ -226,18 +463,7 @@ function registerCalculateTrustScoreTool(
         return {
           content: [],
           structuredContent: {
-            trustScore: {
-              sourcePubkey: trustScore.sourcePubkey,
-              targetPubkey: trustScore.targetPubkey,
-              score: trustScore.score,
-              components: {
-                distanceWeight: trustScore.components.distanceWeight,
-                validators: trustScore.components.validators,
-                socialDistance: trustScore.components.socialDistance,
-                normalizedDistance: trustScore.components.normalizedDistance,
-              },
-              computedAt: trustScore.computedAt,
-            },
+            trustScore,
             computationTimeMs,
           },
         };
@@ -249,7 +475,7 @@ function registerCalculateTrustScoreTool(
 }
 
 /**
- * Register the calculate_trust_scores tool (batch)
+ * Register calculate_trust_scores tool (batch)
  */
 function registerCalculateTrustScoresTool(
   server: McpServer,
@@ -268,7 +494,13 @@ function registerCalculateTrustScoresTool(
     score: z.number().min(0).max(1),
     components: z.object({
       distanceWeight: z.number(),
-      validators: z.record(z.string(), z.number()),
+      validators: z.record(
+        z.string(),
+        z.object({
+          score: z.number(),
+          description: z.string().optional(),
+        }),
+      ),
       socialDistance: z.number(),
       normalizedDistance: z.number(),
     }),
@@ -340,18 +572,7 @@ function registerCalculateTrustScoresTool(
           if (!decoded) continue;
           const ts = await trustScoresMap.get(decoded);
           if (ts) {
-            trustScores.push({
-              sourcePubkey: ts.sourcePubkey,
-              targetPubkey: ts.targetPubkey,
-              score: ts.score,
-              components: {
-                distanceWeight: ts.components.distanceWeight,
-                validators: ts.components.validators,
-                socialDistance: ts.components.socialDistance,
-                normalizedDistance: ts.components.normalizedDistance,
-              },
-              computedAt: ts.computedAt,
-            });
+            trustScores.push(ts);
           }
         }
 
@@ -370,12 +591,13 @@ function registerCalculateTrustScoresTool(
 }
 
 /**
- * Register the stats tool
+ * Register stats tool
  */
 function registerStatsTool(
   server: McpServer,
   relatrService: RelatrService,
   rateLimiter: RateLimiter,
+  adminPubkeys: string[],
 ): void {
   // Input schema (empty)
   const inputSchema = z.object({});
@@ -384,6 +606,8 @@ function registerStatsTool(
   const outputSchema = z.object({
     timestamp: z.number(),
     sourcePubkey: z.string(),
+    relatrVersion: z.string(),
+    isAdmin: z.boolean(),
     database: z.object({
       metrics: z.object({
         totalEntries: z.number(),
@@ -406,12 +630,13 @@ function registerStatsTool(
     {
       title: "Stats",
       description:
-        "Get comprehensive statistics about the Relatr service including database stats, social graph stats, and the source public key",
+        "Get comprehensive statistics about Relatr service including database stats, social graph stats, and source public key",
       inputSchema: inputSchema.shape,
       outputSchema: outputSchema.shape,
     },
-    async () => {
+    async (_params, { _meta }) => {
       try {
+        const clientPubkey = _meta?.clientPubkey as string | undefined;
         const statsResult = await withRateLimit(rateLimiter, "stats", () =>
           relatrService.getStats(),
         );
@@ -421,6 +646,8 @@ function registerStatsTool(
           structuredContent: {
             timestamp: statsResult.timestamp,
             sourcePubkey: statsResult.sourcePubkey,
+            relatrVersion: HOST_VERSION,
+            isAdmin: isAdminPubkey(clientPubkey, adminPubkeys),
             database: {
               metrics: statsResult.database.metrics,
               metadata: statsResult.database.metadata,
@@ -439,7 +666,7 @@ function registerStatsTool(
 }
 
 /**
- * Register the search_profiles tool
+ * Register search_profiles tool
  */
 function registerSearchProfilesTool(
   server: McpServer,
@@ -465,7 +692,7 @@ function registerSearchProfilesTool(
       .optional()
       .default(false)
       .describe(
-        "Whether to extend the search to Nostr to fill remaining results. Defaults to false. If false, Nostr will only be queried when local DB returns zero results.",
+        "Whether to extend search to Nostr to fill remaining results. Defaults to false. If false, Nostr will only be queried when local DB returns zero results.",
       ),
   });
 
@@ -522,7 +749,7 @@ function registerSearchProfilesTool(
 }
 
 /**
- * Register the manage_ta tool
+ * Register manage_ta tool
  */
 function registerManageTATool(
   server: McpServer,

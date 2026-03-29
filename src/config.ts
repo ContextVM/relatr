@@ -1,22 +1,14 @@
 import { normalizeToPubkey } from "applesauce-core/helpers";
-import type { MetricWeights, RelatrConfig } from "./types";
+import type { RelatrConfig } from "./types";
 import { z } from "zod";
 import { COMMON_RELAYS, CVM_RELAY } from "./constants/nostr";
 
 /**
- * Canonical default metric weighting scheme used by trust scoring.
- * Keep this as the single source of truth (tests + runtime).
+ * Default weights for the distance component in trust scoring.
+ * This is kept for backward compatibility - the distance weight is
+ * applied separately from plugin weights.
  */
-export const DEFAULT_METRIC_WEIGHTS: MetricWeights = {
-  distanceWeight: 0.5,
-  validators: {
-    nip05Valid: 0.15,
-    lightningAddress: 0.1,
-    eventKind10002: 0.1,
-    reciprocity: 0.1,
-    isRootNip05: 0.05,
-  },
-};
+export const DEFAULT_DISTANCE_WEIGHT = 0.5;
 
 const GIGI_PUBKEY =
   "6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93";
@@ -48,6 +40,34 @@ export const RelatrConfigSchema = z.object({
     .union([z.boolean(), z.string()])
     .transform((v) => (typeof v === "string" ? v.toLowerCase() === "true" : v))
     .default(false),
+
+  // Elo plugins configuration
+  eloPluginsDir: z.string().default("./plugins/elo"),
+  eloPluginTimeoutMs: z.number().positive().default(30000),
+  capTimeoutMs: z.number().positive().default(30000),
+  nip05ResolveTimeoutMs: z.number().positive().default(10000),
+  nip05CacheTtlSeconds: z
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60 * 24 * 2),
+  nip05DomainCooldownSeconds: z
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60),
+  eloBatchPubkeyConcurrency: z.number().int().positive().default(8),
+  // Host policy limits
+  eloMaxRoundsPerPlugin: z.number().int().positive().default(8),
+  eloMaxRequestsPerRound: z.number().int().positive().default(32),
+  eloMaxTotalRequestsPerPlugin: z.number().int().positive().default(128),
+  eloPluginWeights: z
+    .record(z.string(), z.number().min(0).max(1))
+    .default({})
+    .describe(
+      "Override weights for Elo plugins (namespaced names: pubkey:pluginName)",
+    ),
+  adminPubkeys: z.array(z.string()).default([]),
 
   // MCP server configuration
   isPublicServer: z
@@ -130,6 +150,44 @@ export function loadConfig(): RelatrConfig {
       : undefined,
 
     taEnabled: process.env.TA_ENABLED,
+
+    // Elo plugins configuration
+    eloPluginsDir: process.env.ELO_PLUGINS_DIR,
+    eloPluginTimeoutMs: process.env.ELO_PLUGIN_TIMEOUT_MS
+      ? parseInt(process.env.ELO_PLUGIN_TIMEOUT_MS, 10)
+      : undefined,
+    capTimeoutMs: process.env.CAP_TIMEOUT_MS
+      ? parseInt(process.env.CAP_TIMEOUT_MS, 10)
+      : undefined,
+    nip05ResolveTimeoutMs: process.env.NIP05_RESOLVE_TIMEOUT_MS
+      ? parseInt(process.env.NIP05_RESOLVE_TIMEOUT_MS, 10)
+      : undefined,
+    nip05CacheTtlSeconds: process.env.NIP05_CACHE_TTL_SECONDS
+      ? parseInt(process.env.NIP05_CACHE_TTL_SECONDS, 10)
+      : undefined,
+    nip05DomainCooldownSeconds: process.env.NIP05_DOMAIN_COOLDOWN_SECONDS
+      ? parseInt(process.env.NIP05_DOMAIN_COOLDOWN_SECONDS, 10)
+      : undefined,
+    eloBatchPubkeyConcurrency: process.env.ELO_BATCH_PUBKEY_CONCURRENCY
+      ? parseInt(process.env.ELO_BATCH_PUBKEY_CONCURRENCY, 10)
+      : undefined,
+    eloMaxRoundsPerPlugin: process.env.ELO_MAX_ROUNDS_PER_PLUGIN
+      ? parseInt(process.env.ELO_MAX_ROUNDS_PER_PLUGIN, 10)
+      : undefined,
+    eloMaxRequestsPerRound: process.env.ELO_MAX_REQUESTS_PER_ROUND
+      ? parseInt(process.env.ELO_MAX_REQUESTS_PER_ROUND, 10)
+      : undefined,
+    eloMaxTotalRequestsPerPlugin: process.env.ELO_MAX_TOTAL_REQUESTS_PER_PLUGIN
+      ? parseInt(process.env.ELO_MAX_TOTAL_REQUESTS_PER_PLUGIN, 10)
+      : undefined,
+    eloPluginWeights: process.env.ELO_PLUGIN_WEIGHTS
+      ? JSON.parse(process.env.ELO_PLUGIN_WEIGHTS)
+      : undefined,
+    adminPubkeys: process.env.ADMIN_PUBKEYS
+      ? process.env.ADMIN_PUBKEYS.split(",")
+          .map((p) => normalizeToPubkey(p.trim()))
+          .filter((p): p is string => !!p)
+      : undefined,
 
     // MCP server configuration
     isPublicServer: process.env.IS_PUBLIC_SERVER,

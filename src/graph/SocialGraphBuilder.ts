@@ -5,6 +5,9 @@ import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import { logger } from "../utils/Logger";
 import { dbWriteQueue } from "@/database/DbWriteQueue";
 
+const GRAPH_FETCH_MAX_ATTEMPTS = 3;
+const GRAPH_FETCH_RETRY_DELAY_MS = 1000;
+
 /**
  * Parameters for social graph creation
  */
@@ -138,7 +141,9 @@ export class SocialGraphBuilder {
     const pubkeysToCrawl: Set<string> = new Set([sourcePubkey]);
     let totalEventsFetched = 0;
 
-    for (let hop = 0; hop <= hops; hop++) {
+    const maxHopIndex = this.resolveMaxHopIndex(hops);
+
+    for (let hop = 0; hop <= maxHopIndex; hop++) {
       if (pubkeysToCrawl.size === 0) {
         logger.info(`🏁 Hop ${hop}: No new pubkeys to crawl.`);
         break;
@@ -151,35 +156,55 @@ export class SocialGraphBuilder {
       let newDiscoveredThisHop = 0;
       let hopEventsFetched = 0;
 
-      // Fetch contact lists for this hop with streaming ingestion to avoid memory accumulation
-      // Events are processed immediately via onBatch callback and ingested into DuckDB,
-      // preventing O(n) memory scaling with network size.
-      await fetchEventsForPubkeys(pubkeysForThisHop, 3, undefined, this.pool, {
-        onBatch: async (events) => {
-          hopEventsFetched += events.length;
+      for (let attempt = 1; attempt <= GRAPH_FETCH_MAX_ATTEMPTS; attempt++) {
+        // Fetch contact lists for this hop with streaming ingestion to avoid memory accumulation
+        // Events are processed immediately via onBatch callback and ingested into DuckDB,
+        // preventing O(n) memory scaling with network size.
+        await fetchEventsForPubkeys(
+          pubkeysForThisHop,
+          3,
+          undefined,
+          this.pool,
+          {
+            onBatch: async (events) => {
+              hopEventsFetched += events.length;
 
-          // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
-          if (socialGraph && events.length > 0) {
-            // Serialize ingestion to avoid transaction conflicts on the shared connection
-            await dbWriteQueue.runExclusive(async () => {
-              await socialGraph.ingestEvents(events);
-            });
-          }
+              // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
+              if (socialGraph && events.length > 0) {
+                // Serialize ingestion to avoid transaction conflicts on the shared connection
+                await dbWriteQueue.runExclusive(async () => {
+                  await socialGraph.ingestEvents(events);
+                });
+              }
 
-          // Extract new pubkeys for next hop on the fly to avoid storing all events
-          for (const event of events) {
-            for (const tag of event.tags) {
-              if (tag[0] !== "p") continue;
-              const candidate = tag[1];
-              if (!candidate) continue;
-              if (crawledPubkeys.has(candidate)) continue;
-              if (pubkeysToCrawl.has(candidate)) continue;
-              pubkeysToCrawl.add(candidate);
-              newDiscoveredThisHop++;
-            }
-          }
-        },
-      });
+              // Extract new pubkeys for next hop on the fly to avoid storing all events
+              for (const event of events) {
+                for (const tag of event.tags) {
+                  if (tag[0] !== "p") continue;
+                  const candidate = tag[1];
+                  if (!candidate) continue;
+                  if (crawledPubkeys.has(candidate)) continue;
+                  if (pubkeysToCrawl.has(candidate)) continue;
+                  pubkeysToCrawl.add(candidate);
+                  newDiscoveredThisHop++;
+                }
+              }
+            },
+          },
+        );
+
+        if (hopEventsFetched > 0 || attempt === GRAPH_FETCH_MAX_ATTEMPTS) {
+          break;
+        }
+
+        logger.warn(
+          `⚠️ Hop ${hop}: no contact events returned for ${pubkeysForThisHop.length.toLocaleString()} pubkeys on attempt ${attempt}/${GRAPH_FETCH_MAX_ATTEMPTS}. Retrying...`,
+        );
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, GRAPH_FETCH_RETRY_DELAY_MS * attempt),
+        );
+      }
 
       totalEventsFetched += hopEventsFetched;
 
@@ -203,5 +228,9 @@ export class SocialGraphBuilder {
       pubkeys: Array.from(crawledPubkeys),
       eventsFetched: totalEventsFetched,
     };
+  }
+
+  private resolveMaxHopIndex(hops: number): number {
+    return Math.max(0, hops - 1);
   }
 }

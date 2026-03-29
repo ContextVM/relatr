@@ -1,47 +1,60 @@
 {
   "name": "relatr",
   "description": "Decentralized trust metric service for the Nostr ecosystem that computes personalized trust scores from the unique perspective of a public key",
-  "version": "0.1.22",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "relo"
+  ],
   "scripts": {
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
     "lint": "eslint src/",
-    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit --project tsconfig.typecheck.json",
+    "format": "prettier --write ./src",
+    "generate:version": "bun run scripts/generate-version.ts",
     "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\"",
     "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\""
   },
   "devDependencies": {
-    "@changesets/cli": "^2.29.8",
+    "@eslint/js": "^9.39.1",
+    "@changesets/cli": "^2.30.0",
     "@types/bun": "latest",
+    "@types/luxon": "^3.7.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "eslint": "^9.39.3",
+    "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.1",
-    "typescript-eslint": "^8.56.1"
+    "typescript-eslint": "^8.57.2"
   },
   "peerDependencies": {
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@contextvm/sdk": "^0.7",
-    "@duckdb/node-api": "^1.4.4-r.2",
-    "applesauce-core": "^5.1.0",
-    "applesauce-relay": "^5.1.0",
+    "@contextvm/elo": "^0.10.4",
+    "@contextvm/sdk": "^0.7.8",
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "@duckdb/node-api": "^1.4.2-r.1",
+    "applesauce-core": "^5.2.0",
+    "applesauce-relay": "^5.2.0",
+    "json-canonicalize": "^2.0.0",
+    "luxon": "^3.7.2",
     "nostr-social-duck": "^0.1.24",
     "nostr-tools": "^2.23.3",
     "process-pastry": "https://github.com/hzrd149/process-pastry",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "zod": "^4.3.6"
+    "rxjs": "^7.8.2",
+    "@contextvm/relo": "workspace:*",
+    "zod": "^4.1.12"
   },
   "optionalDependencies": {
-    "@duckdb/node-bindings-linux-x64": "^1.4.4-r.2",
-    "@duckdb/node-bindings-linux-arm64": "^1.4.4-r.2",
-    "@duckdb/node-bindings-darwin-x64": "^1.4.4-r.2",
-    "@duckdb/node-bindings-darwin-arm64": "^1.4.4-r.2",
-    "@duckdb/node-bindings-win32-x64": "^1.4.4-r.2"
+    "@duckdb/node-bindings-linux-x64": "^1.4.4-r.3",
+    "@duckdb/node-bindings-linux-arm64": "^1.4.4-r.3",
+    "@duckdb/node-bindings-darwin-x64": "^1.4.4-r.3",
+    "@duckdb/node-bindings-darwin-arm64": "^1.4.4-r.3",
+    "@duckdb/node-bindings-win32-x64": "^1.4.4-r.3"
   }
 }
