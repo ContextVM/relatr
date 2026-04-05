@@ -1,5 +1,17 @@
 # relatr
 
+## 0.2.1
+
+### Patch Changes
+
+- feat(metrics): add getStoredMetrics method for returning cached metrics without recomputing
+  - Add new getStoredMetrics method to MetricsValidator that returns cached metrics when plugin coverage is partial without triggering recomputation
+  - Make validation sync non-blocking in SchedulerService to prevent blocking service startup
+  - Reduce cache TTL from 168h (1 week) to 72h (3 days) in configuration
+  - Update SearchService to return zeroed scores on batch failure instead of falling back to individual scoring
+  - Remove expires_at filtering from MetricsRepository queries to always return stored metrics
+  - Update version to 0.2.0 and plugin version tags to ^0.2.0
+
 ## 0.2.0
 
 ### Minor Changes

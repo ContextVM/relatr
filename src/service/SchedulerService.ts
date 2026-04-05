@@ -78,10 +78,12 @@ export class SchedulerService implements ISchedulerService {
       this.startBackgroundCleanup();
       this.startPeriodicSync();
 
-      // IMPORTANT: run initial validation sync before we consider the service "started".
-      // This prevents client requests from racing with the first big write workload
-      // (metrics batch writes) on the shared DuckDB connection.
-      await this.startPeriodicValidationSync();
+      void this.startPeriodicValidationSync().catch((error) => {
+        logger.error(
+          "Initial validation warm-up failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
 
       logger.info("🔧 SchedulerService background processes started");
     } finally {

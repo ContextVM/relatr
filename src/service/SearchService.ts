@@ -227,7 +227,7 @@ export class SearchService implements ISearchService {
       // Pre-fetch all distances and metrics in parallel
       const [distances, metricsMap] = await Promise.all([
         this.socialGraph.getDistancesBatch(profilePubkeys),
-        this.metricsValidator.validateAllBatch(
+        this.metricsValidator.getStoredMetrics(
           profilePubkeys,
           effectiveSourcePubkey,
         ),
@@ -292,10 +292,15 @@ export class SearchService implements ISearchService {
       }));
     } catch (error) {
       logger.warn(
-        `Batch scoring failed, falling back to individual scoring:`,
+        "Batch scoring failed, returning zeroed search scores:",
         error instanceof Error ? error.message : String(error),
       );
-      return this.calculateProfileScores(profiles, effectiveSourcePubkey);
+
+      return profiles.map(({ pubkey, isExactMatch }) => ({
+        pubkey,
+        trustScore: 0,
+        exactMatch: isExactMatch,
+      }));
     }
   }
 

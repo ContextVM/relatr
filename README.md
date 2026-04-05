@@ -96,7 +96,7 @@ SERVER_SECRET_KEY=your_generated_hex_key_here
 - `DATABASE_PATH` - DuckDB database path (default: ./data/relatr.db)
 - `DECAY_FACTOR` - Alpha parameter in distance formula (default: 0.1)
 - `NUMBER_OF_HOPS` - Social graph traversal depth (default: 1)
-- `CACHE_TTL_SECONDS` - Cache time-to-live (default: 604800 = 1 week)
+- `CACHE_TTL_HOURS` - Cache time-to-live in hours (default: 72 = 3 days)
 - `TA_ENABLED` - Enable Trusted Assertions provider (default: false)
 
 **MCP Server Configuration:**

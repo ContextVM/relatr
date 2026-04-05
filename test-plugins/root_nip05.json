@@ -4,7 +4,7 @@
   "created_at": 1760000000,
   "tags": [
     ["n", "root_nip05"],
-    ["relatr-version", "^0.1.16"],
+    ["relatr-version", "^0.2.0"],
     ["title", "Root NIP-05"],
     [
       "description",

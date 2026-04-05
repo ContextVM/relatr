@@ -40,6 +40,9 @@ COPY --from=prerelease /usr/src/app/src/database/duckdb-schema.sql ./src/databas
 # copy .env.example for process-pastry schema
 COPY --from=prerelease /usr/src/app/.env.example ./.env.example
 
+# Copy bundled Elo plugins
+COPY --from=prerelease /usr/src/app/plugins/elo ./plugins/elo
+
 # Copy the config UI app
 COPY --from=prerelease /usr/src/app/config-ui/* ./config-ui/
 

@@ -189,7 +189,7 @@ export class RelatrService implements IRelatrService {
       );
       const [distances, metricsMap] = await Promise.all([
         this.socialGraph.getDistancesBatch(decodedTargetPubkeys),
-        this.metricsValidator.validateAllBatch(
+        this.metricsValidator.getStoredMetrics(
           decodedTargetPubkeys,
           decodedSourcePubkey,
         ),

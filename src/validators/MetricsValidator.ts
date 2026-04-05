@@ -334,6 +334,94 @@ export class MetricsValidator {
     return this.getExpectedMetricKeys().size > 0;
   }
 
+  async getStoredMetrics(
+    pubkeys: string[],
+    sourcePubkey?: string,
+    metricKeys?: string[],
+    validationRunContext?: ValidationRunContext,
+  ): Promise<Map<string, ProfileMetrics>> {
+    if (!pubkeys || !Array.isArray(pubkeys)) {
+      throw new ValidationError("Pubkeys must be a non-empty array");
+    }
+
+    if (pubkeys.length === 0) {
+      return new Map();
+    }
+
+    const storedMetrics = await executeWithRetry(async () => {
+      return await this.metricsRepository.getBatch(pubkeys);
+    });
+    let storedProfiles = new Map<string, NostrProfile | null>();
+
+    try {
+      storedProfiles = await this.metadataRepository.getBatch(pubkeys);
+    } catch (error) {
+      logger.warn(
+        "Stored profile lookup failed while resolving request-time metrics policy:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    const missingPubkeys = pubkeys.filter((pubkey) => {
+      const cached = storedMetrics.get(pubkey);
+      if (cached) {
+        return false;
+      }
+
+      return !storedProfiles.get(pubkey);
+    });
+
+    if (missingPubkeys.length === 0) {
+      return new Map(
+        pubkeys.flatMap((pubkey) => {
+          const cached = storedMetrics.get(pubkey);
+          if (cached) {
+            return [[pubkey, cached] as const];
+          }
+
+          if (storedProfiles.get(pubkey)) {
+            return [
+              [
+                pubkey,
+                this.buildProfileMetricsResult(pubkey, {}, nowSeconds()),
+              ] as const,
+            ];
+          }
+
+          return [];
+        }),
+      );
+    }
+
+    const computedMissing = await this.validateAllBatch(
+      missingPubkeys,
+      sourcePubkey,
+      metricKeys,
+      validationRunContext,
+    );
+
+    return new Map(
+      pubkeys.flatMap((pubkey) => {
+        const cached = storedMetrics.get(pubkey);
+        if (cached) {
+          return [[pubkey, cached] as const];
+        }
+
+        if (storedProfiles.get(pubkey)) {
+          return [
+            [
+              pubkey,
+              this.buildProfileMetricsResult(pubkey, {}, nowSeconds()),
+            ] as const,
+          ];
+        }
+
+        const computed = computedMissing.get(pubkey);
+        return computed ? [[pubkey, computed] as const] : [];
+      }),
+    );
+  }
+
   /**
    * Evaluate Elo plugins for a pubkey
    * @param pubkey - Target public key

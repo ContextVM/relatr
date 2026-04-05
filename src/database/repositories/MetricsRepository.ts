@@ -406,12 +406,11 @@ export class MetricsRepository {
   async get(pubkey: string): Promise<ProfileMetrics | null> {
     try {
       return await executeWithRetry(async () => {
-        const now = nowSeconds();
         const result = await this.readConnection.run(
           `SELECT metric_key, metric_value, computed_at, expires_at
-           FROM profile_metrics
-           WHERE pubkey = $1 AND expires_at > $2`,
-          { 1: pubkey, 2: now },
+            FROM profile_metrics
+            WHERE pubkey = $1`,
+          { 1: pubkey },
         );
 
         const rows = await result.getRows();
@@ -470,21 +469,18 @@ export class MetricsRepository {
 
     try {
       return await executeWithRetry(async () => {
-        const now = nowSeconds();
-
         // Create placeholders for IN clause
         const placeholders = pubkeys.map((_, i) => `$${i + 1}`).join(",");
         const params: Record<string, string | number> = {};
         pubkeys.forEach((pubkey, i) => {
           params[(i + 1).toString()] = pubkey;
         });
-        params[(pubkeys.length + 1).toString()] = now;
 
         const result = await this.readConnection.run(
           `SELECT pubkey, metric_key, metric_value, computed_at, expires_at
-           FROM profile_metrics
-           WHERE pubkey IN (${placeholders}) AND expires_at > $${pubkeys.length + 1}
-           ORDER BY pubkey, metric_key`,
+            FROM profile_metrics
+            WHERE pubkey IN (${placeholders})
+            ORDER BY pubkey, metric_key`,
           params,
         );
 
