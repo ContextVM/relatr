@@ -26,10 +26,10 @@ services:
 
     # Persist data directory for database and social graph.
     # Optionally persist ./plugins as well if you want filesystem-managed
-    # plugins to survive container recreation.
+    # plugins installed at runtime to survive container recreation.
     volumes:
       - ./data:/usr/src/app/data
-      # - ./plugins:/usr/src/app/plugins
+      - ./plugins:/usr/src/app/plugins
 
     ports:
       - 3000:3000
