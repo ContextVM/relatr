@@ -67,6 +67,7 @@ bun run lint
 bun run typecheck
 bun run format
 bun run generate:version
+bun run check:version
 bun run build
 bun run compile
 ```
@@ -75,8 +76,9 @@ bun run compile
 - [`typecheck`](package.json:11): runs the TypeScript compiler in no-emit mode to catch assignability and interface errors that ESLint alone will not report.
 - [`format`](package.json:12): runs Prettier across the repository.
 - [`generate:version`](package.json:13): regenerates [`src/version.ts`](src/version.ts) from [`package.json`](package.json) before builds.
-- [`build`](package.json:14): builds the MCP server JS bundle into [`dist/`](dist).
-- [`compile`](package.json:15): produces a standalone binary named [`relatr`](package.json:15).
+- [`check:version`](package.json:14): regenerates [`src/version.ts`](src/version.ts) and fails if the tracked file would change, preventing version drift in CI.
+- [`build`](package.json:15): builds the MCP server JS bundle into [`dist/`](dist).
+- [`compile`](package.json:16): produces a standalone binary named [`relatr`](package.json:16).
 
 ### Docker workflow
 
@@ -211,6 +213,7 @@ This repository is primarily a single Bun application with a nested package in [
 
 - Keep changes focused and small when possible.
 - Before finalizing code changes, run at minimum [`bun run lint`](package.json:10) and [`bun run typecheck`](package.json:11) for root source changes.
+- If version metadata can drift, run [`bun run check:version`](package.json:14) locally or in CI before merging.
 - Run the most relevant Bun tests for the area you changed.
 - If Docker packaging is affected, inspect [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml), and CI workflow alignment together.
 

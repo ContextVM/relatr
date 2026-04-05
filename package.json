@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit --project tsconfig.typecheck.json",
     "format": "prettier --write ./src",
     "generate:version": "bun run scripts/generate-version.ts",
+    "check:version": "bun run scripts/check-version.ts",
     "build": "bun build ./src/mcp/server.ts --outdir ./dist --target bun --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\"",
     "compile": "bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external \"@duckdb/node-api\" --external \"@duckdb/node-bindings-*\""
   },

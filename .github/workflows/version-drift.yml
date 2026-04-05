@@ -1,0 +1,25 @@
+name: Version Drift Check
+
+on:
+  pull_request:
+  push:
+    branches: ['master']
+
+jobs:
+  check-version-drift:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify generated version metadata is up to date
+        run: bun run check:version
