@@ -19,6 +19,7 @@ RUN cd /temp/prod && bun install --frozen-lockfile --production
 # then copy all (non-ignored) project files into the image
 FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
+RUN mkdir -p /usr/src/app/plugins
 COPY . .
 
 # Generate version module from package.json before compiling
@@ -40,8 +41,9 @@ COPY --from=prerelease /usr/src/app/src/database/duckdb-schema.sql ./src/databas
 # copy .env.example for process-pastry schema
 COPY --from=prerelease /usr/src/app/.env.example ./.env.example
 
-# Copy bundled Elo plugins
-COPY --from=prerelease /usr/src/app/plugins/elo ./plugins/elo
+# Copy bundled plugins when present. The prerelease stage always provides
+# the parent directory so this remains safe when no plugins are checked in.
+COPY --from=prerelease /usr/src/app/plugins ./plugins
 
 # Copy the config UI app
 COPY --from=prerelease /usr/src/app/config-ui/* ./config-ui/

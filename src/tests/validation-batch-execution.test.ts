@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildPreparedValidationProfiles,
   buildValidationChunkContext,
+  executeValidationChunk,
   type ValidationChunkRuntime,
 } from "@/validation/ValidationBatchExecution";
 
@@ -87,5 +88,72 @@ describe("ValidationBatchExecution", () => {
     expect(context.batchMetricResults).toBe(runtime.batchMetricResults);
     expect(context.evaluatePubkeyMetrics).toBe(runtime.evaluatePubkeyMetrics);
     expect(context.buildResult).toBe(runtime.buildResult);
+  });
+
+  test("executeValidationChunk detects missing profiles without quadratic scans", async () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      const context = buildValidationChunkContext(
+        {
+          plan: {
+            pubkeys: ["pk-1", "pk-2", "pk-3"],
+            chunkNumber: 1,
+            totalChunks: 1,
+          },
+          profileByPubkey: new Map([
+            ["pk-1", { pubkey: "pk-1" }],
+            ["pk-2", null],
+            ["pk-3", { pubkey: "pk-3" }],
+          ]),
+          runtime: {
+            batchMetricResults: new Map(),
+            evaluatePubkeyMetrics: async () => ({}),
+            buildResult: ({ profile, computedMetrics }) => ({
+              result: {
+                pubkey: profile.pubkey,
+                metrics: computedMetrics,
+                computedAt: 1,
+                expiresAt: 2,
+              },
+              computedMetrics,
+              success: true,
+            }),
+          },
+        },
+        {
+          now: 100,
+          cacheTtlSeconds: 50,
+          expectedMetricKeys: new Set(["a"]),
+          cachedMetrics: new Map(),
+          metricsRepository: {
+            upsertMetricSubsetBatch: async () => {},
+          } as never,
+          validationPubkeyConcurrency: 8,
+          mapWithConcurrency: async (items, _limit, worker) => {
+            return await Promise.all(items.map((item) => worker(item)));
+          },
+          getMissingExpectedMetricKeys: () => [],
+        },
+      );
+
+      const result = await executeValidationChunk(context);
+
+      expect(result.results.map((entry) => entry.pubkey)).toEqual([
+        "pk-1",
+        "pk-3",
+      ]);
+      expect(
+        warnings.some((message) =>
+          message.includes("started without 1 prepared metadata profiles"),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });

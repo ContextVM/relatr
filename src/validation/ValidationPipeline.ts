@@ -14,6 +14,7 @@ import {
   resolveRequiredFactDomains,
   type FactDomain,
 } from "@/validation/fact-dependencies";
+import { mapWithConcurrency } from "@/utils/mapWithConcurrency";
 
 interface ValidationStageTimings {
   factRefresh: Array<{ label: string; durationMs: number }>;
@@ -388,8 +389,12 @@ export class ValidationPipeline {
       validationRunContext,
     } = input;
     const results = new Map<string, ProfileMetrics | undefined>();
+    const fallbackConcurrency = Math.max(
+      this.deps.config.validationFallbackConcurrency ?? 1,
+      1,
+    );
 
-    for (const pubkey of batch) {
+    await mapWithConcurrency(batch, fallbackConcurrency, async (pubkey) => {
       try {
         const metrics = await metricsValidator.validateAll(
           pubkey,
@@ -405,7 +410,7 @@ export class ValidationPipeline {
         );
         results.set(pubkey, undefined);
       }
-    }
+    });
 
     return results;
   }

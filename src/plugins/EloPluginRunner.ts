@@ -19,6 +19,7 @@ import { withTimeout } from "../utils/utils";
 import type { EloPluginDebugPlan } from "./EloPluginDebug";
 import { buildDebugPlan } from "./EloPluginDebug";
 import { normalizeNip05 } from "../capabilities/http/utils/httpNip05Normalize";
+import { mapWithConcurrency } from "@/utils/mapWithConcurrency";
 
 const logger = new Logger({ service: "EloPluginRunner" });
 
@@ -398,6 +399,7 @@ export async function runPlugins(
     nip05ResolveTimeoutMs: number;
     nip05CacheTtlSeconds: number;
     nip05DomainCooldownSeconds: number;
+    eloPluginConcurrency?: number;
   } & HostPolicyLimits,
 ): Promise<Record<string, number>> {
   const metrics: Record<string, number> = {};
@@ -417,8 +419,12 @@ export async function runPlugins(
   // This ensures _.now is constant for a single evaluation run per spec §3
   const now = Math.floor(Date.now() / 1000);
 
-  // Run plugins sequentially to avoid overwhelming resources
-  for (const plugin of plugins) {
+  const pluginConcurrency = Math.min(
+    Math.max(config.eloPluginConcurrency ?? 1, 1),
+    plugins.length,
+  );
+
+  await mapWithConcurrency(plugins, pluginConcurrency, async (plugin) => {
     const result = await runPlugin(
       plugin,
       context,
@@ -433,7 +439,7 @@ export async function runPlugins(
     metrics[metricKey] = result.score;
 
     // Plugin failures are already logged at ERROR level in runPluginInternal
-  }
+  });
 
   // Clear planning store after evaluation
   planningStore.clear();

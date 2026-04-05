@@ -1,5 +1,13 @@
 # relatr
 
+## 0.2.2
+
+### Patch Changes
+
+- feat(plugins): add configurable plugin execution concurrency and in-flight request deduplication
+
+Adds ELO_PLUGIN_CONCURRENCY and VALIDATION_FALLBACK_CONCURRENCY environment variables to control parallelism. Plugins now run concurrently up to the configured limit, and in-flight capability requests are deduplicated across concurrent plugins to avoid redundant execution. Also optimizes validation batch execution with O(1) profile lookups and caches metric fact dependencies in the engine runtime.
+
 ## 0.2.1
 
 ### Patch Changes

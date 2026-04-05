@@ -298,6 +298,75 @@ describe("Elo Plugins - Runner Integration", () => {
     expect(callCount).toBe(1);
   });
 
+  test("should deduplicate in-flight capability calls across concurrent plugins", async () => {
+    const releaseRef: { current: (() => void) | null } = { current: null };
+
+    registry.register("test.slow_echo", async (args) => {
+      callCount++;
+      await new Promise<void>((resolve) => {
+        releaseRef.current = resolve;
+      });
+      return args;
+    });
+
+    const plugin1: PortablePlugin = {
+      id: "p_slow_1",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.slow_echo' {x: 1} in if res.x == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p_slow_1",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const plugin2: PortablePlugin = {
+      id: "p_slow_2",
+      pubkey: "pk",
+      createdAt: 123,
+      kind: 31234,
+      content:
+        "plan res = do 'test.slow_echo' {x: 1} in if res.x == 1 then 1.0 else 0.0",
+      manifest: {
+        name: "p_slow_2",
+        relatrVersion: "^0.1.16",
+        title: null,
+        description: null,
+        weight: 1.0,
+      },
+      rawEvent: {} as NostrEvent,
+    };
+
+    const runPromise = runPlugins(
+      [plugin1, plugin2],
+      { targetPubkey: "t1" },
+      executor,
+      {
+        ...TEST_PLUGIN_CONFIG,
+        eloPluginConcurrency: 2,
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(callCount).toBe(1);
+
+    const resolveSlowEcho = releaseRef.current;
+    if (resolveSlowEcho) {
+      resolveSlowEcho();
+    }
+
+    const metrics = await runPromise;
+    expect(metrics["pk:p_slow_1"]).toBe(1.0);
+    expect(metrics["pk:p_slow_2"]).toBe(1.0);
+    expect(callCount).toBe(1);
+  });
+
   test("should map timed-out capability execution to null and not crash scoring", async () => {
     registry.register("test.slow", async () => {
       callCount++;

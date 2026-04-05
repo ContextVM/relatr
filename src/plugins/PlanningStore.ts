@@ -13,6 +13,7 @@
  */
 export class PlanningStore {
   private store = new Map<string, unknown>();
+  private pending = new Map<string, Promise<unknown>>();
 
   /**
    * Check if a capability result exists in the store
@@ -33,12 +34,39 @@ export class PlanningStore {
   }
 
   /**
+   * Get an in-flight capability result promise from the store.
+   * @param requestKey - The RequestKey
+   * @returns The pending promise, or undefined if not found
+   */
+  getPending(requestKey: string): Promise<unknown> | undefined {
+    return this.pending.get(requestKey);
+  }
+
+  /**
    * Store a capability result
    * @param requestKey - The RequestKey
    * @param value - The result value to store
    */
   set(requestKey: string, value: unknown): void {
     this.store.set(requestKey, value);
+    this.pending.delete(requestKey);
+  }
+
+  /**
+   * Store an in-flight capability result promise.
+   * @param requestKey - The RequestKey
+   * @param promise - The in-flight result promise
+   */
+  setPending(requestKey: string, promise: Promise<unknown>): void {
+    this.pending.set(requestKey, promise);
+  }
+
+  /**
+   * Clear a pending capability result promise.
+   * @param requestKey - The RequestKey
+   */
+  clearPending(requestKey: string): void {
+    this.pending.delete(requestKey);
   }
 
   /**
@@ -47,6 +75,7 @@ export class PlanningStore {
    */
   clear(): void {
     this.store.clear();
+    this.pending.clear();
   }
 
   /**

@@ -34,6 +34,8 @@ const testConfig: RelatrConfig = {
   nip05CacheTtlSeconds: 300,
   nip05DomainCooldownSeconds: 300,
   eloBatchPubkeyConcurrency: 8,
+  eloPluginConcurrency: 2,
+  validationFallbackConcurrency: 2,
   eloMaxRoundsPerPlugin: 8,
   eloMaxRequestsPerRound: 32,
   eloMaxTotalRequestsPerPlugin: 128,

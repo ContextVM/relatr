@@ -122,12 +122,6 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
     preparedResults: LruCache<{ pubkey: string | null }>,
   ): Promise<void> {
     try {
-      const existing = await this.nip05CacheStore.getResolution(formattedNip05);
-      if (existing) {
-        preparedResults.set(formattedNip05, existing);
-        return;
-      }
-
       const result = await resolveNip05WithAbortableFetch(
         formattedNip05,
         timeoutMs,

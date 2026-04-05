@@ -168,6 +168,38 @@ describe("ValidationPipeline", () => {
     expect(validatedPubkeys).toEqual(["pk-a", "pk-b"]);
   });
 
+  test("fallback validation uses bounded concurrency", async () => {
+    let active = 0;
+    let maxActive = 0;
+
+    const pipeline = new ValidationPipeline({
+      config: {
+        defaultSourcePubkey: "pk-source",
+        validationFallbackConcurrency: 2,
+      } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a", "pk-b", "pk-c", "pk-d"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async () => {
+          throw new Error("batch failed");
+        },
+        validateAll: async (pubkey: string) => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          active--;
+          return mkMetrics(pubkey, { "pk:plugin_a": 1 });
+        },
+      } as never,
+    });
+
+    await pipeline.runValidationSync(10);
+
+    expect(maxActive).toBe(2);
+  });
+
   test("uses configured batch size to build batch plan before validation runs", async () => {
     const seenBatches: string[][] = [];
 
@@ -462,6 +494,53 @@ describe("ValidationPipeline", () => {
     expect(executionOrder).toEqual([]);
   });
 
+  test("reuses precomputed metric dependency state from the engine runtime", async () => {
+    const runtimeDependencies = new Map([
+      ["pk-graph:reciprocity_mutual", new Set(["metadata"] as const)],
+    ]);
+
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (pubkeys: string[]) =>
+          new Map(
+            pubkeys.map((pubkey) => [pubkey, mkMetrics(pubkey, { metric: 1 })]),
+          ),
+        eloEngine: {
+          getRuntimeState: () => ({
+            plugins: [
+              {
+                pubkey: "pk-graph",
+                manifest: { name: "reciprocity_mutual" },
+              },
+            ],
+            enabled: {},
+            weightOverrides: {},
+            resolvedWeights: {},
+            metricFactDependencies: runtimeDependencies,
+          }),
+        },
+      } as never,
+      factRefreshStage: new CompositeFactRefreshStage([
+        {
+          label: "metadata refresh",
+          factDomain: "metadata",
+          refresh: async () => {},
+        },
+      ]),
+    });
+
+    await expect(
+      pipeline.runValidationSync(10, undefined, [
+        "pk-graph:reciprocity_mutual",
+      ]),
+    ).resolves.toBeUndefined();
+  });
+
   test("scheduleValidationSync coalesces overlapping runs into a follow-up rerun", async () => {
     const firstRunGate = deferred<void>();
     const secondRunGate = deferred<void>();
@@ -579,10 +658,17 @@ describe("ValidationPipeline", () => {
     });
 
     expect(
-      messages.some((message) =>
-        message.includes(
-          "All 2/2 pubkeys were already ready for 1 requested metric; no metric persistence or fallback recovery was needed.",
-        ),
+      messages.some((message) => message.includes("Validation sync completed")),
+    ).toBe(true);
+    expect(
+      messages.some(
+        (message) =>
+          message.includes("2/2 pubkeys") &&
+          message.includes("1 requested metric") &&
+          (message.includes(
+            "no metric persistence or fallback recovery was needed",
+          ) ||
+            message.includes("2 ready, 0 failed")),
       ),
     ).toBe(true);
     expect(

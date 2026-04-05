@@ -196,6 +196,7 @@ When changing Docker packaging, verify consistency across [`Dockerfile`](Dockerf
 - Never commit real secrets into [`.env`](.env.example) or test fixtures.
 - `SERVER_SECRET_KEY` is required and must be a 64-character hex private key as documented in [`.env.example`](.env.example:8).
 - Plugin execution limits are controlled by variables such as [`ELO_MAX_ROUNDS_PER_PLUGIN`](.env.example:56), [`ELO_MAX_REQUESTS_PER_ROUND`](.env.example:57), and [`ELO_MAX_TOTAL_REQUESTS_PER_PLUGIN`](.env.example:58).
+- Plugin execution parallelism and degraded-mode fallback parallelism are controlled by [`ELO_PLUGIN_CONCURRENCY`](.env.example:62) and [`VALIDATION_FALLBACK_CONCURRENCY`](.env.example:151).
 - Rate limiting is configurable through [`RATE_LIMIT_TOKENS`](.env.example:104) and [`RATE_LIMIT_REFILL_RATE`](.env.example:108).
 
 ## Monorepo / Nested Package Guidance

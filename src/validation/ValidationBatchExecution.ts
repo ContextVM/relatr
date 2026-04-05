@@ -161,8 +161,11 @@ export async function executeValidationChunk(
   );
 
   const chunkProfiles = context.profiles;
+  const preparedPubkeys = new Set(
+    chunkProfiles.map((profile) => profile.pubkey),
+  );
   const missingProfiles = pubkeys.filter(
-    (pubkey) => !chunkProfiles.some((profile) => profile.pubkey === pubkey),
+    (pubkey) => !preparedPubkeys.has(pubkey),
   );
 
   if (missingProfiles.length > 0) {

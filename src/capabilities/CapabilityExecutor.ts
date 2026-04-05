@@ -82,6 +82,30 @@ export class CapabilityExecutor {
           elapsedMs: Date.now() - startTime,
         };
       }
+
+      const pendingResult = planningStore.getPending(requestKey);
+      if (pendingResult) {
+        logger.debug(`Planning store in-flight hit for ${request.capName}`);
+
+        try {
+          const value = await pendingResult;
+          return {
+            ok: true,
+            value,
+            error: null,
+            elapsedMs: Date.now() - startTime,
+          };
+        } catch (error) {
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
+          return {
+            ok: false,
+            value: null,
+            error: errorMsg,
+            elapsedMs: Date.now() - startTime,
+          };
+        }
+      }
     }
 
     // Check if capability is enabled
@@ -116,12 +140,18 @@ export class CapabilityExecutor {
     }
 
     try {
-      // Execute with timeout
       const timeoutMs = request.timeoutMs || context.config.capTimeoutMs;
-      const value = await withTimeout(
+
+      const executionPromise = withTimeout(
         handler(request.argsJson, context),
         timeoutMs,
       );
+
+      if (planningStore && requestKey) {
+        planningStore.setPending(requestKey, executionPromise);
+      }
+
+      const value = await executionPromise;
 
       // Store in planning store if provided (for deduplication within evaluation)
       if (planningStore && requestKey) {
@@ -143,6 +173,7 @@ export class CapabilityExecutor {
       // Cache failures as null within this evaluation so repeated requests
       // dedupe correctly (v1 failure semantics => null).
       if (planningStore && requestKey) {
+        planningStore.clearPending(requestKey);
         planningStore.set(requestKey, null);
       }
 

@@ -257,6 +257,7 @@ describe("httpNip05Resolve persistent cache hooks", () => {
   test("prepares run-scoped NIP-05 facts from persisted cache without live fetch", async () => {
     const originalFetch = globalThis.fetch;
     let fetchCalled = false;
+    let singleReads = 0;
 
     globalThis.fetch = (async () => {
       fetchCalled = true;
@@ -279,6 +280,7 @@ describe("httpNip05Resolve persistent cache hooks", () => {
         } as never,
         {
           getResolution: async (nip05: string) => {
+            singleReads++;
             expect(nip05).toBe("alice@example.com");
             return { pubkey: "cached-pubkey" };
           },
@@ -316,6 +318,7 @@ describe("httpNip05Resolve persistent cache hooks", () => {
         validationRunContext.nip05PreparedResults?.get("alice@example.com"),
       ).toEqual({ pubkey: "cached-pubkey" });
       expect(fetchCalled).toBe(false);
+      expect(singleReads).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }

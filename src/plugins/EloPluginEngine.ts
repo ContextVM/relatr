@@ -86,6 +86,7 @@ export class EloPluginEngine implements IEloPluginEngine {
   private resolvedWeights: Record<string, number> = {};
   private enabledByKey: Record<string, boolean> = {};
   private weightOverridesByKey: Record<string, number> = {};
+  private metricFactDependencies: Map<string, Set<FactDomain>> = new Map();
 
   constructor(
     private config: RelatrConfig,
@@ -125,6 +126,7 @@ export class EloPluginEngine implements IEloPluginEngine {
       this.plugins = [];
       this.enabledByKey = {};
       this.weightOverridesByKey = { ...(this.config.eloPluginWeights || {}) };
+      this.metricFactDependencies = new Map();
 
       // Register built-in capabilities (nostr, graph, http)
       logger.info("Registering built-in capabilities");
@@ -172,12 +174,15 @@ export class EloPluginEngine implements IEloPluginEngine {
     const nextResolvedWeights =
       input.resolvedWeights ||
       this.resolvePluginWeights(nextOverrides, nextPlugins);
+    const nextMetricFactDependencies =
+      buildMetricFactDependencyIndex(nextPlugins);
 
     this.plugins = nextPlugins;
     this.enabledByKey = nextEnabled;
     this.weightOverridesByKey = nextOverrides;
     this.metricDescriptions = nextMetricDescriptions;
     this.resolvedWeights = nextResolvedWeights;
+    this.metricFactDependencies = nextMetricFactDependencies;
 
     logger.info(
       `Loaded ${this.plugins.length} enabled plugin(s) with ${Object.keys(this.resolvedWeights).length} resolved weight entr${Object.keys(this.resolvedWeights).length === 1 ? "y" : "ies"}`,
@@ -196,7 +201,7 @@ export class EloPluginEngine implements IEloPluginEngine {
       enabled: { ...this.enabledByKey },
       weightOverrides: { ...this.weightOverridesByKey },
       resolvedWeights: { ...this.resolvedWeights },
-      metricFactDependencies: buildMetricFactDependencyIndex(this.plugins),
+      metricFactDependencies: new Map(this.metricFactDependencies),
     };
   }
 

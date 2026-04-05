@@ -57,6 +57,8 @@ export const RelatrConfigSchema = z.object({
     .positive()
     .default(60 * 60),
   eloBatchPubkeyConcurrency: z.number().int().positive().default(8),
+  eloPluginConcurrency: z.number().int().positive().default(3),
+  validationFallbackConcurrency: z.number().int().positive().default(4),
   // Host policy limits
   eloMaxRoundsPerPlugin: z.number().int().positive().default(8),
   eloMaxRequestsPerRound: z.number().int().positive().default(32),
@@ -170,6 +172,12 @@ export function loadConfig(): RelatrConfig {
       : undefined,
     eloBatchPubkeyConcurrency: process.env.ELO_BATCH_PUBKEY_CONCURRENCY
       ? parseInt(process.env.ELO_BATCH_PUBKEY_CONCURRENCY, 10)
+      : undefined,
+    eloPluginConcurrency: process.env.ELO_PLUGIN_CONCURRENCY
+      ? parseInt(process.env.ELO_PLUGIN_CONCURRENCY, 10)
+      : undefined,
+    validationFallbackConcurrency: process.env.VALIDATION_FALLBACK_CONCURRENCY
+      ? parseInt(process.env.VALIDATION_FALLBACK_CONCURRENCY, 10)
       : undefined,
     eloMaxRoundsPerPlugin: process.env.ELO_MAX_ROUNDS_PER_PLUGIN
       ? parseInt(process.env.ELO_MAX_ROUNDS_PER_PLUGIN, 10)
