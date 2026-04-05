@@ -8,7 +8,7 @@
     ["title", "Reciprocity / Mutual follow"],
     [
       "description",
-      "Scores 1.0 if source and target mutually follow (graph.are_mutual)."
+      "Scores 1.0 if source and target mutually follow."
     ]
   ],
   "content": "plan\n  mutual = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey}\nin\nif _.sourcePubkey == null then 0.0\nelse if mutual == true then 1.0\nelse 0.0\n"

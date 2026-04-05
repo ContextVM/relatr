@@ -24,9 +24,12 @@ services:
       DEFAULT_SOURCE_PUBKEY: 6e468422dfb74a5738702a8823b9b28168abab8655faacb6853cd0ee15deee93
       SERVER_RELAYS: wss://relay.contextvm.org
 
-    # Persist data directory for database and social graph
+    # Persist data directory for database and social graph.
+    # Optionally persist ./plugins as well if you want filesystem-managed
+    # plugins to survive container recreation.
     volumes:
       - ./data:/usr/src/app/data
+      # - ./plugins:/usr/src/app/plugins
 
     ports:
       - 3000:3000
@@ -37,4 +40,3 @@ services:
 # volumes:
 #   relatr-data:
 #     driver: local
-

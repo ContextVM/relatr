@@ -1,0 +1,15 @@
+{
+  "kind": 765,
+  "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": 1760000000,
+  "tags": [
+    ["n", "nostr_native_identity"],
+    ["relatr-version", "^0.2.0"],
+    ["title", "Nostr native identity"],
+    [
+      "description",
+      "Scores 1.0 if the target pubkey has published kind 0 metadata, kind 3 contacts, and kind 10002 relay list events."
+    ]
+  ],
+  "content": "plan\n  metadata = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey], limit: 1},\n  contacts = do 'nostr.query' {kinds: [3], authors: [_.targetPubkey], limit: 1},\n  relay_list = do 'nostr.query' {kinds: [10002], authors: [_.targetPubkey], limit: 1}\nin\nlet\n  has_metadata = length(metadata | []) > 0,\n  has_contacts = length(contacts | []) > 0,\n  has_relay_list = length(relay_list | []) > 0\nin\nif has_metadata and has_contacts and has_relay_list then 1.0 else 0.0\n"
+}

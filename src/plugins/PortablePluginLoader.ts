@@ -208,6 +208,19 @@ export async function loadPluginsFromDirectory(
 
     return selectedPlugins;
   } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      logger.info(
+        `Plugin directory does not exist yet, creating empty directory: ${dirPath}`,
+      );
+      await Bun.$`mkdir -p ${dirPath}`;
+      return [];
+    }
+
     throw new Error(
       `Failed to read plugins directory ${dirPath}: ${error instanceof Error ? error.message : String(error)}`,
     );

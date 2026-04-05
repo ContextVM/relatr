@@ -1,9 +1,10 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { validateManifest } from "@/plugins/parseManifestTags";
 import { loadPluginsFromDirectory } from "@/plugins/PortablePluginLoader";
+import { HOST_VERSION } from "@/version";
 
 async function makeTempPluginDir(): Promise<string> {
   const base = await mkdtemp(join(tmpdir(), "relatr-plugin-test-"));
@@ -16,7 +17,7 @@ describe("Plugin manifest compatibility + loader policies", () => {
   test("validateManifest should accept compatible caret semver ranges", () => {
     const ok = validateManifest({
       name: "sample_plugin",
-      relatrVersion: "^0.1.0",
+      relatrVersion: `^${HOST_VERSION}`,
       title: null,
       description: null,
       weight: null,
@@ -27,9 +28,13 @@ describe("Plugin manifest compatibility + loader policies", () => {
   });
 
   test("validateManifest should reject incompatible semver ranges", () => {
+    const [major = 0, minor = 0, patch = 0] =
+      HOST_VERSION.split(".").map(Number);
+    const incompatibleVersion = `${major}.${minor + 1}.${patch}`;
+
     const bad = validateManifest({
       name: "sample_plugin",
-      relatrVersion: "^0.2.0",
+      relatrVersion: `^${incompatibleVersion}`,
       title: null,
       description: null,
       weight: null,
@@ -52,7 +57,7 @@ describe("Plugin manifest compatibility + loader policies", () => {
       kind: 1,
       tags: [
         ["n", "invalid_kind_plugin"],
-        ["relatr-version", "^0.1.16"],
+        ["relatr-version", `^${HOST_VERSION}`],
       ],
       content: "plan x = 1 in 1.0",
     };
@@ -67,6 +72,17 @@ describe("Plugin manifest compatibility + loader policies", () => {
     expect(loaded).toHaveLength(0);
   });
 
+  test("loadPluginsFromDirectory should create missing directory and return empty list", async () => {
+    const base = await mkdtemp(join(tmpdir(), "relatr-plugin-test-missing-"));
+    const dir = join(base, "plugins", "elo");
+
+    const loaded = await loadPluginsFromDirectory(dir);
+    const dirStats = await stat(dir);
+
+    expect(loaded).toHaveLength(0);
+    expect(dirStats.isDirectory()).toBe(true);
+  });
+
   test("loadPluginsFromDirectory should keep latest version per pubkey+n", async () => {
     process.env.ELO_PLUGINS_ALLOW_UNSAFE = "true";
     const dir = await makeTempPluginDir();
@@ -78,7 +94,7 @@ describe("Plugin manifest compatibility + loader policies", () => {
       kind: 765,
       tags: [
         ["n", "versioned_plugin"],
-        ["relatr-version", "^0.1.16"],
+        ["relatr-version", `^${HOST_VERSION}`],
       ],
       content: "plan x = 1 in 1.0",
     });

@@ -1,0 +1,26 @@
+{
+  "kind": 765,
+  "pubkey": "750682303c9f0ddad75941b49edc9d46e3ed306b9ee3335338a21a3e404c5fa3",
+  "created_at": 1760000000,
+  "tags": [
+    [
+      "n",
+      "relay_list_kind10002"
+    ],
+    [
+      "relatr-version",
+      "^0.2.0"
+    ],
+    [
+      "title",
+      "Relay list event published"
+    ],
+    [
+      "description",
+      "Scores 1.0 if the target pubkey has published at least one kind 10002 relay list event."
+    ]
+  ],
+  "content": "plan\n  relay_list = do 'nostr.query' {kinds: [10002], authors: [_.targetPubkey], limit: 1}\nin\nlet\n  events = relay_list | [],\n  has_relay_list = length(events) >= 1\nin\nif has_relay_list then 1.0 else 0.0\n",
+  "id": "7de6763d8af770b775a38003fe7c1ed1115f3d5f93485d0fc292f63f2283bd88",
+  "sig": "4525f6a565715ee917f5591bf0478091bafe0487d2f8f0a157c531e0bb9832bc3519d6c2b877a5a9e85dd49c4b3e6e2ce435e2eaf5fc21754c8156f7e54a1d4a"
+}

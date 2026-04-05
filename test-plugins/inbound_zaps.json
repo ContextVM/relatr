@@ -1,0 +1,15 @@
+{
+  "kind": 765,
+  "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": 1760000000,
+  "tags": [
+    ["n", "inbound_zaps"],
+    ["relatr-version", "^0.2.0"],
+    ["title", "Inbound zaps"],
+    [
+      "description",
+      "Scores 1.0 if the target pubkey appears as the zap recipient on at least one kind 9735 zap receipt."
+    ]
+  ],
+  "content": "plan\n  zaps = do 'nostr.query' {kinds: [9735], '#p': [_.targetPubkey], limit: 1}\nin\nlet\n  receipts = zaps | [],\n  inbound_count = length(receipts)\nin\nif inbound_count > 0 then 1.0 else 0.0\n"
+}

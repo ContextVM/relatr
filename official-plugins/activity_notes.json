@@ -1,0 +1,26 @@
+{
+  "kind": 765,
+  "pubkey": "750682303c9f0ddad75941b49edc9d46e3ed306b9ee3335338a21a3e404c5fa3",
+  "created_at": 1760000000,
+  "tags": [
+    [
+      "n",
+      "activity_notes"
+    ],
+    [
+      "relatr-version",
+      "^0.2.0"
+    ],
+    [
+      "title",
+      "Activity score (notes)"
+    ],
+    [
+      "description",
+      "Scores higher for more recent notes by targetPubkey."
+    ]
+  ],
+  "content": "plan\n  notes = do 'nostr.query' {kinds: [1], authors: [_.targetPubkey], since: _.now - 604800}\nin\nlet\n  events = notes | [],\n  n = length(events)\nin\nif n >= 30 then 1.0\nelse if n >= 20 then 0.9\nelse if n >= 12 then 0.75\nelse if n >= 6 then 0.55\nelse if n >= 2 then 0.3\nelse if n >= 1 then 0.15\nelse 0.0\n",
+  "id": "3e6d828cb0483f2b90250e38ff519807a6102a67579c27e058b0841908514565",
+  "sig": "d3016b86a72a95fabcac6345ee3703bc872378542d4ad72fd80ff9ec4fbe07197b47d0febcfcc301be313c52034df2e621af861c98a8406ebcc855e970ef1661"
+}

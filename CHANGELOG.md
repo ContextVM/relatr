@@ -1,5 +1,13 @@
 # relatr
 
+## 0.2.3
+
+### Patch Changes
+
+- feat(plugins): add official ELO scoring plugins and auto-create directory
+
+  Add nine new official ELO scoring plugins (activity_notes, inbound_zaps, nip05_valid, nostr_native_identity, outbound_zaps, reciprocity_mutual, relay_list_kind10002, root_nip05) that score based on Nostr events and profile data. Also fix PortablePluginLoader to gracefully handle missing plugin directories by creating them automatically instead of throwing ENOENT errors. Updated tests to use dynamic HOST_VERSION for compatibility.
+
 ## 0.2.2
 
 ### Patch Changes

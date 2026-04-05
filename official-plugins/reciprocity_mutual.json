@@ -1,0 +1,26 @@
+{
+  "kind": 765,
+  "pubkey": "750682303c9f0ddad75941b49edc9d46e3ed306b9ee3335338a21a3e404c5fa3",
+  "created_at": 1760000000,
+  "tags": [
+    [
+      "n",
+      "reciprocity_mutual"
+    ],
+    [
+      "relatr-version",
+      "^0.2.0"
+    ],
+    [
+      "title",
+      "Reciprocity / Mutual follow"
+    ],
+    [
+      "description",
+      "Scores 1.0 if source and target mutually follow."
+    ]
+  ],
+  "content": "plan\n  mutual = do 'graph.are_mutual' {a: _.sourcePubkey, b: _.targetPubkey}\nin\nif _.sourcePubkey == null then 0.0\nelse if mutual == true then 1.0\nelse 0.0\n",
+  "id": "84ecf2ee539da27ae4bc8c1702910a8f16979e107d7dbb0c731e7cc3ffe43d6f",
+  "sig": "e12786acb7cbbb569a082af0a26872264c10af0f0f6890233447ee83c27a79e8e413101f5e0ed58726cec71a9dd306104f12766382c91c859752136f44e87336"
+}

@@ -1,0 +1,26 @@
+{
+  "kind": 765,
+  "pubkey": "750682303c9f0ddad75941b49edc9d46e3ed306b9ee3335338a21a3e404c5fa3",
+  "created_at": 1760000000,
+  "tags": [
+    [
+      "n",
+      "inbound_zaps"
+    ],
+    [
+      "relatr-version",
+      "^0.2.0"
+    ],
+    [
+      "title",
+      "Inbound zaps"
+    ],
+    [
+      "description",
+      "Scores 1.0 if the target pubkey appears as the zap recipient on at least one kind 9735 zap receipt."
+    ]
+  ],
+  "content": "plan\n  zaps = do 'nostr.query' {kinds: [9735], '#p': [_.targetPubkey], limit: 1}\nin\nlet\n  receipts = zaps | [],\n  inbound_count = length(receipts)\nin\nif inbound_count > 0 then 1.0 else 0.0\n",
+  "id": "a1e315ec03945cb76db3460c472998176c1a298998ba39461db02067de9c4f08",
+  "sig": "a5d527b015ac23a6f049f1e9387b8c8fc5b6407ab2b88ae1de59ef3a41d327ec0074e46c08d3768e9a9ca3eb46a29f04d1cc60c6498eea95610340f785b33f20"
+}

@@ -34,6 +34,7 @@ FROM base AS release
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/relatr .
 COPY --from=prerelease /usr/src/app/manager .
+RUN mkdir -p /usr/src/app/plugins/elo
 
 # copy necessary source files for runtime (schema, etc.)
 COPY --from=prerelease /usr/src/app/src/database/duckdb-schema.sql ./src/database/duckdb-schema.sql
