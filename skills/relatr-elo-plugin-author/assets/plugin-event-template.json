@@ -1,0 +1,11 @@
+{
+  "kind": 765,
+  "content": "plan\n  result = do 'graph.pubkey_exists' {pubkey: _.targetPubkey}\nin\nif result == true then 1.0 else 0.0",
+  "tags": [
+    ["n", "example_plugin"],
+    ["relatr-version", "^0.2.0"],
+    ["title", "Example plugin"],
+    ["description", "Minimal example portable Relatr plugin."],
+    ["weight", "0.25"]
+  ]
+}

@@ -1,0 +1,4 @@
+plan
+  result = do 'graph.pubkey_exists' {pubkey: _.targetPubkey}
+in
+if result == true then 1.0 else 0.0
