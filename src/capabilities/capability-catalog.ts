@@ -51,6 +51,10 @@ const RUNTIME_CAPABILITY_DEFAULTS: Record<
     envVar: "ENABLE_CAP_GRAPH_DEGREE",
     defaultEnabled: true,
   },
+  "graph.degree_histogram": {
+    envVar: "ENABLE_CAP_GRAPH_DEGREE_HISTOGRAM",
+    defaultEnabled: true,
+  },
   "http.nip05_resolve": {
     envVar: "ENABLE_CAP_HTTP_NIP05_RESOLVE",
     defaultEnabled: true,

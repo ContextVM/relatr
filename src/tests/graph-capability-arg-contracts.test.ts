@@ -166,6 +166,45 @@ describe("runtime graph capability arg contracts", () => {
     expect(response.value).toEqual({ outDegree: 4, inDegree: 7 });
   });
 
+  test("graph.degree_histogram accepts object-shaped args from relo contract", async () => {
+    const response = await executor.execute(
+      {
+        capName: RELATR_CAPABILITIES.graphDegreeHistogram,
+        argsJson: { pubkey: "pk-a" },
+        timeoutMs: 1000,
+      },
+      {
+        targetPubkey: "target",
+        graph: {
+          isInitialized: () => true,
+          getPubkeyDegreeHistogram: async (pubkey: string) =>
+            pubkey === "pk-a"
+              ? {
+                  outDegree: 4,
+                  inDegree: 7,
+                  outboundDistanceHistogram: { 1: 2, 2: 1 },
+                  inboundDistanceHistogram: { 1: 3 },
+                }
+              : {
+                  outDegree: 0,
+                  inDegree: 0,
+                  outboundDistanceHistogram: {},
+                  inboundDistanceHistogram: {},
+                },
+        } as unknown as SocialGraph,
+        config: TEST_CONFIG,
+      },
+    );
+
+    expect(response.ok).toBe(true);
+    expect(response.value).toEqual({
+      outDegree: 4,
+      inDegree: 7,
+      outboundDistanceHistogram: { 1: 2, 2: 1 },
+      inboundDistanceHistogram: { 1: 3 },
+    });
+  });
+
   test("graph.users_within_distance accepts object-shaped args from relo contract", async () => {
     const response = await executor.execute(
       {
@@ -269,6 +308,27 @@ describe("runtime graph capability arg contracts", () => {
 
     expect(errorMessageOf(response)).toBe(
       "graph.degree requires a string 'pubkey' field in the arguments object",
+    );
+  });
+
+  test("graph.degree_histogram reports a consistent missing-string-field error", async () => {
+    const response = await executor.execute(
+      {
+        capName: RELATR_CAPABILITIES.graphDegreeHistogram,
+        argsJson: {},
+        timeoutMs: 1000,
+      },
+      {
+        targetPubkey: "target",
+        graph: {
+          isInitialized: () => true,
+        } as unknown as SocialGraph,
+        config: TEST_CONFIG,
+      },
+    );
+
+    expect(errorMessageOf(response)).toBe(
+      "graph.degree_histogram requires a string 'pubkey' field in the arguments object",
     );
   });
 

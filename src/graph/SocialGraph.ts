@@ -4,6 +4,7 @@ import { SocialGraphError } from "../types";
 import type { NostrEvent } from "nostr-tools";
 import { logger } from "../utils/Logger";
 import { dbWriteQueue } from "@/database/DbWriteQueue";
+import type { PubkeyDegreeHistogram } from "nostr-social-duck";
 
 /**
  * Social graph operations wrapper for Relatr v2
@@ -353,6 +354,34 @@ export class SocialGraph {
       throw new SocialGraphError(
         `Failed to get pubkey degree for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
         "GET_PUBKEY_DEGREE",
+      );
+    }
+  }
+
+  /**
+   * Get the in/out degree counts plus root-aware neighbor distance histograms for a pubkey
+   * @param pubkey - Public key to inspect
+   * @returns Degree counts and inbound/outbound reachable-neighbor histograms
+   * @throws SocialGraphError if operation fails
+   */
+  async getPubkeyDegreeHistogram(
+    pubkey: string,
+  ): Promise<PubkeyDegreeHistogram> {
+    this.ensureInitialized();
+
+    if (!pubkey || typeof pubkey !== "string") {
+      throw new SocialGraphError(
+        "Pubkey must be a non-empty string",
+        "GET_PUBKEY_DEGREE_HISTOGRAM",
+      );
+    }
+
+    try {
+      return await this.graph!.getPubkeyDegreeHistogram(pubkey);
+    } catch (error) {
+      throw new SocialGraphError(
+        `Failed to get pubkey degree histogram for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_PUBKEY_DEGREE_HISTOGRAM",
       );
     }
   }

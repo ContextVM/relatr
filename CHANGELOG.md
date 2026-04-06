@@ -1,5 +1,11 @@
 # relatr
 
+## 0.2.7
+
+### Patch Changes
+
+- feat: add graph.degree_histogram to catalog
+
 ## 0.2.6
 
 ### Patch Changes

@@ -160,10 +160,7 @@ describe("relo cli end-to-end", () => {
       ["n", "activity_notes"],
       ["relatr-version", "^0.2.0"],
       ["title", "Activity score (notes)"],
-      [
-        "description",
-        "Scores higher for more recent notes by targetPubkey.",
-      ],
+      ["description", "Scores higher for more recent notes by targetPubkey."],
     ]);
   });
 

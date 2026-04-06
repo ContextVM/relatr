@@ -1,5 +1,11 @@
 # relo
 
+## 0.1.4
+
+### Patch Changes
+
+- feat: add graph.degree_histogram to catalog
+
 ## 0.1.3
 
 ### Patch Changes

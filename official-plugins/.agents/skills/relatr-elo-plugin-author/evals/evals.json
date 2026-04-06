@@ -1,0 +1,26 @@
+{
+  "skill_name": "relatr-elo-plugin-author",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Write a portable Relatr Elo plugin that scores a target pubkey by recent note activity over the last 7 days. Keep the query bounded, use safe fallbacks, and include the manifest tags I would need for later publication.",
+      "expected_output": "A valid single-round activity plugin using `do 'nostr.query'` with an explicit `limit`, nullable list handling, score thresholds in [0.0, 1.0], and suggested `n` plus `relatr-version` manifest tags.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "prompt": "Fix this Relatr plugin and explain the mistakes: `plan meta = do 'nostr.query' {kinds: [0], authors: [_.targetPubkey]} in if do 'http.nip05_resolve' {nip05: fetch(Data(fetch(first(meta), .content)), .nip05)} then 1 else 0`.",
+      "expected_output": "A corrected multi-round plugin that moves both capability calls into proper bindings, adds fallbacks like `meta | []` and `fetch(... ) | null`, and explains that `do` cannot be nested inside expressions.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 3,
+      "prompt": "I already have a plugin source file locally. Tell me the concrete lifecycle to validate it, build a canonical artifact, publish it to a relay, and explain how it should be packaged as a portable Relatr plugin event.",
+      "expected_output": "A lifecycle answer covering kind `765`, required tags `n` and `relatr-version`, recommended metadata tags, and `relo check`, `relo build`, and `relo publish` commands.",
+      "files": [],
+      "assertions": []
+    }
+  ]
+}

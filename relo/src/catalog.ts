@@ -176,6 +176,7 @@ const RELATR_CAPABILITY_NAME_ENTRIES = [
   ["graphDistanceBetween", "graph.distance_between"],
   ["graphUsersWithinDistance", "graph.users_within_distance"],
   ["graphDegree", "graph.degree"],
+  ["graphDegreeHistogram", "graph.degree_histogram"],
   ["httpNip05Resolve", "http.nip05_resolve"],
 ] as const;
 
@@ -544,6 +545,50 @@ export const RELATR_CAPABILITY_DEFINITIONS: RelatrCapabilityDefinition[] = [
           "pubkey",
         ),
       ]),
+  },
+  {
+    name: RELATR_CAPABILITIES.graphDegreeHistogram,
+    description:
+      "Get degree counts plus root-aware neighbor distance histograms for a pubkey",
+    argRule: {
+      requiredKeys: ["pubkey"],
+      description: "Requires a pubkey field.",
+      example: { pubkey: "hex-pubkey" },
+    },
+    validateArgs: ({ argsExpr }) => [
+      ...validateObjectShape(
+        RELATR_CAPABILITIES.graphDegreeHistogram,
+        argsExpr,
+        {
+          requiredKeys: ["pubkey"],
+          optionalKeys: [],
+        },
+      ),
+      ...validateStringField(
+        RELATR_CAPABILITIES.graphDegreeHistogram,
+        argsExpr,
+        "pubkey",
+      ),
+    ],
+    toPluginCapabilitySpec: () =>
+      createCapabilitySpec(
+        RELATR_CAPABILITIES.graphDegreeHistogram,
+        ({ argsExpr }) => [
+          ...validateObjectShape(
+            RELATR_CAPABILITIES.graphDegreeHistogram,
+            argsExpr,
+            {
+              requiredKeys: ["pubkey"],
+              optionalKeys: [],
+            },
+          ),
+          ...validateStringField(
+            RELATR_CAPABILITIES.graphDegreeHistogram,
+            argsExpr,
+            "pubkey",
+          ),
+        ],
+      ),
   },
   {
     name: RELATR_CAPABILITIES.httpNip05Resolve,

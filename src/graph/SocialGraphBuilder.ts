@@ -5,6 +5,10 @@ import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
 import { logger } from "../utils/Logger";
 import { dbWriteQueue } from "@/database/DbWriteQueue";
 
+type SocialDuckConnectionLike = Parameters<
+  typeof DuckDBSocialGraphAnalyzer.connect
+>[0];
+
 const GRAPH_FETCH_MAX_ATTEMPTS = 3;
 const GRAPH_FETCH_RETRY_DELAY_MS = 1000;
 
@@ -66,7 +70,7 @@ export class SocialGraphBuilder {
     try {
       // Initialize social graph analyzer early for streaming ingestion
       socialGraph = await DuckDBSocialGraphAnalyzer.connect(
-        connection,
+        connection as unknown as SocialDuckConnectionLike,
         undefined,
         sourcePubkey,
       );

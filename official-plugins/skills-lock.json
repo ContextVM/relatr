@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "relatr-elo-plugin-author": {
+      "source": "contextvm/relatr",
+      "sourceType": "github",
+      "computedHash": "418e6c5367f2260bbd64d52b87dd6e5a00c14a723992177f69030c7d57097b5d"
+    }
+  }
+}
