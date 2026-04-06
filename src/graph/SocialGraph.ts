@@ -330,6 +330,34 @@ export class SocialGraph {
   }
 
   /**
+   * Get the in/out degree counts for a pubkey
+   * @param pubkey - Public key to inspect
+   * @returns Object with outDegree and inDegree
+   * @throws SocialGraphError if operation fails
+   */
+  async getPubkeyDegree(
+    pubkey: string,
+  ): Promise<{ outDegree: number; inDegree: number }> {
+    this.ensureInitialized();
+
+    if (!pubkey || typeof pubkey !== "string") {
+      throw new SocialGraphError(
+        "Pubkey must be a non-empty string",
+        "GET_PUBKEY_DEGREE",
+      );
+    }
+
+    try {
+      return await this.graph!.getPubkeyDegree(pubkey);
+    } catch (error) {
+      throw new SocialGraphError(
+        `Failed to get pubkey degree for ${pubkey}: ${error instanceof Error ? error.message : String(error)}`,
+        "GET_PUBKEY_DEGREE",
+      );
+    }
+  }
+
+  /**
    * Get distance between two pubkeys by temporarily switching root
    * @param sourcePubkey - Source public key
    * @param targetPubkey - Target public key

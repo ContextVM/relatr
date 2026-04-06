@@ -3,6 +3,7 @@ import { RELATR_CAPABILITIES } from "@contextvm/relo";
 import type { CapabilityRegistry } from "./CapabilityRegistry";
 import { graphAllPubkeys } from "./graph/graphAllPubkeys";
 import { graphAreMutual } from "./graph/graphAreMutual";
+import { graphDegree } from "./graph/graphDegree";
 import { graphDistanceBetween } from "./graph/graphDistanceBetween";
 import { graphDistanceFromRoot } from "./graph/graphDistanceFromRoot";
 import { graphIsFollowing } from "./graph/graphIsFollowing";
@@ -24,6 +25,7 @@ import { nostrQuery } from "./nostr/nostrQuery";
  * - [`RELATR_CAPABILITIES.graphAreMutual`](relo/src/catalog.ts:408): Check if two pubkeys mutually follow each other
  * - [`RELATR_CAPABILITIES.graphDistanceFromRoot`](relo/src/catalog.ts:409): Get hop distance from the current root to a pubkey
  * - [`RELATR_CAPABILITIES.graphDistanceBetween`](relo/src/catalog.ts:410): Get hop distance between two pubkeys
+ * - [`RELATR_CAPABILITIES.graphDegree`](relo/src/catalog.ts:412): Get in/out degree counts for a pubkey
  * - [`RELATR_CAPABILITIES.graphIsFollowing`](relo/src/catalog.ts:407): Check if one pubkey follows another
  * - [`RELATR_CAPABILITIES.graphPubkeyExists`](relo/src/catalog.ts:406): Check if a pubkey exists in the graph
  * - [`RELATR_CAPABILITIES.graphUsersWithinDistance`](relo/src/catalog.ts:411): Get pubkeys within N hops of the current root
@@ -51,6 +53,7 @@ export function registerBuiltInCapabilities(
     RELATR_CAPABILITIES.graphDistanceBetween,
     graphDistanceBetween,
   );
+  registry.register(RELATR_CAPABILITIES.graphDegree, graphDegree);
   registry.register(RELATR_CAPABILITIES.graphIsFollowing, graphIsFollowing);
   registry.register(RELATR_CAPABILITIES.graphPubkeyExists, graphPubkeyExists);
   registry.register(

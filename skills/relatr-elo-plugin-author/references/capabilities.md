@@ -19,6 +19,7 @@ Graph capabilities use object-shaped arguments with exact field names.
 | `graph.are_mutual` | `{a, b}` | `boolean` | `false` |
 | `graph.distance_from_root` | `{pubkey}` | `number` | `1000` |
 | `graph.distance_between` | `{sourcePubkey, targetPubkey}` | `number` | `1000` |
+| `graph.degree` | `{pubkey}` | `{outDegree, inDegree}` | `{outDegree: 0, inDegree: 0}` |
 | `graph.users_within_distance` | `{distance}` | `string[]` | `[]` |
 
 ## Invocation patterns
@@ -43,12 +44,25 @@ plan d = do 'graph.distance_between' {sourcePubkey: _.sourcePubkey, targetPubkey
 if _.sourcePubkey != null and d <= 2 then 1.0 else 0.0
 ```
 
+```elo
+plan degree = do 'graph.degree' {pubkey: _.targetPubkey} in
+let
+  outDegree = fetch(degree | {}, .outDegree) | 0,
+  inDegree = fetch(degree | {}, .inDegree) | 0
+in
+if inDegree >= 100 then 1.0
+else if inDegree >= 20 then 0.6
+else if outDegree >= 10 then 0.2
+else 0.0
+```
+
 ## Safe result handling
 
 - lists: `events | []`
 - objects: `obj | {}`
 - optional fields: `fetch(obj, .field) | null`
 - booleans: compare with `== true`
+- degree objects: use `fetch(obj, .outDegree) | 0` and `fetch(obj, .inDegree) | 0`
 - distances: treat `1000` as effectively unreachable
 
 ## Capability notes

@@ -1,5 +1,15 @@
 # relatr
 
+## 0.2.6
+
+### Patch Changes
+
+- feat(graph): add degree capability to get in/out follower counts
+
+  Add graph.degree capability that returns outDegree and inDegree counts
+  for a given pubkey. Includes implementation in SocialGraph, capability
+  registration, argument contracts, and documentation.
+
 ## 0.2.5
 
 ### Patch Changes

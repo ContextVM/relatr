@@ -142,6 +142,30 @@ describe("runtime graph capability arg contracts", () => {
     expect(response.value).toBe(3);
   });
 
+  test("graph.degree accepts object-shaped args from relo contract", async () => {
+    const response = await executor.execute(
+      {
+        capName: RELATR_CAPABILITIES.graphDegree,
+        argsJson: { pubkey: "pk-a" },
+        timeoutMs: 1000,
+      },
+      {
+        targetPubkey: "target",
+        graph: {
+          isInitialized: () => true,
+          getPubkeyDegree: async (pubkey: string) =>
+            pubkey === "pk-a"
+              ? { outDegree: 4, inDegree: 7 }
+              : { outDegree: 0, inDegree: 0 },
+        } as unknown as SocialGraph,
+        config: TEST_CONFIG,
+      },
+    );
+
+    expect(response.ok).toBe(true);
+    expect(response.value).toEqual({ outDegree: 4, inDegree: 7 });
+  });
+
   test("graph.users_within_distance accepts object-shaped args from relo contract", async () => {
     const response = await executor.execute(
       {
@@ -224,6 +248,27 @@ describe("runtime graph capability arg contracts", () => {
 
     expect(errorMessageOf(response)).toBe(
       "graph.users_within_distance requires a non-negative numeric 'distance' field in the arguments object",
+    );
+  });
+
+  test("graph.degree reports a consistent missing-string-field error", async () => {
+    const response = await executor.execute(
+      {
+        capName: RELATR_CAPABILITIES.graphDegree,
+        argsJson: {},
+        timeoutMs: 1000,
+      },
+      {
+        targetPubkey: "target",
+        graph: {
+          isInitialized: () => true,
+        } as unknown as SocialGraph,
+        config: TEST_CONFIG,
+      },
+    );
+
+    expect(errorMessageOf(response)).toBe(
+      "graph.degree requires a string 'pubkey' field in the arguments object",
     );
   });
 
