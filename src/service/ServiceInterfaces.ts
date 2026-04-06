@@ -41,7 +41,16 @@ export interface ISearchService {
       isExactMatch: boolean;
     }[],
     sourcePubkey: string,
-  ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]>;
+  ): Promise<
+    {
+      pubkey: string;
+      trustScore: number;
+      exactMatch: boolean;
+      rawTrustScore: number;
+      rankingScore: number;
+      relevanceMultiplier: number;
+    }[]
+  >;
   calculateRelevanceMultiplier(
     profile: NostrProfile,
     query: string,

@@ -26,17 +26,12 @@ type RankedSearchCandidate = {
   pubkey: string;
   trustScore: number;
   exactMatch: boolean;
+  rawTrustScore: number;
+  rankingScore: number;
+  relevanceMultiplier: number;
 };
 
 export class SearchService implements ISearchService {
-  private static readonly FIELD_WEIGHTS = {
-    name: 0.5,
-    display_name: 0.35,
-    nip05: 0.1,
-    lud16: 0.07,
-    about: 0.03,
-  };
-
   private static readonly EXACT_MATCH_BOOST = 1.05;
 
   constructor(
@@ -188,8 +183,17 @@ export class SearchService implements ISearchService {
       effectiveSourcePubkey,
     );
 
-    // Sort by trust score and return top results
-    profilesWithScores.sort((a, b) => b.trustScore - a.trustScore);
+    // Keep trust as the primary ranking signal while using deterministic
+    // tie-breakers to stabilize equal displayed scores.
+    profilesWithScores.sort((a, b) => {
+      return (
+        b.rankingScore - a.rankingScore ||
+        b.rawTrustScore - a.rawTrustScore ||
+        Number(b.exactMatch) - Number(a.exactMatch) ||
+        b.relevanceMultiplier - a.relevanceMultiplier ||
+        a.pubkey.localeCompare(b.pubkey)
+      );
+    });
 
     const results = profilesWithScores.slice(0, limit).map((item, index) => ({
       pubkey: item.pubkey,
@@ -239,8 +243,11 @@ export class SearchService implements ISearchService {
             if (!metrics) {
               return {
                 pubkey,
-                rawScore: 0,
+                trustScore: 0,
+                rawTrustScore: 0,
+                rankingScore: 0,
                 exactMatch: isExactMatch,
+                relevanceMultiplier,
               };
             }
 
@@ -251,18 +258,23 @@ export class SearchService implements ISearchService {
               distance,
             );
 
-            let finalRelevanceMultiplier = relevanceMultiplier;
+            let rankingMultiplier = 1;
             if (isExactMatch) {
-              finalRelevanceMultiplier *= SearchService.EXACT_MATCH_BOOST;
+              rankingMultiplier = SearchService.EXACT_MATCH_BOOST;
             }
 
-            const rawCombinedScore =
-              trustScore.score * finalRelevanceMultiplier;
+            const roundedTrustScore = Number(
+              Math.max(0, Math.min(1, trustScore.score)).toFixed(2),
+            );
+            const rankingScore = trustScore.score * rankingMultiplier;
 
             return {
               pubkey,
-              rawScore: rawCombinedScore,
+              trustScore: roundedTrustScore,
+              rawTrustScore: trustScore.score,
+              rankingScore,
               exactMatch: isExactMatch,
+              relevanceMultiplier,
             };
           } catch (error) {
             logger.warn(
@@ -271,8 +283,11 @@ export class SearchService implements ISearchService {
             );
             return {
               pubkey,
-              rawScore: 0,
+              trustScore: 0,
+              rawTrustScore: 0,
+              rankingScore: 0,
               exactMatch: isExactMatch,
+              relevanceMultiplier,
             };
           }
         },
@@ -280,10 +295,11 @@ export class SearchService implements ISearchService {
 
       return results.map((result) => ({
         pubkey: result.pubkey,
-        trustScore: Number(
-          Math.max(0, Math.min(1, result.rawScore)).toFixed(2),
-        ),
+        trustScore: result.trustScore,
         exactMatch: result.exactMatch,
+        rawTrustScore: result.rawTrustScore,
+        rankingScore: result.rankingScore,
+        relevanceMultiplier: result.relevanceMultiplier,
       }));
     } catch (error) {
       logger.warn(
@@ -295,6 +311,9 @@ export class SearchService implements ISearchService {
         pubkey,
         trustScore: 0,
         exactMatch: isExactMatch,
+        rawTrustScore: 0,
+        rankingScore: 0,
+        relevanceMultiplier: 1,
       }));
     }
   }
@@ -304,45 +323,22 @@ export class SearchService implements ISearchService {
     query: string,
   ): { multiplier: number; isExactMatch: boolean } {
     const queryLower = query.toLowerCase();
-    let relevanceScore = 0;
     let isExactMatch = false;
 
-    for (const [field, weight] of Object.entries(SearchService.FIELD_WEIGHTS)) {
+    for (const field of ["name", "display_name", "nip05", "lud16"] as const) {
       const fieldValue = profile[field as keyof NostrProfile];
       if (typeof fieldValue === "string" && fieldValue.trim()) {
         const valueLower = fieldValue.toLowerCase();
 
-        // Only count as exact match if the ENTIRE field equals the query
         if (valueLower === queryLower) {
-          relevanceScore += weight;
-          if (
-            field === "name" ||
-            field === "display_name" ||
-            field === "nip05" ||
-            field === "lud16"
-          ) {
-            isExactMatch = true;
-          }
-        } else if (valueLower.startsWith(queryLower)) {
-          relevanceScore += weight * 0.85;
-        } else if (valueLower.includes(queryLower)) {
-          relevanceScore += weight * 0.55;
-        } else {
-          const wordBoundaryRegex = new RegExp(`\\b${queryLower}\\b`, "i");
-          if (wordBoundaryRegex.test(fieldValue)) {
-            relevanceScore += weight * 0.35;
-          }
+          isExactMatch = true;
+          break;
         }
       }
     }
 
-    const normalizedRelevanceScore = Math.min(1, relevanceScore);
-    const maxMultiplier = 1.4;
-    const relevanceMultiplier =
-      1.0 + normalizedRelevanceScore * (maxMultiplier - 1.0);
-
     return {
-      multiplier: Number(relevanceMultiplier.toFixed(3)), // Avoid floating point precision issues
+      multiplier: 1,
       isExactMatch,
     };
   }

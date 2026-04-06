@@ -1,5 +1,17 @@
 # relatr
 
+## 0.2.5
+
+### Patch Changes
+
+- refactor(search): decouple trust scores from text relevance in ranking
+
+  Separate trust score calculation from text relevance scoring to ensure
+  search results are primarily ranked by trust. The trust score now remains
+  independent while a separate rankingScore incorporates relevance for
+  tie-breaking. Also stabilizes the candidate window to a fixed limit
+  regardless of output limit, ensuring consistent ranking behavior.
+
 ## 0.2.4
 
 ### Patch Changes

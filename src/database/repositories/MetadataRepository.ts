@@ -12,6 +12,8 @@ export interface SearchResult {
   isExactMatch: boolean;
 }
 
+const STABLE_SEARCH_CANDIDATE_LIMIT = 100;
+
 const SEARCH_TEXT_SCORES = {
   nameExact: 1.4,
   displayNameExact: 1.3,
@@ -235,9 +237,9 @@ export class MetadataRepository {
     try {
       return await executeWithRetry(async () => {
         const staleThreshold = nowSeconds() - this.ttlSeconds;
-        // Calculate candidate limit: return enough candidates for trust calculation
-        // but not so many that we process thousands of profiles
-        const candidateLimit = Math.max(limit * 20, 100);
+        // Use a stable candidate window so final ranking stays consistent
+        // regardless of the requested output limit.
+        const candidateLimit = Math.max(limit, STABLE_SEARCH_CANDIDATE_LIMIT);
 
         const textScoreCase = `
           CASE

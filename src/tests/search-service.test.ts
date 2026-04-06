@@ -23,6 +23,7 @@ function createTrustScore(targetPubkey: string, score: number): TrustScore {
 }
 
 function createService(overrides?: {
+  metadataRepository?: Partial<ConstructorParameters<typeof SearchService>[1]>;
   socialGraph?: Partial<ConstructorParameters<typeof SearchService>[2]>;
   metricsValidator?: Partial<ConstructorParameters<typeof SearchService>[3]>;
   trustCalculator?: Partial<ConstructorParameters<typeof SearchService>[4]>;
@@ -63,6 +64,7 @@ function createService(overrides?: {
     {
       search: async () => [],
       save: async () => undefined,
+      ...overrides?.metadataRepository,
     } as never,
     {
       getCurrentRoot: () => "source",
@@ -109,32 +111,33 @@ describe("SearchService relevance scoring", () => {
 
     expect(
       service.calculateRelevanceMultiplier(nip05Profile, "alice@example.com"),
-    ).toEqual({ multiplier: 1.04, isExactMatch: true });
+    ).toEqual({ multiplier: 1, isExactMatch: true });
     expect(
       service.calculateRelevanceMultiplier(
         lud16Profile,
         "alice@wallet.example",
       ),
-    ).toEqual({ multiplier: 1.028, isExactMatch: true });
+    ).toEqual({ multiplier: 1, isExactMatch: true });
   });
 
-  test("includes about text as a low-weight relevance signal", () => {
+  test("does not apply a repeated text multiplier for non-exact matches", () => {
     const service = createService();
 
     const profile: NostrProfile = {
       pubkey: "pk-about",
+      name: "nostr builder",
       about: "building sovereign nostr tools for the open web",
     };
 
     expect(service.calculateRelevanceMultiplier(profile, "nostr")).toEqual({
-      multiplier: 1.007,
+      multiplier: 1,
       isExactMatch: false,
     });
   });
 });
 
 describe("SearchService final score calculation", () => {
-  test("keeps absolute combined scores instead of renormalizing the candidate batch", async () => {
+  test("keeps absolute trust scores instead of renormalizing the candidate batch", async () => {
     const service = createService({
       socialGraph: {
         getDistancesBatch: async () =>
@@ -189,12 +192,26 @@ describe("SearchService final score calculation", () => {
     );
 
     expect(results).toEqual([
-      { pubkey: "pk-a", trustScore: 0.88, exactMatch: false },
-      { pubkey: "pk-b", trustScore: 0.66, exactMatch: false },
+      {
+        pubkey: "pk-a",
+        trustScore: 0.8,
+        exactMatch: false,
+        rawTrustScore: 0.8,
+        rankingScore: 0.8,
+        relevanceMultiplier: 1.1,
+      },
+      {
+        pubkey: "pk-b",
+        trustScore: 0.6,
+        exactMatch: false,
+        rawTrustScore: 0.6,
+        rankingScore: 0.6,
+        relevanceMultiplier: 1.1,
+      },
     ]);
   });
 
-  test("applies the reduced exact-match boost", async () => {
+  test("applies the reduced exact-match boost only for ranking", async () => {
     const service = createService({
       trustCalculator: {
         calculate: (_source: string, target: string) =>
@@ -215,8 +232,101 @@ describe("SearchService final score calculation", () => {
 
     expect(result).toEqual({
       pubkey: "pk-exact",
-      trustScore: 0.63,
+      trustScore: 0.5,
       exactMatch: true,
+      rawTrustScore: 0.5,
+      rankingScore: 0.525,
+      relevanceMultiplier: 1.2,
     });
+  });
+
+  test("calculateProfileScores keeps trust scores independent from non-exact text relevance", async () => {
+    const service = createService({
+      trustCalculator: {
+        calculate: (_source: string, target: string) =>
+          createTrustScore(target, target === "pk-high-trust" ? 0.81 : 0.74),
+      },
+    });
+
+    const results = await service.calculateProfileScores(
+      [
+        {
+          pubkey: "pk-lower-trust",
+          relevanceMultiplier: 1.4,
+          isExactMatch: false,
+        },
+        {
+          pubkey: "pk-high-trust",
+          relevanceMultiplier: 1,
+          isExactMatch: false,
+        },
+      ],
+      "source",
+    );
+
+    expect(results).toEqual([
+      {
+        pubkey: "pk-lower-trust",
+        trustScore: 0.74,
+        exactMatch: false,
+        rawTrustScore: 0.74,
+        rankingScore: 0.74,
+        relevanceMultiplier: 1.4,
+      },
+      {
+        pubkey: "pk-high-trust",
+        trustScore: 0.81,
+        exactMatch: false,
+        rawTrustScore: 0.81,
+        rankingScore: 0.81,
+        relevanceMultiplier: 1,
+      },
+    ]);
+  });
+
+  test("searchProfiles ranks higher-trust non-exact matches ahead of lower-trust ones", async () => {
+    const service = createService({
+      metadataRepository: {
+        search: async () => [
+          {
+            pubkey: "pk-lower-trust",
+            score: 1.4,
+            rank: 1,
+            isExactMatch: false,
+          },
+          {
+            pubkey: "pk-high-trust",
+            score: 1,
+            rank: 2,
+            isExactMatch: false,
+          },
+        ],
+      },
+      trustCalculator: {
+        calculate: (_source: string, target: string) =>
+          createTrustScore(target, target === "pk-high-trust" ? 0.81 : 0.74),
+      },
+    });
+
+    const result = await service.searchProfiles({
+      query: "david",
+      limit: 2,
+      sourcePubkey: "source",
+    });
+
+    expect(result.results).toEqual([
+      {
+        pubkey: "pk-high-trust",
+        trustScore: 0.81,
+        rank: 1,
+        exactMatch: false,
+      },
+      {
+        pubkey: "pk-lower-trust",
+        trustScore: 0.74,
+        rank: 2,
+        exactMatch: false,
+      },
+    ]);
   });
 });
