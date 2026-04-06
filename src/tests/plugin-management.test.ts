@@ -12,6 +12,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { neventEncode } from "nostr-tools/nip19";
 import { Observable } from "rxjs";
 import { resolvePluginWeights } from "@/plugins/resolvePluginWeights";
+import { HOST_VERSION } from "@/version";
 
 function mkPlugin(
   pubkey: string,
@@ -26,7 +27,7 @@ function mkPlugin(
     content: "plan x = 1 in 1.0",
     manifest: {
       name,
-      relatrVersion: "^0.1.16",
+      relatrVersion: `^${HOST_VERSION}`,
       title: null,
       description: null,
       weight,
@@ -38,7 +39,7 @@ function mkPlugin(
       kind: 765,
       tags: [
         ["n", name],
-        ["relatr-version", "^0.1.16"],
+        ["relatr-version", `^${HOST_VERSION}`],
       ],
       content: "plan x = 1 in 1.0",
       sig: "sig",
@@ -389,7 +390,7 @@ describe("PluginManager v1 list/runtime", () => {
         created_at: 1_700_000_001,
         tags: [
           ["n", "relay-plugin"],
-          ["relatr-version", "^0.1.16"],
+          ["relatr-version", `^${HOST_VERSION}`],
           ["weight", "0.25"],
           ["title", "Relay plugin"],
         ],
@@ -483,7 +484,7 @@ describe("PluginManager v1 list/runtime", () => {
         created_at: 1_700_000_002,
         tags: [
           ["n", "hint-plugin"],
-          ["relatr-version", "^0.1.16"],
+          ["relatr-version", `^${HOST_VERSION}`],
         ],
         content: "plan x = 1 in 0.2",
       },
@@ -571,7 +572,7 @@ describe("PluginManager v1 list/runtime", () => {
           kind: 765,
           tags: [
             ["n", "bootstrap_plugin"],
-            ["relatr-version", "^0.1.16"],
+            ["relatr-version", `^${HOST_VERSION}`],
           ],
           content: "plan x = 1 in 0.2",
           sig: "valid-sig",
@@ -1089,7 +1090,7 @@ describe("PluginManager v1 list/runtime", () => {
         created_at: 1_700_000_004,
         tags: [
           ["n", "persisted-plugin"],
-          ["relatr-version", "^0.1.16"],
+          ["relatr-version", `^${HOST_VERSION}`],
         ],
         content: "plan x = 1 in 0.5",
       },
@@ -1158,7 +1159,7 @@ describe("PluginManager v1 list/runtime", () => {
         created_at: 1_700_000_005,
         tags: [
           ["n", "warmup-plugin"],
-          ["relatr-version", "^0.1.16"],
+          ["relatr-version", `^${HOST_VERSION}`],
         ],
         content: "plan x = 1 in 0.5",
       },

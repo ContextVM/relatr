@@ -1,5 +1,19 @@
 # relatr
 
+## 0.2.4
+
+### Patch Changes
+
+- feat(search): enhance search with lud16/about fields and capped plugin scoring
+
+- Add lud16 and about fields to search relevance scoring with configurable weights
+- Refactor MetadataRepository to extract search score constants and improve exact match detection
+- Cap plugin contribution to non-distance score budget in TrustCalculator (0.4 weight)
+- Reduce exact match boost from 1.15x to 1.05x to prevent over-ranking
+- Add new search-service.test.ts with comprehensive test coverage
+- Update @contextvm/sdk to ^0.8.0 and @noble/hashes to 2.0.1
+- Disable oversizedTransfer in MCP server config
+
 ## 0.2.3
 
 ### Patch Changes

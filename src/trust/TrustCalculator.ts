@@ -146,12 +146,16 @@ export class TrustCalculator {
   ): number {
     // Calculate weighted sum for distance
     let weightedSum = distanceWeight * normalizedDistance;
+    const pluginBudget = Math.max(0, 1 - distanceWeight);
 
-    // Calculate weighted sum for all plugin metrics
+    // Calculate weighted sum for all plugin metrics.
+    // Plugin weights are resolved to sum to 1.0 across enabled plugins,
+    // but trust scoring reserves a fixed portion of the final score for
+    // distance. Plugins therefore share only the remaining score budget.
     for (const [metricName, metricValue] of Object.entries(metrics.metrics)) {
       const weight = this.pluginWeights[metricName];
       if (weight !== undefined && weight > 0) {
-        weightedSum += weight * metricValue;
+        weightedSum += pluginBudget * weight * metricValue;
       }
     }
 

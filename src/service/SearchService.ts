@@ -16,12 +16,28 @@ import { logger } from "../utils/Logger";
 import { SEARCH_RELAYS } from "@/constants/nostr";
 import { nowMs } from "@/utils/utils";
 
+type SearchCandidate = {
+  pubkey: string;
+  relevanceMultiplier: number;
+  isExactMatch: boolean;
+};
+
+type RankedSearchCandidate = {
+  pubkey: string;
+  trustScore: number;
+  exactMatch: boolean;
+};
+
 export class SearchService implements ISearchService {
   private static readonly FIELD_WEIGHTS = {
     name: 0.5,
     display_name: 0.35,
     nip05: 0.1,
+    lud16: 0.07,
+    about: 0.03,
   };
+
+  private static readonly EXACT_MATCH_BOOST = 1.05;
 
   constructor(
     private config: RelatrConfig,
@@ -88,20 +104,13 @@ export class SearchService implements ISearchService {
   private async extendSearchWithNostr(
     query: string,
     limit: number,
-    profilesForScoring: {
-      pubkey: string;
-      relevanceMultiplier: number;
-      isExactMatch: boolean;
-    }[],
+    profilesForScoring: SearchCandidate[],
     extendToNostr?: boolean,
-  ): Promise<
-    { pubkey: string; relevanceMultiplier: number; isExactMatch: boolean }[]
-  > {
-    const nostrProfiles: {
-      pubkey: string;
-      relevanceMultiplier: number;
-      isExactMatch: boolean;
-    }[] = [];
+  ): Promise<SearchCandidate[]> {
+    const nostrProfiles: SearchCandidate[] = [];
+    const seenPubkeys = new Set(
+      profilesForScoring.map((profile) => profile.pubkey),
+    );
     const shouldExtendToNostr =
       extendToNostr || profilesForScoring.length === 0;
 
@@ -138,13 +147,7 @@ export class SearchService implements ISearchService {
       });
 
       for (const event of nostrEvents) {
-        const existingPubkey = profilesForScoring.find(
-          (p) => p.pubkey === event.pubkey,
-        );
-        if (
-          !existingPubkey &&
-          !nostrProfiles.find((p) => p.pubkey === event.pubkey)
-        ) {
+        if (!seenPubkeys.has(event.pubkey)) {
           const profile = JSON.parse(event.content);
           const { multiplier, isExactMatch } =
             this.calculateRelevanceMultiplier(profile, query);
@@ -153,6 +156,7 @@ export class SearchService implements ISearchService {
             relevanceMultiplier: multiplier,
             isExactMatch,
           });
+          seenPubkeys.add(event.pubkey);
           this.metadataRepository
             .save({ pubkey: event.pubkey, ...profile })
             .catch((err) => {
@@ -174,11 +178,7 @@ export class SearchService implements ISearchService {
    * Process search results by calculating trust scores and formatting output
    */
   private async processSearchResults(
-    finalProfiles: {
-      pubkey: string;
-      relevanceMultiplier: number;
-      isExactMatch: boolean;
-    }[],
+    finalProfiles: SearchCandidate[],
     effectiveSourcePubkey: string,
     limit: number,
     startTime: number,
@@ -209,13 +209,9 @@ export class SearchService implements ISearchService {
   }
 
   async calculateProfileScores(
-    profiles: {
-      pubkey: string;
-      relevanceMultiplier: number;
-      isExactMatch: boolean;
-    }[],
+    profiles: SearchCandidate[],
     effectiveSourcePubkey: string,
-  ): Promise<{ pubkey: string; trustScore: number; exactMatch: boolean }[]> {
+  ): Promise<RankedSearchCandidate[]> {
     if (profiles.length === 0) {
       return [];
     }
@@ -257,7 +253,7 @@ export class SearchService implements ISearchService {
 
             let finalRelevanceMultiplier = relevanceMultiplier;
             if (isExactMatch) {
-              finalRelevanceMultiplier *= 1.15;
+              finalRelevanceMultiplier *= SearchService.EXACT_MATCH_BOOST;
             }
 
             const rawCombinedScore =
@@ -282,12 +278,11 @@ export class SearchService implements ISearchService {
         },
       );
 
-      // Single normalization point - normalize all scores to 0-1 range
-      const maxRawScore = Math.max(...results.map((r) => r.rawScore), 1.0);
-
       return results.map((result) => ({
         pubkey: result.pubkey,
-        trustScore: Number((result.rawScore / maxRawScore).toFixed(2)),
+        trustScore: Number(
+          Math.max(0, Math.min(1, result.rawScore)).toFixed(2),
+        ),
         exactMatch: result.exactMatch,
       }));
     } catch (error) {
@@ -320,7 +315,12 @@ export class SearchService implements ISearchService {
         // Only count as exact match if the ENTIRE field equals the query
         if (valueLower === queryLower) {
           relevanceScore += weight;
-          if (field === "name" || field === "display_name") {
+          if (
+            field === "name" ||
+            field === "display_name" ||
+            field === "nip05" ||
+            field === "lud16"
+          ) {
             isExactMatch = true;
           }
         } else if (valueLower.startsWith(queryLower)) {

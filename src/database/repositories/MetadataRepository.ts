@@ -12,20 +12,31 @@ export interface SearchResult {
   isExactMatch: boolean;
 }
 
-export class MetadataRepository {
-  private readConnection: DuckDBConnection;
-  private writeConnection: DuckDBConnection;
-  private ttlSeconds: number;
+const SEARCH_TEXT_SCORES = {
+  nameExact: 1.4,
+  displayNameExact: 1.3,
+  nip05Exact: 1.2,
+  lud16Exact: 1.0,
+  namePrefix: 1.1,
+  displayNamePrefix: 1.05,
+  nip05Prefix: 1.0,
+  lud16Prefix: 0.85,
+  nameContains: 0.9,
+  displayNameContains: 0.8,
+  nip05Contains: 0.7,
+  lud16Contains: 0.6,
+  aboutContains: 0.35,
+} as const;
 
+const SEARCH_DISTANCE_WEIGHT = 0.6;
+const SEARCH_VALIDATION_WEIGHT = 0.4;
+
+export class MetadataRepository {
   constructor(
-    readConnection: DuckDBConnection,
-    writeConnection: DuckDBConnection,
-    ttlSeconds: number = 60 * 60 * 48,
-  ) {
-    this.readConnection = readConnection;
-    this.writeConnection = writeConnection;
-    this.ttlSeconds = ttlSeconds;
-  }
+    private readConnection: DuckDBConnection,
+    private writeConnection: DuckDBConnection,
+    private ttlSeconds: number = 60 * 60 * 48,
+  ) {}
 
   async save(profile: NostrProfile): Promise<void> {
     await this.saveMany([profile]);
@@ -228,6 +239,33 @@ export class MetadataRepository {
         // but not so many that we process thousands of profiles
         const candidateLimit = Math.max(limit * 20, 100);
 
+        const textScoreCase = `
+          CASE
+            WHEN LOWER(m.name) = LOWER($1) THEN ${SEARCH_TEXT_SCORES.nameExact}
+            WHEN LOWER(m.display_name) = LOWER($1) THEN ${SEARCH_TEXT_SCORES.displayNameExact}
+            WHEN LOWER(m.nip05) = LOWER($1) THEN ${SEARCH_TEXT_SCORES.nip05Exact}
+            WHEN LOWER(m.lud16) = LOWER($1) THEN ${SEARCH_TEXT_SCORES.lud16Exact}
+            WHEN m.name ILIKE $1 || '%' THEN ${SEARCH_TEXT_SCORES.namePrefix}
+            WHEN m.display_name ILIKE $1 || '%' THEN ${SEARCH_TEXT_SCORES.displayNamePrefix}
+            WHEN m.nip05 ILIKE $1 || '%' THEN ${SEARCH_TEXT_SCORES.nip05Prefix}
+            WHEN m.lud16 ILIKE $1 || '%' THEN ${SEARCH_TEXT_SCORES.lud16Prefix}
+            WHEN m.name ILIKE '%' || $1 || '%' THEN ${SEARCH_TEXT_SCORES.nameContains}
+            WHEN m.display_name ILIKE '%' || $1 || '%' THEN ${SEARCH_TEXT_SCORES.displayNameContains}
+            WHEN m.nip05 ILIKE '%' || $1 || '%' THEN ${SEARCH_TEXT_SCORES.nip05Contains}
+            WHEN m.lud16 ILIKE '%' || $1 || '%' THEN ${SEARCH_TEXT_SCORES.lud16Contains}
+            WHEN m.about ILIKE '%' || $1 || '%' THEN ${SEARCH_TEXT_SCORES.aboutContains}
+            ELSE 0.0
+          END
+        `;
+
+        const distanceScoreCase = `
+          CASE
+            WHEN d.distance <= 1 THEN 1.0
+            WHEN d.distance = 1000 THEN 0.0
+            ELSE exp(-$3 * d.distance)
+          END
+        `;
+
         const result = await this.readConnection.run(
           `
         WITH ranked_matches AS (
@@ -237,57 +275,27 @@ export class MetadataRepository {
             m.display_name,
             m.nip05,
             -- Text relevance scoring with priority for exact and prefix matches
-            CASE
-              -- Exact matches (highest priority) - entire field equals query
-              WHEN LOWER(m.name) = LOWER($1) THEN 1.4
-              WHEN LOWER(m.display_name) = LOWER($1) THEN 1.3
-              WHEN LOWER(m.nip05) = LOWER($1) THEN 1.2
-              -- Prefix matches (high priority)
-              WHEN m.name ILIKE $1 || '%' THEN 1.1
-              WHEN m.display_name ILIKE $1 || '%' THEN 1.05
-              WHEN m.nip05 ILIKE $1 || '%' THEN 1.0
-              -- Contains matches (lower priority)
-              WHEN m.name ILIKE '%' || $1 || '%' THEN 0.9
-              WHEN m.display_name ILIKE '%' || $1 || '%' THEN 0.8
-              WHEN m.nip05 ILIKE '%' || $1 || '%' THEN 0.7
-              ELSE 0.0
-            END AS text_score,
+            ${textScoreCase} AS text_score,
             -- Exact match flag
             CASE
-              WHEN LOWER(m.name) = LOWER($1) OR LOWER(m.display_name) = LOWER($1) THEN true
+              WHEN LOWER(m.name) = LOWER($1)
+                OR LOWER(m.display_name) = LOWER($1)
+                OR LOWER(m.nip05) = LOWER($1)
+                OR LOWER(m.lud16) = LOWER($1) THEN true
               ELSE false
             END AS is_exact_match,
             -- Social distance score (exponential decay matching TrustCalculator)
-            CASE
-              WHEN d.distance <= 1 THEN 1.0
-              WHEN d.distance = 1000 THEN 0.0
-              ELSE exp(-$3 * d.distance)
-            END AS distance_score,
+            ${distanceScoreCase} AS distance_score,
             d.distance,
             -- Validation score (average of all metrics for this pubkey)
             COALESCE(v.avg_validation, 0.5) AS validation_score,
             v.validation_count,
             -- Pre-rank score: combines distance, validation, and text relevance
-            -- Formula mirrors trust calculation: (0.5×distance + 0.5×validation) × text_relevance
+            -- Formula favors graph proximity slightly more than validation for search ranking.
             (
-              (0.5 * CASE
-                WHEN d.distance <= 1 THEN 1.0
-                WHEN d.distance = 1000 THEN 0.0
-                ELSE exp(-$3 * d.distance)
-              END +
-                0.5 * COALESCE(v.avg_validation, 0.5)) *
-              CASE
-                WHEN LOWER(m.name) = LOWER($1) THEN 1.4
-                WHEN LOWER(m.display_name) = LOWER($1) THEN 1.3
-                WHEN LOWER(m.nip05) = LOWER($1) THEN 1.2
-                WHEN m.name ILIKE $1 || '%' THEN 1.1
-                WHEN m.display_name ILIKE $1 || '%' THEN 1.05
-                WHEN m.nip05 ILIKE $1 || '%' THEN 1.0
-                WHEN m.name ILIKE '%' || $1 || '%' THEN 0.9
-                WHEN m.display_name ILIKE '%' || $1 || '%' THEN 0.8
-                WHEN m.nip05 ILIKE '%' || $1 || '%' THEN 0.7
-                ELSE 0.0
-              END
+              (${SEARCH_DISTANCE_WEIGHT} * ${distanceScoreCase} +
+                ${SEARCH_VALIDATION_WEIGHT} * COALESCE(v.avg_validation, 0.5)) *
+              ${textScoreCase}
             ) AS pre_rank_score
           FROM pubkey_metadata m
           LEFT JOIN nsd_root_distances d ON m.pubkey = d.pubkey
@@ -301,11 +309,13 @@ export class MetadataRepository {
             GROUP BY pubkey
            ) v ON m.pubkey = v.pubkey
            WHERE
-            m.created_at > $4 AND (
-            m.name ILIKE '%' || $1 || '%' OR
-            m.display_name ILIKE '%' || $1 || '%' OR
-            m.nip05 ILIKE '%' || $1 || '%'
-            )
+             m.created_at > $4 AND (
+             m.name ILIKE '%' || $1 || '%' OR
+             m.display_name ILIKE '%' || $1 || '%' OR
+             m.nip05 ILIKE '%' || $1 || '%' OR
+             m.lud16 ILIKE '%' || $1 || '%' OR
+             m.about ILIKE '%' || $1 || '%'
+             )
         )
         SELECT
           pubkey,

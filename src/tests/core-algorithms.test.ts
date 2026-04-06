@@ -131,8 +131,10 @@ describe("TrustCalculator - Score Calculation", () => {
       distance,
     );
 
-    // Verify formula: Score = distanceWeight * normalizedDistance + Σ(wᵢ × vᵢ)
+    // Verify formula: Score = distanceWeight * normalizedDistance +
+    // (1 - distanceWeight) * Σ(wᵢ × vᵢ)
     const normalizedDistance = Math.exp(-testConfig.decayFactor * distance);
+    const pluginBudget = 1 - DEFAULT_DISTANCE_WEIGHT;
 
     let weightedSum = DEFAULT_DISTANCE_WEIGHT * normalizedDistance;
     for (const [metricName, metricValue] of Object.entries(
@@ -140,7 +142,7 @@ describe("TrustCalculator - Score Calculation", () => {
     )) {
       const w = testWeights[metricName];
       if (w !== undefined) {
-        weightedSum += w * (metricValue ?? 0);
+        weightedSum += pluginBudget * w * (metricValue ?? 0);
       }
     }
 
@@ -231,6 +233,29 @@ describe("TrustCalculator - Score Calculation", () => {
       1000,
     );
     expect(result.score).toBe(0);
+  });
+
+  test("should cap plugin contribution to the non-distance score budget", () => {
+    const fullMetrics: ProfileMetrics = {
+      pubkey:
+        "00000000000000000000000000000000000000000000000000000000000000aa",
+      metrics: {
+        "npub1test:plugin_a": 1,
+        "npub1test:plugin_b": 1,
+        "npub1test:plugin_c": 1,
+      },
+      computedAt: nowSeconds(),
+      expiresAt: nowSeconds() + 1000,
+    };
+
+    const result = calculator.calculate(
+      "00000000000000000000000000000000000000000000000000000000000000ab",
+      "00000000000000000000000000000000000000000000000000000000000000ac",
+      fullMetrics,
+      0,
+    );
+
+    expect(result.score).toBe(0.75);
   });
 });
 

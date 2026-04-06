@@ -93,6 +93,7 @@ export async function startMCPServer(): Promise<void> {
       relayHandler: config.serverRelays,
       injectClientPubkey: true,
       isPublicServer: config.isPublicServer,
+      oversizedTransfer: { enabled: false },
       serverInfo: {
         name: config.serverName,
         about: config.serverAbout,
