@@ -1,0 +1,26 @@
+{
+  "kind": 765,
+  "pubkey": "750682303c9f0ddad75941b49edc9d46e3ed306b9ee3335338a21a3e404c5fa3",
+  "created_at": 1760000000,
+  "tags": [
+    [
+      "n",
+      "graph_root_inner_circle_inbound_ratio"
+    ],
+    [
+      "relatr-version",
+      "^0.2.0"
+    ],
+    [
+      "title",
+      "Root inner-circle inbound ratio"
+    ],
+    [
+      "description",
+      "Scores higher when a larger share of the target pubkey's inbound followers are distance-1 pubkeys from the root graph."
+    ]
+  ],
+  "content": "plan\n  histogram = do 'graph.degree_histogram' {pubkey: _.targetPubkey}\nin\nlet\n  h = histogram | {},\n  inbound = fetch(h, .inDistanceHistogram) | {},\n  inner = fetch(inbound, .\"1\") | 0,\n  total = fetch(h, .inDegree) | 0,\n  ratio = if total > 0 then inner / total else 0\nin\nif total < 3 then 0.0\nelse if ratio < 0.1 then 0.25\nelse if ratio < 0.25 then 0.5\nelse if ratio < 0.5 then 0.75\nelse 1.0\n",
+  "id": "f8c5c2dfb2d1a78cf2c7f6a897c4df2e2f62ed1f31fd50c0a8a5be9f0b7dd111",
+  "sig": "PLACEHOLDER_SIG"
+}

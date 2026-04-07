@@ -3,10 +3,23 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { nip19 } from "nostr-tools";
 
+import { runCli as invokeCli, type CliRuntime } from "../../src/cli";
+
 const tmpPaths: string[] = [];
+
+const cliPath = fileURLToPath(new URL("../../src/cli.ts", import.meta.url));
+const bunPath = Bun.which("bun") ?? process.execPath;
+const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+
+class CliExit extends Error {
+  constructor(readonly code: number) {
+    super(`CLI exited with code ${code}`);
+  }
+}
 
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "relo-cli-test-"));
@@ -18,24 +31,53 @@ async function runCli(
   args: string[],
   options: { stdin?: string; cwd?: string } = {},
 ) {
-  const proc = Bun.spawn(
-    ["/usr/bin/env", "bun", "run", "src/bin.ts", ...args],
-    {
-      cwd: options.cwd ?? join(process.cwd(), "relo"),
-      stdin: options.stdin ? "pipe" : "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
+  if (options.stdin !== undefined) {
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    let exitCode = 0;
 
-  if (options.stdin) {
-    if (!proc.stdin) {
-      throw new Error("Expected stdin pipe to be available");
+    const runtime: CliRuntime = {
+      stdinText: options.stdin,
+      stdout: {
+        write(message: string) {
+          stdoutChunks.push(message);
+        },
+      },
+      stderr: {
+        write(message: string) {
+          stderrChunks.push(message);
+        },
+      },
+      exit(code: number): never {
+        exitCode = code;
+        throw new CliExit(code);
+      },
+    };
+
+    const originalCwd = process.cwd();
+    process.chdir(options.cwd ?? workspaceRoot);
+    try {
+      await invokeCli(args, runtime);
+    } catch (error) {
+      if (!(error instanceof CliExit)) {
+        throw error;
+      }
+    } finally {
+      process.chdir(originalCwd);
     }
 
-    await proc.stdin.write(new TextEncoder().encode(options.stdin));
-    await proc.stdin.end();
+    return {
+      stdout: stdoutChunks.join(""),
+      stderr: stderrChunks.join(""),
+      exitCode,
+    };
   }
+
+  const proc = Bun.spawn([bunPath, cliPath, ...args], {
+    cwd: options.cwd ?? workspaceRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -43,7 +85,11 @@ async function runCli(
     proc.exited,
   ]);
 
-  return { stdout, stderr, exitCode };
+  return {
+    stdout,
+    stderr,
+    exitCode,
+  };
 }
 
 afterEach(async () => {
@@ -127,7 +173,7 @@ describe("relo cli end-to-end", () => {
         "--out",
         outPath,
       ],
-      { cwd: join(process.cwd(), "relo") },
+      { cwd: process.cwd() },
     );
 
     expect(result.exitCode).toBe(0);
@@ -144,10 +190,7 @@ describe("relo cli end-to-end", () => {
   });
 
   it("preserves manifest metadata from existing event json during build", async () => {
-    const result = await runCli([
-      "build",
-      "../test-plugins/activity_notes.json",
-    ]);
+    const result = await runCli(["build", "test-plugins/activity_notes.json"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
@@ -275,7 +318,7 @@ describe("relo cli end-to-end", () => {
   it("shows actionable usage when publish is missing relay arguments", async () => {
     const result = await runCli([
       "publish",
-      "../test-plugins/activity_notes.json",
+      "test-plugins/activity_notes.json",
     ]);
 
     expect(result.exitCode).toBe(1);

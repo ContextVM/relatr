@@ -19,6 +19,7 @@ const EXPECTED_RELATR_CAPABILITY_NAMES = [
   "graph.distance_between",
   "graph.users_within_distance",
   "graph.degree",
+  "graph.degree_histogram",
   "http.nip05_resolve",
 ] as const;
 
@@ -85,6 +86,9 @@ describe("relo capability catalog", () => {
       "graph.users_within_distance",
     );
     expect(RELATR_CAPABILITIES.graphDegree).toBe("graph.degree");
+    expect(RELATR_CAPABILITIES.graphDegreeHistogram).toBe(
+      "graph.degree_histogram",
+    );
     expect(RELATR_CAPABILITIES.httpNip05Resolve).toBe("http.nip05_resolve");
 
     expect(Object.values(RELATR_CAPABILITIES)).toEqual([

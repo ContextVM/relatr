@@ -48,6 +48,7 @@ export type BuildRelatrArtifactOptions = {
   manifest?: Partial<RelatrManifest>;
   pubkey?: string;
   createdAt?: number;
+  keepCreatedAt?: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -287,7 +288,7 @@ export function buildRelatrPluginEvent(
     pubkey: options.pubkey ?? baseEvent?.pubkey ?? ZERO_PUBKEY,
     created_at:
       options.createdAt ??
-      baseEvent?.created_at ??
+      (options.keepCreatedAt ? baseEvent?.created_at : undefined) ??
       Math.floor(Date.now() / 1000),
     tags: [
       ...buildRelatrManifestTags(mergedManifest),

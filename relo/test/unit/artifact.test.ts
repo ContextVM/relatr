@@ -126,6 +126,42 @@ describe("relo artifact helpers", () => {
     expect(stringifyRelatrPluginEvent(event)).toContain('"kind": 765');
   });
 
+  it("refreshes created_at by default when rebuilding an existing event", () => {
+    const event = buildRelatrPluginEvent({
+      event: {
+        kind: RELATR_PLUGIN_KIND,
+        pubkey: ZERO_PUBKEY,
+        created_at: 1760000000,
+        tags: [
+          ["n", "activity_notes"],
+          ["relatr-version", "^0.1.16"],
+        ],
+        content: "plan\n  value = 0\nin\nvalue\n",
+      },
+      createdAt: 1760000001,
+    });
+
+    expect(event.created_at).toBe(1760000001);
+  });
+
+  it("preserves created_at when keepCreatedAt is enabled", () => {
+    const event = buildRelatrPluginEvent({
+      event: {
+        kind: RELATR_PLUGIN_KIND,
+        pubkey: ZERO_PUBKEY,
+        created_at: 1760000000,
+        tags: [
+          ["n", "activity_notes"],
+          ["relatr-version", "^0.1.16"],
+        ],
+        content: "plan\n  value = 0\nin\nvalue\n",
+      },
+      keepCreatedAt: true,
+    });
+
+    expect(event.created_at).toBe(1760000000);
+  });
+
   it("reports manifest validation issues", () => {
     const result = validateRelatrManifest({
       name: "Bad Name",

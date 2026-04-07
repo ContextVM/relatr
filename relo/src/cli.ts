@@ -52,6 +52,25 @@ type CommandHelp = {
   flags: string[];
 };
 
+export type CliRuntime = {
+  stdinText?: string;
+  stdout: { write(message: string): void };
+  stderr: { write(message: string): void };
+  exit(code: number): never;
+};
+
+function defaultExit(code: number): never {
+  process.exit(code);
+}
+
+function defaultRuntime(): CliRuntime {
+  return {
+    stdout: process.stdout,
+    stderr: process.stderr,
+    exit: defaultExit,
+  };
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
   const [commandCandidate, ...rest] = argv;
   const command =
@@ -114,7 +133,15 @@ function hasFlag(args: ParsedArgs, name: string): boolean {
   return args.flags.has(name);
 }
 
-async function readStdin(): Promise<string> {
+function shouldKeepCreatedAt(args: ParsedArgs): boolean {
+  return hasFlag(args, "keep-created-at");
+}
+
+async function readStdin(runtime: CliRuntime): Promise<string> {
+  if (runtime.stdinText !== undefined) {
+    return runtime.stdinText;
+  }
+
   if (process.stdin.isTTY) {
     return "";
   }
@@ -127,8 +154,11 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function resolveInputText(args: ParsedArgs): Promise<string> {
-  const stdin = await readStdin();
+async function resolveInputText(
+  args: ParsedArgs,
+  runtime: CliRuntime,
+): Promise<string> {
+  const stdin = await readStdin(runtime);
   if (stdin.trim().length > 0) {
     return stdin;
   }
@@ -248,6 +278,7 @@ async function signRelatrPluginEventWithArgs(
   args: ParsedArgs,
   command: Extract<CommandName, "build" | "publish">,
   json: boolean,
+  runtime: CliRuntime,
 ): Promise<RelatrPluginEvent> {
   const secret = getLastFlagValue(args, "sec");
   const bunker =
@@ -258,6 +289,7 @@ async function signRelatrPluginEventWithArgs(
       command,
       "Choose only one signing method: --sec or --bunker/--remote",
       json,
+      runtime,
       [
         "Use --sec <hex|nsec> for local signing, or --bunker <nostrconnect://...|bunker://...|name@domain> for NIP-46 signing.",
       ],
@@ -272,7 +304,7 @@ async function signRelatrPluginEventWithArgs(
     try {
       return await signRelatrPluginEventRemotely(event, bunker);
     } catch (error) {
-      failWithUsage(command, "Remote signing failed", json, [
+      failWithUsage(command, "Remote signing failed", json, runtime, [
         error instanceof Error ? error.message : String(error),
       ]);
     }
@@ -299,6 +331,7 @@ function commandHelp(command: CommandName): CommandHelp {
           "--title <text>             Optional manifest title",
           "--description <text>       Optional manifest description",
           "--weight <number>          Optional manifest weight",
+          "--keep-created-at          Preserve existing created_at when rebuilding an event",
           "--sec <hex|nsec>           Sign the built event",
           "--bunker <connection>      Sign the built event via NIP-46 remote signer",
           "--remote <connection>      Alias for --bunker",
@@ -306,9 +339,9 @@ function commandHelp(command: CommandName): CommandHelp {
           "--json                     Emit a JSON success/failure report",
         ],
         examples: [
-          "relo build plugin.elo --name activity_notes --relatr-version ^0.1.16",
-          "relo build plugin.elo --name activity_notes --relatr-version ^0.1.16 --bunker bunker://<pubkey>?relay=wss://relay.example",
-          "cat plugin.elo | relo build --name activity_notes --relatr-version ^0.1.16 --out plugin.json",
+          "relo build plugin.elo --name activity_notes --relatr-version ^0.2.0",
+          "relo build plugin.elo --name activity_notes --relatr-version ^0.2.0 --bunker bunker://<pubkey>?relay=wss://relay.example",
+          "cat plugin.elo | relo build --name activity_notes --relatr-version ^0.2.0 --out plugin.json",
         ],
       };
     case "check":
@@ -337,13 +370,14 @@ function commandHelp(command: CommandName): CommandHelp {
           "--title <text>             Optional manifest title",
           "--description <text>       Optional manifest description",
           "--weight <number>          Optional manifest weight",
+          "--keep-created-at          Preserve existing created_at when publishing an event",
           "--dry-run                  Validate and sign without publishing",
           "--json                     Emit a JSON success/failure report",
         ],
         examples: [
           "relo publish plugin.json --relay ws://localhost:10547",
           "relo publish plugin.json --relay ws://localhost:10547 --bunker bunker://<pubkey>?relay=wss://relay.example",
-          "cat plugin.elo | relo publish --relay ws://localhost:10547 --name activity_notes --relatr-version ^0.1.16 --sec <hex>",
+          "cat plugin.elo | relo publish --relay ws://localhost:10547 --name activity_notes --relatr-version ^0.2.0 --sec <hex>",
         ],
       };
   }
@@ -368,22 +402,26 @@ function failWithUsage(
   command: CommandName,
   message: string,
   json: boolean,
+  runtime: CliRuntime,
   errors?: string[],
 ): never {
   if (json) {
-    reportJson({
-      ok: false,
-      command,
-      message,
-      errors,
-    });
+    reportJson(
+      {
+        ok: false,
+        command,
+        message,
+        errors,
+      },
+      runtime,
+    );
   }
 
-  process.stderr.write(`${message}\n\n${formatCommandHelp(command)}\n`);
+  runtime.stderr.write(`${message}\n\n${formatCommandHelp(command)}\n`);
   if (errors && errors.length > 0) {
-    process.stderr.write(`\n${formatErrors(errors)}\n`);
+    runtime.stderr.write(`\n${formatErrors(errors)}\n`);
   }
-  process.exit(1);
+  runtime.exit(1);
 }
 
 function isSuccessfulPublishResult(
@@ -431,63 +469,74 @@ function manifestFromArgs(args: ParsedArgs): Partial<RelatrManifest> {
   return manifest;
 }
 
-function reportJson(report: JsonReport): never {
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  process.exit(report.ok ? 0 : 1);
+function reportJson(report: JsonReport, runtime: CliRuntime): never {
+  runtime.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  runtime.exit(report.ok ? 0 : 1);
 }
 
 function fail(
   command: CommandName,
   message: string,
   json: boolean,
+  runtime: CliRuntime,
   errors?: string[],
 ): never {
   if (json) {
-    reportJson({
-      ok: false,
-      command,
-      message,
-      errors,
-    });
+    reportJson(
+      {
+        ok: false,
+        command,
+        message,
+        errors,
+      },
+      runtime,
+    );
   }
 
-  process.stderr.write(`${message}\n`);
+  runtime.stderr.write(`${message}\n`);
   if (errors && errors.length > 0) {
-    process.stderr.write(`${formatErrors(errors)}\n`);
+    runtime.stderr.write(`${formatErrors(errors)}\n`);
   }
-  process.exit(1);
+  runtime.exit(1);
 }
 
 async function writeMaybeToFile(
   args: ParsedArgs,
   content: string,
+  runtime: CliRuntime,
 ): Promise<void> {
   const outPath = getLastFlagValue(args, "out");
   if (!outPath) {
-    process.stdout.write(content);
+    runtime.stdout.write(content);
     return;
   }
 
   await writeFile(outPath, content, "utf8");
 }
 
-async function buildCommand(args: ParsedArgs): Promise<void> {
-  const rawInput = await resolveInputText(args);
+async function buildCommand(
+  args: ParsedArgs,
+  runtime: CliRuntime,
+): Promise<void> {
+  const rawInput = await resolveInputText(args, runtime);
   const json = hasFlag(args, "json");
   const manifest = manifestFromArgs(args);
+  const keepCreatedAt = shouldKeepCreatedAt(args);
   const input = rawInput.trim() ? classifyRelatrArtifactInput(rawInput) : null;
   const event =
     input?.kind === "event"
-      ? buildRelatrPluginEvent({ event: input.event, manifest })
+      ? buildRelatrPluginEvent({ event: input.event, manifest, keepCreatedAt })
       : buildRelatrPluginEvent({
           source: input?.kind === "source" ? input.source : undefined,
           manifest,
+          keepCreatedAt,
         });
   const finalEvent = await signRelatrPluginEventWithArgs(
     event,
     args,
     "build",
     json,
+    runtime,
   );
   const validation = validateRelatrPluginEvent(finalEvent);
 
@@ -496,24 +545,28 @@ async function buildCommand(args: ParsedArgs): Promise<void> {
       "build",
       "Build failed validation",
       json,
+      runtime,
       validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
     );
   }
 
   const output = stringifyRelatrPluginEvent(finalEvent);
-  await writeMaybeToFile(args, output);
+  await writeMaybeToFile(args, output, runtime);
 
   if (json) {
-    reportJson({ ok: true, command: "build", event: finalEvent });
+    reportJson({ ok: true, command: "build", event: finalEvent }, runtime);
   }
 }
 
-async function checkCommand(args: ParsedArgs): Promise<void> {
-  const rawInput = await resolveInputText(args);
+async function checkCommand(
+  args: ParsedArgs,
+  runtime: CliRuntime,
+): Promise<void> {
+  const rawInput = await resolveInputText(args, runtime);
   const json = hasFlag(args, "json");
 
   if (!rawInput.trim()) {
-    failWithUsage("check", "No input provided", json, [
+    failWithUsage("check", "No input provided", json, runtime, [
       "Pass a file path as the positional input or pipe content on stdin.",
     ]);
   }
@@ -526,15 +579,18 @@ async function checkCommand(args: ParsedArgs): Promise<void> {
   const validation = validateRelatrPluginEvent(event);
 
   if (json) {
-    reportJson({
-      ok: validation.ok,
-      command: "check",
-      inputKind: input.kind,
-      event,
-      errors: validation.issues.map(
-        (issue) => `${issue.path}: ${issue.message}`,
-      ),
-    });
+    reportJson(
+      {
+        ok: validation.ok,
+        command: "check",
+        inputKind: input.kind,
+        event,
+        errors: validation.issues.map(
+          (issue) => `${issue.path}: ${issue.message}`,
+        ),
+      },
+      runtime,
+    );
   }
 
   if (!validation.ok) {
@@ -542,27 +598,38 @@ async function checkCommand(args: ParsedArgs): Promise<void> {
       "check",
       "Validation failed",
       false,
+      runtime,
       validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
     );
   }
 
-  process.stdout.write(`valid ${input.kind}\n`);
+  runtime.stdout.write(`valid ${input.kind}\n`);
 }
 
-async function publishCommand(args: ParsedArgs): Promise<void> {
-  const rawInput = await resolveInputText(args);
+async function publishCommand(
+  args: ParsedArgs,
+  runtime: CliRuntime,
+): Promise<void> {
+  const rawInput = await resolveInputText(args, runtime);
   const json = hasFlag(args, "json");
   const relays = getAllFlagValues(args, "relay");
   const manifest = manifestFromArgs(args);
+  const keepCreatedAt = shouldKeepCreatedAt(args);
 
   if (relays.length === 0) {
-    failWithUsage("publish", "At least one --relay value is required", json, [
-      "Repeat --relay for each target relay, for example: --relay ws://localhost:10547",
-    ]);
+    failWithUsage(
+      "publish",
+      "At least one --relay value is required",
+      json,
+      runtime,
+      [
+        "Repeat --relay for each target relay, for example: --relay ws://localhost:10547",
+      ],
+    );
   }
 
   if (!rawInput.trim()) {
-    failWithUsage("publish", "No input provided", json, [
+    failWithUsage("publish", "No input provided", json, runtime, [
       "Pass a file path as the positional input or pipe content on stdin.",
     ]);
   }
@@ -570,8 +637,12 @@ async function publishCommand(args: ParsedArgs): Promise<void> {
   const input = classifyRelatrArtifactInput(rawInput);
   let event =
     input.kind === "event"
-      ? buildRelatrPluginEvent({ event: input.event, manifest })
-      : buildRelatrPluginEvent({ source: input.source, manifest });
+      ? buildRelatrPluginEvent({ event: input.event, manifest, keepCreatedAt })
+      : buildRelatrPluginEvent({
+          source: input.source,
+          manifest,
+          keepCreatedAt,
+        });
 
   if (!event.id || !event.sig) {
     const secret = getLastFlagValue(args, "sec");
@@ -583,21 +654,28 @@ async function publishCommand(args: ParsedArgs): Promise<void> {
         "publish",
         "Unsigned events require --sec or --bunker for publishing",
         json,
+        runtime,
         [
           "Provide --sec <hex|nsec> for local signing, or --bunker <nostrconnect://...|bunker://...|name@domain> for remote signing.",
         ],
       );
     }
 
-    event = await signRelatrPluginEventWithArgs(event, args, "publish", json);
+    event = await signRelatrPluginEventWithArgs(
+      event,
+      args,
+      "publish",
+      json,
+      runtime,
+    );
   }
 
   if (!isRelatrPluginEvent(event) || !isSignedRelatrPluginEvent(event)) {
-    fail("publish", "Signed event verification failed", json);
+    fail("publish", "Signed event verification failed", json, runtime);
   }
 
   if (!verifyEvent(event)) {
-    fail("publish", "Signed event verification failed", json);
+    fail("publish", "Signed event verification failed", json, runtime);
   }
 
   const validation = validateRelatrPluginEvent(event);
@@ -606,6 +684,7 @@ async function publishCommand(args: ParsedArgs): Promise<void> {
       "publish",
       "Publish input failed validation",
       json,
+      runtime,
       validation.issues.map((issue) => `${issue.path}: ${issue.message}`),
     );
   }
@@ -613,15 +692,18 @@ async function publishCommand(args: ParsedArgs): Promise<void> {
   const dryRun = hasFlag(args, "dry-run");
   if (dryRun) {
     if (json) {
-      reportJson({
-        ok: true,
-        command: "publish",
-        event,
-        publish: { relays, eventId: event.id, dryRun: true },
-      });
+      reportJson(
+        {
+          ok: true,
+          command: "publish",
+          event,
+          publish: { relays, eventId: event.id, dryRun: true },
+        },
+        runtime,
+      );
     }
 
-    process.stdout.write(`dry-run ${event.id}\n`);
+    runtime.stdout.write(`dry-run ${event.id}\n`);
     return;
   }
 
@@ -636,6 +718,7 @@ async function publishCommand(args: ParsedArgs): Promise<void> {
         "publish",
         "Failed to publish event to any relay",
         json,
+        runtime,
         relayResults.map((result, index) => {
           const relay = relays[index] ?? "unknown-relay";
           if (result.status === "rejected") {
@@ -651,15 +734,18 @@ async function publishCommand(args: ParsedArgs): Promise<void> {
   }
 
   if (json) {
-    reportJson({
-      ok: true,
-      command: "publish",
-      event,
-      publish: { relays, eventId: event.id, dryRun: false },
-    });
+    reportJson(
+      {
+        ok: true,
+        command: "publish",
+        event,
+        publish: { relays, eventId: event.id, dryRun: false },
+      },
+      runtime,
+    );
   }
 
-  process.stdout.write(`published ${event.id}\n`);
+  runtime.stdout.write(`published ${event.id}\n`);
 }
 
 function usage(): string {
@@ -672,7 +758,7 @@ function usage(): string {
     "  publish  Publish a signed plugin event to relays",
     "",
     "Examples:",
-    "  relo build plugin.elo --name activity_notes --relatr-version ^0.1.16",
+    "  relo build plugin.elo --name activity_notes --relatr-version ^0.2.0",
     "  relo check plugin.json",
     "  relo publish plugin.json --relay ws://localhost:10547",
     "  relo publish plugin.json --relay ws://localhost:10547 --bunker bunker://<pubkey>?relay=wss://relay.example",
@@ -683,33 +769,34 @@ function usage(): string {
 
 export async function runCli(
   argv: string[] = process.argv.slice(2),
+  runtime: CliRuntime = defaultRuntime(),
 ): Promise<void> {
   const args = parseArgs(argv);
 
   if (!args.command && (argv.includes("--help") || argv.includes("-h"))) {
-    process.stdout.write(`${usage()}\n`);
-    process.exit(0);
+    runtime.stdout.write(`${usage()}\n`);
+    runtime.exit(0);
   }
 
   if (!args.command) {
-    process.stderr.write(`${usage()}\n`);
-    process.exit(1);
+    runtime.stderr.write(`${usage()}\n`);
+    runtime.exit(1);
   }
 
   if (hasFlag(args, "help") || hasFlag(args, "h")) {
-    process.stdout.write(`${formatCommandHelp(args.command)}\n`);
-    process.exit(0);
+    runtime.stdout.write(`${formatCommandHelp(args.command)}\n`);
+    runtime.exit(0);
   }
 
   switch (args.command) {
     case "build":
-      await buildCommand(args);
+      await buildCommand(args, runtime);
       return;
     case "check":
-      await checkCommand(args);
+      await checkCommand(args, runtime);
       return;
     case "publish":
-      await publishCommand(args);
+      await publishCommand(args, runtime);
       return;
   }
 }

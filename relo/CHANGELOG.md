@@ -1,5 +1,11 @@
 # relo
 
+## 0.1.5
+
+### Patch Changes
+
+- feat(cli): add --keep-created-at flag to preserve event timestamp when rebuilding
+
 ## 0.1.4
 
 ### Patch Changes

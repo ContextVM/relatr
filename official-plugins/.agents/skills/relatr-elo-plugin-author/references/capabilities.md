@@ -20,6 +20,7 @@ Graph capabilities use object-shaped arguments with exact field names.
 | `graph.distance_from_root` | `{pubkey}` | `number` | `1000` |
 | `graph.distance_between` | `{sourcePubkey, targetPubkey}` | `number` | `1000` |
 | `graph.degree` | `{pubkey}` | `{outDegree, inDegree}` | `{outDegree: 0, inDegree: 0}` |
+| `graph.degree_histogram` | `{pubkey}` | `{outDegree, inDegree, outDistanceHistogram, inDistanceHistogram}` | `{outDegree: 0, inDegree: 0, outDistanceHistogram: {}, inDistanceHistogram: {}}` |
 | `graph.users_within_distance` | `{distance}` | `string[]` | `[]` |
 
 ## Invocation patterns
@@ -56,6 +57,20 @@ else if outDegree >= 10 then 0.2
 else 0.0
 ```
 
+```elo
+plan histogram = do 'graph.degree_histogram' {pubkey: _.targetPubkey} in
+let
+  h = histogram | {},
+  outbound = fetch(h, .outDistanceHistogram) | {},
+  inbound = fetch(h, .inDistanceHistogram) | {},
+  reachableOutbound1 = fetch(outbound, ."1") | 0,
+  reachableInbound1 = fetch(inbound, ."1") | 0
+in
+if reachableInbound1 >= 20 then 1.0
+else if reachableOutbound1 >= 10 then 0.5
+else 0.0
+```
+
 ## Safe result handling
 
 - lists: `events | []`
@@ -63,6 +78,7 @@ else 0.0
 - optional fields: `fetch(obj, .field) | null`
 - booleans: compare with `== true`
 - degree objects: use `fetch(obj, .outDegree) | 0` and `fetch(obj, .inDegree) | 0`
+- histogram objects: use `fetch(obj, .outDistanceHistogram) | {}` and string distance keys such as `fetch(hist, ."1") | 0`
 - distances: treat `1000` as effectively unreachable
 
 ## Capability notes
@@ -82,6 +98,7 @@ else 0.0
 
 - always pass the documented object shape
 - guard `_.sourcePubkey` before relationship checks when source context may be absent
+- [`graph.degree_histogram`](relo/src/catalog.ts:179) returns root-aware neighbor histograms keyed by distance as strings when accessed from Elo, so use `fetch(hist, ."1") | 0` rather than assuming array-style indexing
 
 ## Authority
 
