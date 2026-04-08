@@ -1,5 +1,11 @@
 # relatr
 
+## 0.2.8
+
+### Patch Changes
+
+- feat(validation): add force refresh for metric keys when plugin revisions change
+
 ## 0.2.7
 
 ### Patch Changes

@@ -37,7 +37,9 @@ export interface ValidationBatchExecutionContext {
   getMissingExpectedMetricKeys: (
     metrics: Record<string, number>,
     expectedKeys: Set<string>,
+    forceRefreshMetricKeys?: Set<string>,
   ) => string[];
+  forceRefreshMetricKeys?: Set<string>;
 }
 
 export interface ValidationChunkRuntime {
@@ -154,6 +156,7 @@ export async function executeValidationChunk(
     evaluatePubkeyMetrics,
     buildResult,
     getMissingExpectedMetricKeys,
+    forceRefreshMetricKeys,
   } = context;
 
   logger.info(
@@ -183,6 +186,7 @@ export async function executeValidationChunk(
         const missingMetricKeys = getMissingExpectedMetricKeys(
           cached?.metrics ?? {},
           expectedMetricKeys,
+          forceRefreshMetricKeys,
         );
 
         const computedMetrics = batchMetricResults

@@ -24,7 +24,11 @@ export class SchedulerService implements ISchedulerService {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private syncInterval: NodeJS.Timeout | null = null;
   private validationInterval: NodeJS.Timeout | null = null;
-  private validationWarmupQueued = false;
+  private queuedValidationWarmupRequest: {
+    sourcePubkey?: string;
+    metricKeys?: string[];
+    forceRefreshMetricKeys?: string[];
+  } | null = null;
   private validationPipeline: ValidationPipeline;
   private readonly metadataRefreshTracker = new MetadataRefreshTracker();
   private readonly nip05FactRefreshStage: Nip05FactRefreshStage;
@@ -198,31 +202,47 @@ export class SchedulerService implements ISchedulerService {
     batchSize: number = 250,
     sourcePubkey?: string,
     metricKeys?: string[],
+    forceRefreshMetricKeys?: string[],
   ): Promise<void> {
     return this.validationPipeline.scheduleValidationSync(
       batchSize,
       sourcePubkey,
       metricKeys,
+      forceRefreshMetricKeys,
     );
   }
 
-  scheduleValidationWarmup(sourcePubkey?: string, metricKeys?: string[]): void {
-    if (this.validationWarmupQueued) {
-      return;
-    }
-
-    this.validationWarmupQueued = true;
+  scheduleValidationWarmup(
+    sourcePubkey?: string,
+    metricKeys?: string[],
+    forceRefreshMetricKeys?: string[],
+  ): void {
+    this.queuedValidationWarmupRequest = {
+      sourcePubkey,
+      metricKeys: metricKeys ? [...metricKeys] : undefined,
+      forceRefreshMetricKeys: forceRefreshMetricKeys
+        ? [...forceRefreshMetricKeys]
+        : undefined,
+    };
 
     queueMicrotask(() => {
-      this.validationWarmupQueued = false;
-      this.syncValidations(undefined, sourcePubkey, metricKeys).catch(
-        (error) => {
-          logger.error(
-            "Scheduled validation warm-up failed:",
-            error instanceof Error ? error.message : String(error),
-          );
-        },
-      );
+      const queuedRequest = this.queuedValidationWarmupRequest;
+      if (!queuedRequest) {
+        return;
+      }
+
+      this.queuedValidationWarmupRequest = null;
+      this.syncValidations(
+        undefined,
+        queuedRequest.sourcePubkey,
+        queuedRequest.metricKeys,
+        queuedRequest.forceRefreshMetricKeys,
+      ).catch((error) => {
+        logger.error(
+          "Scheduled validation warm-up failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
     });
   }
 

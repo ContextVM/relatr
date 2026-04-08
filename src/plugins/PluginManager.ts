@@ -31,6 +31,7 @@ type WeightOverrideMap = Record<string, number>;
 type PluginLifecycleCallbacks = {
   onValidatorsChanged?: (input?: {
     metricKeys?: string[];
+    forceRefreshMetricKeys?: string[];
   }) => void | Promise<void>;
 };
 
@@ -179,11 +180,14 @@ export class PluginManager {
       const event = await this.resolveInstallEvent(input);
       const plugin = this.toPortablePlugin(event);
       const key = pluginKeyOf(plugin);
+      const state = await this.readState();
+      const previousPlugin = state.installed[key];
+      const forceRefreshMetricKeys =
+        previousPlugin && previousPlugin.id !== plugin.id ? [key] : undefined;
 
       await this.persistPluginArtifact(plugin, key);
       logger.info(`📥 Installing plugin: ${key}`);
 
-      const state = await this.readState();
       state.installed[key] = plugin;
       if (state.enabled[key] === undefined) {
         state.enabled[key] = input.enable === true;
@@ -225,7 +229,7 @@ export class PluginManager {
         logger.info(
           `🚀 Plugin ${key} installed and enabled, triggering validation warm-up`,
         );
-        this.triggerValidatorWarmup([key]);
+        this.triggerValidatorWarmup([key], forceRefreshMetricKeys);
       } else {
         logger.info(`✅ Plugin ${key} installed (disabled)`);
       }
@@ -915,14 +919,19 @@ export class PluginManager {
     );
   }
 
-  private triggerValidatorWarmup(metricKeys?: string[]): void {
+  private triggerValidatorWarmup(
+    metricKeys?: string[],
+    forceRefreshMetricKeys?: string[],
+  ): void {
     const onValidatorsChanged = this.callbacks.onValidatorsChanged;
     if (!onValidatorsChanged) {
       return;
     }
 
     queueMicrotask(() => {
-      Promise.resolve(onValidatorsChanged({ metricKeys })).catch((error) => {
+      Promise.resolve(
+        onValidatorsChanged({ metricKeys, forceRefreshMetricKeys }),
+      ).catch((error) => {
         logger.warn(
           "Plugin validator warm-up trigger failed:",
           error instanceof Error ? error.message : String(error),

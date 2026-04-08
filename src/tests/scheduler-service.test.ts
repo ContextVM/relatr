@@ -591,4 +591,62 @@ describe("SchedulerService validation sync", () => {
     secondRunGate.resolve();
     await Promise.resolve();
   });
+
+  test("scheduleValidationWarmup preserves the latest same-tick metric and force-refresh scopes", async () => {
+    const seenRuns: Array<{
+      metricKeys: string[];
+      forceRefreshMetricKeys: string[];
+    }> = [];
+
+    const scheduler = new SchedulerService(
+      {
+        defaultSourcePubkey: "pk-source",
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        getAllUsersInGraph: async () => ["pk-a"],
+      } as never,
+      {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (
+          _pubkeys: string[],
+          _sourcePubkey?: string,
+          metricKeys?: string[],
+          validationRunContext?: {
+            forceRefreshMetricKeys?: Set<string>;
+          },
+        ) => {
+          seenRuns.push({
+            metricKeys: [...(metricKeys ?? [])],
+            forceRefreshMetricKeys: [
+              ...(validationRunContext?.forceRefreshMetricKeys ?? new Set()),
+            ],
+          });
+          return new Map([["pk-a", mkMetrics("pk-a", { "pk:plugin_a": 1 })]]);
+        },
+      } as never,
+      mkMetadataRepository() as never,
+      {
+        fetchMetadata: async () => ({
+          success: true,
+          message: "ok",
+          profilesFetched: 1,
+        }),
+      } as never,
+      mkSettingsRepository() as never,
+      {} as never,
+      {} as never,
+    );
+
+    scheduler.scheduleValidationWarmup(undefined, ["pk:first"], ["pk:first"]);
+    scheduler.scheduleValidationWarmup(undefined, ["pk:second"], ["pk:second"]);
+    await waitFor(() => seenRuns.length === 1);
+
+    expect(seenRuns).toEqual([
+      {
+        metricKeys: ["pk:second"],
+        forceRefreshMetricKeys: ["pk:second"],
+      },
+    ]);
+  });
 });

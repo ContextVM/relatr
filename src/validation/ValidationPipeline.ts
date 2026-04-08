@@ -54,6 +54,7 @@ interface QueuedValidationSyncRequest {
   batchSize: number;
   sourcePubkey?: string;
   metricKeys?: string[];
+  forceRefreshMetricKeys?: string[];
 }
 
 export class ValidationPipeline {
@@ -67,12 +68,16 @@ export class ValidationPipeline {
     batchSize: number = 250,
     sourcePubkey?: string,
     metricKeys?: string[],
+    forceRefreshMetricKeys?: string[],
   ): Promise<void> {
     if (this.validationRunPromise) {
       this.queuedValidationSyncRequest = {
         batchSize,
         sourcePubkey,
         metricKeys: metricKeys ? [...metricKeys] : undefined,
+        forceRefreshMetricKeys: forceRefreshMetricKeys
+          ? [...forceRefreshMetricKeys]
+          : undefined,
       };
       logger.info(
         "⏳ Validation sync already in progress, queuing follow-up run",
@@ -84,6 +89,7 @@ export class ValidationPipeline {
       batchSize,
       sourcePubkey,
       metricKeys,
+      forceRefreshMetricKeys,
     ).finally(async () => {
       this.validationRunPromise = null;
 
@@ -102,6 +108,7 @@ export class ValidationPipeline {
             queuedRequest.batchSize,
             queuedRequest.sourcePubkey,
             queuedRequest.metricKeys,
+            queuedRequest.forceRefreshMetricKeys,
           ).catch((error) => {
             logger.error(
               "Follow-up validation warm-up failed:",
@@ -125,6 +132,7 @@ export class ValidationPipeline {
     batchSize: number = 250,
     sourcePubkey?: string,
     metricKeys?: string[],
+    forceRefreshMetricKeys?: string[],
   ): Promise<void> {
     logger.info("Starting validation sync...");
 
@@ -174,6 +182,15 @@ export class ValidationPipeline {
       if (metricKeys && metricKeys.length > 0) {
         logger.info(
           `🎯 Narrowing validation sync to ${metricKeys.length} metric keys`,
+        );
+      }
+
+      if (forceRefreshMetricKeys && forceRefreshMetricKeys.length > 0) {
+        validationRunContext.forceRefreshMetricKeys = new Set(
+          forceRefreshMetricKeys,
+        );
+        logger.info(
+          `♻️ Forcing refresh for ${forceRefreshMetricKeys.length} metric keys due to plugin revision changes`,
         );
       }
 

@@ -218,6 +218,7 @@ export class RelatrFactory {
       let scheduleValidationWarmup = (
         _sourcePubkey?: string,
         _metricKeys?: string[],
+        _forceRefreshMetricKeys?: string[],
       ) => {};
 
       const pluginManager = new PluginManager(
@@ -229,7 +230,11 @@ export class RelatrFactory {
         validatedConfig.eloPluginsDir,
         {
           onValidatorsChanged: (input) =>
-            scheduleValidationWarmup(undefined, input?.metricKeys),
+            scheduleValidationWarmup(
+              undefined,
+              input?.metricKeys,
+              input?.forceRefreshMetricKeys,
+            ),
         },
       );
 
@@ -310,7 +315,13 @@ export class RelatrFactory {
       scheduleValidationWarmup = (
         sourcePubkey?: string,
         metricKeys?: string[],
-      ) => schedulerService.scheduleValidationWarmup(sourcePubkey, metricKeys);
+        forceRefreshMetricKeys?: string[],
+      ) =>
+        schedulerService.scheduleValidationWarmup(
+          sourcePubkey,
+          metricKeys,
+          forceRefreshMetricKeys,
+        );
 
       // Update serviceDependencies with the actual schedulerService
       serviceDependencies.schedulerService = schedulerService;

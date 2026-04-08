@@ -1196,6 +1196,103 @@ describe("PluginManager v1 list/runtime", () => {
     expect(warmupMetricKeys).toEqual([[`${signed.pubkey}:warmup-plugin`]]);
   });
 
+  test("installing a new revision of an enabled plugin forces refresh for that metric key", async () => {
+    const store = new Map<string, string>();
+    const settings: Pick<SettingsRepository, "get" | "set"> = {
+      get: async (k: string) => store.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const trust: Pick<TrustCalculator, "setPluginWeights"> = {
+      setPluginWeights: () => {},
+    };
+
+    const sk = generateSecretKey();
+    const eventV1 = finalizeEvent(
+      {
+        kind: 765,
+        created_at: 1_700_000_005,
+        tags: [
+          ["n", "warmup-plugin"],
+          ["relatr-version", `^${HOST_VERSION}`],
+        ],
+        content: "plan x = 1 in 0.5",
+      },
+      sk,
+    );
+    const eventV2 = finalizeEvent(
+      {
+        kind: 765,
+        created_at: 1_700_000_006,
+        tags: [
+          ["n", "warmup-plugin"],
+          ["relatr-version", `^${HOST_VERSION}`],
+        ],
+        content: "plan x = 1 in 0.7",
+      },
+      sk,
+    );
+
+    let nextEvent = eventV1;
+    const pool: Pick<RelayPool, "request"> = {
+      request: () =>
+        new Observable((subscriber) => {
+          subscriber.next(nextEvent);
+          subscriber.complete();
+        }),
+    };
+
+    const engine: Pick<
+      IEloPluginEngine,
+      "getRuntimeState" | "reloadFromPlugins"
+    > = {
+      getRuntimeState: () => ({
+        plugins: [],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      reloadFromPlugins: async () => {},
+    };
+
+    const dir = await mkdtemp(join(tmpdir(), "relatr-plugin-revision-"));
+    const warmups: Array<{
+      metricKeys: string[];
+      forceRefreshMetricKeys: string[];
+    }> = [];
+    const manager = new PluginManager(
+      settings,
+      engine,
+      trust,
+      pool as RelayPool,
+      [],
+      dir,
+      {
+        onValidatorsChanged: (input) => {
+          warmups.push({
+            metricKeys: [...(input?.metricKeys ?? [])],
+            forceRefreshMetricKeys: [...(input?.forceRefreshMetricKeys ?? [])],
+          });
+        },
+      },
+    );
+
+    await manager.install({ eventId: eventV1.id, enable: true });
+    await Promise.resolve();
+
+    nextEvent = eventV2;
+    await manager.install({ eventId: eventV2.id, enable: true });
+    await Promise.resolve();
+
+    const pluginKey = `${eventV1.pubkey}:warmup-plugin`;
+    expect(warmups).toEqual([
+      { metricKeys: [pluginKey], forceRefreshMetricKeys: [] },
+      { metricKeys: [pluginKey], forceRefreshMetricKeys: [pluginKey] },
+    ]);
+  });
+
   test("configure triggers validator warm-up only when enabling a plugin", async () => {
     const store = new Map<string, string>();
     const settings: Pick<SettingsRepository, "get" | "set"> = {

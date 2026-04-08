@@ -1,7 +1,7 @@
 {
   "kind": 765,
   "pubkey": "750682303c9f0ddad75941b49edc9d46e3ed306b9ee3335338a21a3e404c5fa3",
-  "created_at": 1760000000,
+  "created_at": 1775646850,
   "tags": [
     [
       "n",
@@ -20,7 +20,7 @@
       "Scores higher when a larger share of the target pubkey's inbound followers are distance-1 pubkeys from the root graph."
     ]
   ],
-  "content": "plan\n  histogram = do 'graph.degree_histogram' {pubkey: _.targetPubkey}\nin\nlet\n  h = histogram | {},\n  inbound = fetch(h, .inDistanceHistogram) | {},\n  inner = fetch(inbound, .\"1\") | 0,\n  total = fetch(h, .inDegree) | 0,\n  ratio = if total > 0 then inner / total else 0\nin\nif total < 3 then 0.0\nelse if ratio < 0.1 then 0.25\nelse if ratio < 0.25 then 0.5\nelse if ratio < 0.5 then 0.75\nelse 1.0\n",
-  "id": "f8c5c2dfb2d1a78cf2c7f6a897c4df2e2f62ed1f31fd50c0a8a5be9f0b7dd111",
-  "sig": "PLACEHOLDER_SIG"
+  "content": "plan\n  histogram = do 'graph.degree_histogram' {pubkey: _.targetPubkey}\nin\nlet\n  h = histogram | {},\n  inbound = fetch(h, .inDistanceHistogram) | {},\n  inner = fetch(inbound, .1) | 0,\n  total = fetch(h, .inDegree) | 0,\n  ratio = if total > 0 then inner / total else 0,\n  countScore = if inner <= 0 then 0.0\n    else if inner == 1 then 0.35\n    else if inner <= 3 then 0.55\n    else if inner <= 7 then 0.75\n    else 0.9,\n  ratioBonus = if ratio < 0.05 then 0.0\n    else if ratio < 0.15 then 0.05\n    else if ratio < 0.3 then 0.1\n    else if ratio < 0.5 then 0.15\n    else 0.2,\n  confidence = if total <= 0 then 0.0\n    else if total == 1 then 0.7\n    else if total <= 3 then 0.85\n    else 1.0,\n  score = confidence * (countScore + ratioBonus)\nin\nif score > 1.0 then 1.0 else score\n",
+  "id": "38adb4d7d12ae40c3d252021718600638e7ac57e36b892b7a101891c13a905fa",
+  "sig": "af6481634648355c921860d039876ea4133db13acc034934e70427e24152a3d52de2ba53774644e00fa08c72d326366dd1e6adf3b400daefbe539b4040580229"
 }

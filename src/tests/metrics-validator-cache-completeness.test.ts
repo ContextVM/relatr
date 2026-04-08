@@ -166,6 +166,71 @@ describe("MetricsValidator cache completeness", () => {
     expect(result).toBe(cached);
   });
 
+  test("validateAll recomputes forced refresh metric keys even when cache is otherwise complete", async () => {
+    const target = "pk-target";
+    const expectedKeys = ["pk:plugin_a", "pk:plugin_b"];
+    const cached = mkCached(target, {
+      [expectedKeys[0]!]: 0.7,
+      [expectedKeys[1]!]: 0.2,
+    });
+
+    let upsertSubsetCalls = 0;
+    let receivedMetricKeys: string[] | undefined;
+    const repo = {
+      get: async () => cached,
+      save: async () => {},
+      getBatch: async () => new Map<string, ProfileMetrics | null>(),
+      saveBatch: async () => {},
+      upsertMetricSubset: async () => {
+        upsertSubsetCalls++;
+      },
+      upsertMetricSubsetBatch: async () => {},
+    };
+
+    let evaluateCalls = 0;
+    const eloEngine = {
+      getRuntimeState: () => ({
+        plugins: [
+          { pubkey: "pk", manifest: { name: "plugin_a" } },
+          { pubkey: "pk", manifest: { name: "plugin_b" } },
+        ],
+        enabled: {},
+        weightOverrides: {},
+        resolvedWeights: {},
+      }),
+      evaluateForPubkey: async (input: { metricKeys?: string[] }) => {
+        evaluateCalls++;
+        receivedMetricKeys = input.metricKeys;
+        return {
+          [expectedKeys[1]!]: 0.9,
+        };
+      },
+      getMetricDescriptions: () => ({
+        get: () => undefined,
+      }),
+      getResolvedWeights: () => ({}),
+    };
+
+    const validator = new MetricsValidator(
+      {} as never,
+      ["wss://relay.example"],
+      {} as never,
+      repo as never,
+      {} as never,
+      eloEngine as never,
+    );
+
+    const result = await validator.validateAll(target, "pk-source", undefined, {
+      forceRefreshMetricKeys: new Set([expectedKeys[1]!]),
+    });
+
+    expect(evaluateCalls).toBe(1);
+    expect(receivedMetricKeys).toEqual([expectedKeys[1]!]);
+    expect(upsertSubsetCalls).toBe(1);
+    expect(result.metrics[expectedKeys[0]!]).toBe(0.7);
+    expect(result.metrics[expectedKeys[1]!]).toBe(0.9);
+  });
+
   test("validateAll returns default metrics when evaluation throws", async () => {
     const target = "pk-target";
 

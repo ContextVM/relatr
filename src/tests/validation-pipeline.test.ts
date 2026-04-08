@@ -635,6 +635,59 @@ describe("ValidationPipeline", () => {
     await Promise.resolve();
   });
 
+  test("queued follow-up validation sync uses the latest forced refresh scope", async () => {
+    const firstRunGate = deferred<void>();
+    const secondRunGate = deferred<void>();
+    const seenForceRefreshKeys: string[][] = [];
+    let runCount = 0;
+
+    const pipeline = new ValidationPipeline({
+      config: { defaultSourcePubkey: "pk-source" } as never,
+      socialGraph: {
+        getAllUsersInGraph: async () => ["pk-a"],
+      } as never,
+      metricsValidator: {
+        hasConfiguredValidators: () => true,
+        validateAllBatch: async (
+          _pubkeys: string[],
+          _sourcePubkey?: string,
+          _metricKeys?: string[],
+          validationRunContext?: {
+            forceRefreshMetricKeys?: Set<string>;
+          },
+        ) => {
+          runCount++;
+          seenForceRefreshKeys.push([
+            ...(validationRunContext?.forceRefreshMetricKeys ?? new Set()),
+          ]);
+
+          if (runCount === 1) {
+            await firstRunGate.promise;
+          } else if (runCount === 2) {
+            await secondRunGate.promise;
+          }
+
+          return new Map([["pk-a", mkMetrics("pk-a", { "pk:plugin_a": 1 })]]);
+        },
+      } as never,
+    });
+
+    pipeline.scheduleValidationSync(250, undefined, undefined, ["pk:first"]);
+    await waitFor(() => runCount === 1);
+
+    pipeline.scheduleValidationSync(250, undefined, undefined, ["pk:second"]);
+    pipeline.scheduleValidationSync(250, undefined, undefined, ["pk:third"]);
+    await Promise.resolve();
+
+    firstRunGate.resolve();
+    await waitFor(() => runCount === 2);
+
+    expect(seenForceRefreshKeys).toEqual([["pk:first"], ["pk:third"]]);
+
+    secondRunGate.resolve();
+    await Promise.resolve();
+  });
+
   test("logs a cache-warm completion summary when no persistence or fallback is needed", async () => {
     const pipeline = new ValidationPipeline({
       config: { defaultSourcePubkey: "pk-source" } as never,

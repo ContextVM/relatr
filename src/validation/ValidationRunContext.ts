@@ -6,4 +6,5 @@ export interface ValidationRunContext {
   metadataPreparedForPubkeys?: Set<string>;
   nip05PreparedResults?: LruCache<{ pubkey: string | null }>;
   nip05LiveFetchDisabled?: boolean;
+  forceRefreshMetricKeys?: Set<string>;
 }

@@ -69,6 +69,7 @@ export interface ISchedulerService {
     batchSize?: number,
     sourcePubkey?: string,
     metricKeys?: string[],
+    forceRefreshMetricKeys?: string[],
   ): Promise<void>;
   processDiscoveryQueue(): Promise<void>;
   queuePubkeyForDiscovery(pubkey: string): void;

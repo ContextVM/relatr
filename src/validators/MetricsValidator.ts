@@ -121,6 +121,7 @@ export class MetricsValidator {
     const missingMetricKeys = this.getMissingExpectedMetricKeysForProfile(
       cached,
       expectedMetricKeys,
+      validationRunContext,
     );
 
     if (missingMetricKeys.length === 0 && cached) {
@@ -205,6 +206,7 @@ export class MetricsValidator {
         cachedMetrics,
         expectedMetricKeys,
         results,
+        validationRunContext,
       });
 
       // If all pubkeys were cached, return early
@@ -224,6 +226,7 @@ export class MetricsValidator {
         cacheTtlSeconds: this.cacheTtlSeconds,
         expectedMetricKeys,
         cachedMetrics,
+        forceRefreshMetricKeys: validationRunContext?.forceRefreshMetricKeys,
         metricsRepository: this.metricsRepository,
         validationPubkeyConcurrency: this.validationPubkeyConcurrency,
         mapWithConcurrency,
@@ -603,18 +606,6 @@ export class MetricsValidator {
     return new Set(keys);
   }
 
-  private hasAllExpectedMetrics(
-    metrics: Record<string, number>,
-    expectedKeys: Set<string>,
-  ): boolean {
-    for (const key of expectedKeys) {
-      if (metrics[key] === undefined) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   private getMissingExpectedMetricKeys(
     metrics: Record<string, number>,
     expectedKeys: Set<string>,
@@ -626,13 +617,6 @@ export class MetricsValidator {
       }
     }
     return missing;
-  }
-
-  private isCompleteCacheHit(
-    cached: ProfileMetrics | null | undefined,
-    expectedKeys: Set<string>,
-  ): cached is ProfileMetrics {
-    return !!cached && this.hasAllExpectedMetrics(cached.metrics, expectedKeys);
   }
 
   private async loadCachedMetrics(
@@ -651,11 +635,25 @@ export class MetricsValidator {
   private getMissingExpectedMetricKeysForProfile(
     cached: ProfileMetrics | null | undefined,
     expectedKeys: Set<string>,
+    validationRunContext?: ValidationRunContext,
   ): string[] {
-    return this.getMissingExpectedMetricKeys(
+    const missing = this.getMissingExpectedMetricKeys(
       cached?.metrics ?? {},
       expectedKeys,
     );
+    const forceRefreshMetricKeys = validationRunContext?.forceRefreshMetricKeys;
+    if (!forceRefreshMetricKeys || forceRefreshMetricKeys.size === 0) {
+      return missing;
+    }
+
+    const forcedMissing = new Set(missing);
+    for (const key of expectedKeys) {
+      if (forceRefreshMetricKeys.has(key)) {
+        forcedMissing.add(key);
+      }
+    }
+
+    return [...forcedMissing];
   }
 
   private mergeMetrics(
@@ -714,12 +712,18 @@ export class MetricsValidator {
     cachedMetrics: Map<string, ProfileMetrics | null>;
     expectedMetricKeys: Set<string>;
     results: Map<string, ProfileMetrics>;
+    validationRunContext?: ValidationRunContext;
   }): string[] {
     const pubkeysToValidate: string[] = [];
 
     for (const pubkey of input.pubkeys) {
       const cached = input.cachedMetrics.get(pubkey);
-      if (this.isCompleteCacheHit(cached, input.expectedMetricKeys)) {
+      const missingMetricKeys = this.getMissingExpectedMetricKeysForProfile(
+        cached,
+        input.expectedMetricKeys,
+        input.validationRunContext,
+      );
+      if (missingMetricKeys.length === 0 && cached) {
         input.results.set(pubkey, cached);
       } else {
         pubkeysToValidate.push(pubkey);
