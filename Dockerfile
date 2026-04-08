@@ -29,6 +29,9 @@ COPY . .
 # Generate version module from package.json before compiling
 RUN bun run generate:version
 
+# Build the local relo workspace so its exported dist files exist for bundling
+RUN cd /usr/src/app/relo && bun run build
+
 # Compile the MCP server as the main entry point
 RUN bun build --compile --minify --sourcemap ./src/mcp/server.ts --outfile relatr --external "@duckdb/node-api" --external "@duckdb/node-bindings-*"
 RUN bun build --compile --minify --sourcemap ./manager.ts --outfile manager --external "@duckdb/node-api" --external "@duckdb/node-bindings-*"
