@@ -32,7 +32,8 @@ services:
       - ./plugins:/usr/src/app/plugins
 
     ports:
-      - 3000:3000
+      # Bind to localhost by default to prevent accidental public exposure
+      - 127.0.0.1:3000:3000
 
     # Restart policy for production reliability
     restart: unless-stopped
