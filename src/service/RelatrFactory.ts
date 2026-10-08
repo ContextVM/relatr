@@ -41,8 +41,14 @@ type GraphBootstrapSignature = {
   status: "in_progress" | "complete";
   sourcePubkey: string;
   hops: number;
+  followListKinds: number[];
   completedAt?: number;
 };
+
+/** Order-insensitive identity of a follow list kind set, for signature comparison. */
+function followListKindsKey(kinds: number[]): string {
+  return [...new Set(kinds)].sort((a, b) => a - b).join(",");
+}
 
 export class RelatrFactory {
   static async createRelatrService(
@@ -143,7 +149,9 @@ export class RelatrFactory {
         graphBootstrapSignature?.status === "complete" &&
         graphBootstrapSignature.sourcePubkey ===
           validatedConfig.defaultSourcePubkey &&
-        graphBootstrapSignature.hops === validatedConfig.numberOfHops;
+        graphBootstrapSignature.hops === validatedConfig.numberOfHops &&
+        followListKindsKey(graphBootstrapSignature.followListKinds) ===
+          followListKindsKey(validatedConfig.followListKinds);
 
       let creationResult: SocialGraphCreationResult | undefined;
 
@@ -170,11 +178,13 @@ export class RelatrFactory {
           status: "in_progress",
           sourcePubkey: validatedConfig.defaultSourcePubkey,
           hops: validatedConfig.numberOfHops,
+          followListKinds: validatedConfig.followListKinds,
         });
 
         creationResult = await socialGraphBuilder.createGraph({
           sourcePubkey: validatedConfig.defaultSourcePubkey,
           hops: validatedConfig.numberOfHops,
+          followListKinds: validatedConfig.followListKinds,
           connection: writeConnection,
         });
 
@@ -182,6 +192,7 @@ export class RelatrFactory {
           status: "complete",
           sourcePubkey: validatedConfig.defaultSourcePubkey,
           hops: validatedConfig.numberOfHops,
+          followListKinds: validatedConfig.followListKinds,
           completedAt: nowMs(),
         });
         logger.info("Social graph created successfully.");
@@ -473,6 +484,10 @@ export class RelatrFactory {
         status: parsed.status,
         sourcePubkey: parsed.sourcePubkey,
         hops: parsed.hops,
+        // Graphs built before follow list kinds were configurable used kind 3 only.
+        followListKinds: Array.isArray(parsed.followListKinds)
+          ? parsed.followListKinds
+          : [3],
         completedAt:
           typeof parsed.completedAt === "number"
             ? parsed.completedAt

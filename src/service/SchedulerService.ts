@@ -1,4 +1,4 @@
-import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
+import { fetchEventsForPubkeys, mergeFollowLists } from "@/utils/utils.nostr";
 import type { RelatrConfig } from "../types";
 import type { SocialGraph } from "../graph/SocialGraph";
 import type { MetricsValidator } from "../validators/MetricsValidator";
@@ -260,19 +260,26 @@ export class SchedulerService implements ISchedulerService {
 
       // Fetch contact events for queued pubkeys with streaming to avoid memory accumulation
       let totalContactEvents = 0;
-      await fetchEventsForPubkeys(pubkeysToProcess, 3, undefined, this.pool, {
-        onBatch: async (events, batchIndex, totalBatches) => {
-          totalContactEvents += events.length;
+      await fetchEventsForPubkeys(
+        pubkeysToProcess,
+        this.config.followListKinds,
+        undefined,
+        this.pool,
+        {
+          onBatch: async (events, batchIndex, totalBatches) => {
+            totalContactEvents += events.length;
+            const followLists = mergeFollowLists(events);
 
-          // Process contact events immediately to integrate into graph
-          if (events.length > 0 && this.socialGraph) {
-            await this.socialGraph.processContactEvents(events);
-            logger.debug(
-              `✅ Integrated batch ${batchIndex}/${totalBatches} with ${events.length} contact events into social graph`,
-            );
-          }
+            // Process contact events immediately to integrate into graph
+            if (followLists.length > 0 && this.socialGraph) {
+              await this.socialGraph.processContactEvents(followLists);
+              logger.debug(
+                `✅ Integrated batch ${batchIndex}/${totalBatches} with ${followLists.length} follow lists into social graph`,
+              );
+            }
+          },
         },
-      });
+      );
 
       logger.info(
         `📥 Fetched ${totalContactEvents} contact events for ${pubkeysToProcess.length} pubkeys`,

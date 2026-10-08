@@ -1,7 +1,7 @@
 import { RelayPool } from "applesauce-relay";
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
 import { DuckDBConnection } from "@duckdb/node-api";
-import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
+import { fetchEventsForPubkeys, mergeFollowLists } from "@/utils/utils.nostr";
 import { logger } from "../utils/Logger";
 import { dbWriteQueue } from "@/database/DbWriteQueue";
 
@@ -18,6 +18,8 @@ const GRAPH_FETCH_RETRY_DELAY_MS = 1000;
 export interface SocialGraphCreationParams {
   sourcePubkey: string;
   hops: number;
+  /** Event kinds whose `p` tags count as follows. */
+  followListKinds: number[];
   connection: DuckDBConnection;
 }
 
@@ -59,10 +61,12 @@ export class SocialGraphBuilder {
   public async createGraph(
     params: SocialGraphCreationParams,
   ): Promise<SocialGraphCreationResult> {
-    const { sourcePubkey, hops, connection } = params;
+    const { sourcePubkey, hops, followListKinds, connection } = params;
 
     logger.info("🚀 Starting social graph creation...");
-    logger.info(`Pubkey ${sourcePubkey}, Hops ${hops}`);
+    logger.info(
+      `Pubkey ${sourcePubkey}, Hops ${hops}, Follow list kinds ${followListKinds.join(", ")}`,
+    );
 
     let socialGraph: DuckDBSocialGraphAnalyzer | null = null;
     let totalEventsFetched = 0;
@@ -79,6 +83,7 @@ export class SocialGraphBuilder {
       const { eventsFetched } = await this.discoverPubkeys(
         sourcePubkey,
         hops,
+        followListKinds,
         socialGraph,
       );
       totalEventsFetched = eventsFetched;
@@ -139,6 +144,7 @@ export class SocialGraphBuilder {
   private async discoverPubkeys(
     sourcePubkey: string,
     hops: number,
+    followListKinds: number[],
     socialGraph?: DuckDBSocialGraphAnalyzer,
   ): Promise<DiscoveryResult> {
     const crawledPubkeys: Set<string> = new Set();
@@ -166,23 +172,24 @@ export class SocialGraphBuilder {
         // preventing O(n) memory scaling with network size.
         await fetchEventsForPubkeys(
           pubkeysForThisHop,
-          3,
+          followListKinds,
           undefined,
           this.pool,
           {
             onBatch: async (events) => {
               hopEventsFetched += events.length;
+              const followLists = mergeFollowLists(events);
 
               // Ingest events immediately if socialGraph is provided - this is key for memory efficiency
-              if (socialGraph && events.length > 0) {
+              if (socialGraph && followLists.length > 0) {
                 // Serialize ingestion to avoid transaction conflicts on the shared connection
                 await dbWriteQueue.runExclusive(async () => {
-                  await socialGraph.ingestEvents(events);
+                  await socialGraph.ingestEvents(followLists);
                 });
               }
 
               // Extract new pubkeys for next hop on the fly to avoid storing all events
-              for (const event of events) {
+              for (const event of followLists) {
                 for (const tag of event.tags) {
                   if (tag[0] !== "p") continue;
                   const candidate = tag[1];
