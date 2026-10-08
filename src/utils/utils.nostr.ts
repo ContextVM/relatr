@@ -83,7 +83,8 @@ export async function negSyncFromRelays(
           } catch {
             // Ignore validation errors for invalid pubkeys
           }
-          resolve([]);
+          // Keep what already arrived; a relay that never finishes must not discard the others' events.
+          resolve(eventStore.getByFilters(filter));
         },
         { once: true },
       );
@@ -145,16 +146,21 @@ export async function fetchEventsForPubkeys(
     let events: NostrEvent[] = [];
 
     try {
-      events = await negSyncFromRelays(
-        pool,
-        relays,
-        {
-          kinds,
-          authors: batch,
-        },
-        signal,
-        batchEventStore,
-      );
+      // One sync per kind: some relays (relay.nostr.net) never finish a negentropy sync whose filter
+      // lists several kinds, which would stall the whole batch until the timeout.
+      events = (
+        await Promise.all(
+          kinds.map((kind) =>
+            negSyncFromRelays(
+              pool,
+              relays,
+              { kinds: [kind], authors: batch },
+              signal,
+              batchEventStore,
+            ),
+          ),
+        )
+      ).flat();
 
       // Process batch immediately if callback provided
       if (onBatch) {

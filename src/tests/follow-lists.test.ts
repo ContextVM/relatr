@@ -1,8 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { DuckDBInstance } from "@duckdb/node-api";
+import { EventStore } from "applesauce-core";
+import type { RelayPool } from "applesauce-relay";
 import { DuckDBSocialGraphAnalyzer } from "nostr-social-duck";
-import type { NostrEvent } from "nostr-tools";
-import { mergeFollowLists } from "@/utils/utils.nostr";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  type Filter,
+  type NostrEvent,
+} from "nostr-tools";
+import { concat, from, NEVER } from "rxjs";
+import {
+  fetchEventsForPubkeys,
+  mergeFollowLists,
+  negSyncFromRelays,
+} from "@/utils/utils.nostr";
 
 const pk = (n: number) => n.toString(16).padStart(64, "0");
 const ROOT = pk(1);
@@ -72,5 +85,64 @@ describe("mergeFollowLists", () => {
       ["p", BOB],
       ["p", CAROL],
     ]);
+  });
+});
+
+describe("follow list fetching", () => {
+  // The event store only accepts validly signed events.
+  const [aliceKey, bobKey] = [generateSecretKey(), generateSecretKey()];
+  const [alice, bob] = [getPublicKey(aliceKey), getPublicKey(bobKey)];
+  const signed = (key: Uint8Array, kind: number, follows: string[]) =>
+    finalizeEvent(
+      { kind, created_at: 100, tags: follows.map((f) => ["p", f]), content: "" },
+      key,
+    );
+  const lists = [
+    signed(aliceKey, 3, [bob]),
+    signed(aliceKey, 10020, [CAROL]),
+    signed(bobKey, 3, [alice]),
+  ];
+  const matching = (filter: Filter) =>
+    lists.filter(
+      (e) =>
+        filter.kinds!.includes(e.kind) && filter.authors!.includes(e.pubkey),
+    );
+
+  test("fetches every configured kind even from a relay that never finishes multi-kind syncs", async () => {
+    // Like relay.nostr.net: a negentropy sync over several kinds never completes.
+    const pool = {
+      sync: (_relays: string[], _store: EventStore, filter: Filter) =>
+        filter.kinds!.length > 1 ? NEVER : from(matching(filter)),
+    } as unknown as RelayPool;
+    const batches: NostrEvent[][] = [];
+
+    await fetchEventsForPubkeys([alice, bob], [3, 10020], ["wss://relay.example"], pool, {
+      onBatch: (events) => void batches.push(events),
+    });
+
+    expect(batches.flat().map((e) => e.id).sort()).toEqual(
+      lists.map((e) => e.id).sort(),
+    );
+  }, 5_000);
+
+  test("an aborted sync returns the events received before the abort", async () => {
+    const filter = { kinds: [3], authors: [alice, bob] };
+    const pool = {
+      sync: () => concat(from(matching(filter)), NEVER),
+    } as unknown as RelayPool;
+    const controller = new AbortController();
+
+    const pending = negSyncFromRelays(
+      pool,
+      ["wss://relay.example"],
+      filter,
+      controller.signal,
+      new EventStore(),
+    );
+    controller.abort();
+
+    expect((await pending).map((e) => e.id).sort()).toEqual(
+      matching(filter).map((e) => e.id).sort(),
+    );
   });
 });
