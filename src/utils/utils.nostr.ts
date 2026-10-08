@@ -24,6 +24,54 @@ const DEFAULT_BATCH_SIZE = 500;
  */
 export const MAX_STORED_RELAYS = 15;
 
+/**
+ * How long a relay WebSocket may stay in the CONNECTING state before the attempt is aborted.
+ */
+export const RELAY_CONNECT_TIMEOUT_MS = 5_000;
+
+/**
+ * Creates a WebSocket constructor that aborts connection attempts which do not open within `timeoutMs`.
+ *
+ * A relay whose host silently drops packets never emits a close event on its own (the OS connect
+ * timeout is about two minutes), so applesauce keeps treating it as ready and every request to it
+ * waits for the local EOSE timeout. Aborting the attempt surfaces an unclean close, which marks the
+ * relay offline so `RelayPool` skips it until its reconnect backoff expires.
+ */
+export function createConnectTimeoutWebSocket(
+  timeoutMs: number,
+): typeof WebSocket {
+  return class ConnectTimeoutWebSocket extends WebSocket {
+    constructor(url: string | URL, protocols?: string | string[]) {
+      super(url, protocols);
+      let closeReported = false;
+      // Registered before any consumer handler, so it runs first and can drop a duplicate close.
+      this.addEventListener("close", (event) => {
+        if (closeReported) event.stopImmediatePropagation();
+        closeReported = true;
+        clearTimeout(timer);
+      });
+      this.addEventListener("open", () => clearTimeout(timer));
+
+      const timer = setTimeout(() => {
+        if (this.readyState !== WebSocket.CONNECTING) return;
+        this.close();
+        // Some runtimes (Bun 1.3.3) never emit close for a socket closed while connecting, which
+        // would leave the relay looking ready forever. Report the aborted attempt ourselves.
+        setTimeout(() => {
+          if (closeReported) return;
+          this.dispatchEvent(
+            new CloseEvent("close", {
+              code: 1006,
+              reason: "Connection attempt timed out",
+              wasClean: false,
+            }),
+          );
+        }, 0);
+      }, timeoutMs);
+    }
+  };
+}
+
 export async function negSyncFromRelays(
   pool: RelayPool | null,
   relays: string[],
