@@ -12,6 +12,8 @@ import { NEG_RELAYS } from "@/constants/nostr";
 import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
 import type { UserRelaysValueV1 } from "@/constants/pubkeyKv";
 import { PUBKEY_KV_KEYS } from "@/constants/pubkeyKv";
+import { lastValueFrom, toArray } from "rxjs";
+import { mapWithConcurrency } from "./mapWithConcurrency";
 
 /**
  * Default batch size for fetching events from relays
@@ -23,6 +25,64 @@ const DEFAULT_BATCH_SIZE = 500;
  * Reduces storage pressure for users with 100+ relays
  */
 export const MAX_STORED_RELAYS = 15;
+
+/**
+ * Finds, for each pubkey, the `created_at` of its newest event on `relays` since `since`, across
+ * all event kinds. Pubkeys without such an event are absent from the result.
+ *
+ * Authors are queried in batches. A relay returns at most `limit` events per query, so a few
+ * prolific authors could hide everyone else in the batch; each round therefore drops the authors
+ * already found and asks again until a round finds nobody new.
+ */
+export async function fetchLastSeenAt(
+  pool: RelayPool,
+  relays: string[],
+  pubkeys: string[],
+  since: number,
+): Promise<Map<string, number>> {
+  const lastSeen = new Map<string, number>();
+  const batches: string[][] = [];
+  for (let i = 0; i < pubkeys.length; i += DEFAULT_BATCH_SIZE) {
+    batches.push(pubkeys.slice(i, i + DEFAULT_BATCH_SIZE));
+  }
+
+  await mapWithConcurrency(batches, 4, async (batch) => {
+    let remaining = new Set(batch);
+    while (remaining.size > 0) {
+      const events = await lastValueFrom(
+        pool
+          .request(
+            relays,
+            {
+              authors: Array.from(remaining),
+              since,
+              limit: DEFAULT_BATCH_SIZE,
+            },
+            // A missed answer only lowers a pubkey's priority; retrying an unreachable relay would
+            // stall every round instead.
+            { reconnect: false },
+          )
+          .pipe(toArray()),
+      );
+      // Ignore events a relay should not have returned, so a misbehaving relay cannot keep the loop alive.
+      const found = events.filter(
+        (event) => remaining.has(event.pubkey) && event.created_at >= since,
+      );
+      if (found.length === 0) break;
+
+      for (const event of found) {
+        if (event.created_at > (lastSeen.get(event.pubkey) ?? 0)) {
+          lastSeen.set(event.pubkey, event.created_at);
+        }
+      }
+      remaining = new Set(
+        Array.from(remaining).filter((pubkey) => !lastSeen.has(pubkey)),
+      );
+    }
+  });
+
+  return lastSeen;
+}
 
 export async function negSyncFromRelays(
   pool: RelayPool | null,

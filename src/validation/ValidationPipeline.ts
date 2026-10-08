@@ -36,6 +36,11 @@ export interface ValidationPipelineDeps {
   socialGraph: SocialGraph;
   metricsValidator: MetricsValidator;
   factRefreshStage?: FactRefreshStage;
+  /**
+   * Reorders validation targets, e.g. to score recently active pubkeys first. Must return the
+   * same pubkeys it receives: ordering never decides whether a pubkey is validated.
+   */
+  orderPubkeys?: (pubkeys: string[]) => Promise<string[]>;
 }
 
 interface ValidationSyncProgress {
@@ -164,7 +169,10 @@ export class ValidationPipeline {
         return;
       }
 
-      const allPubkeys = await socialGraph.getAllUsersInGraph();
+      const graphPubkeys = await socialGraph.getAllUsersInGraph();
+      const allPubkeys = this.deps.orderPubkeys
+        ? await this.deps.orderPubkeys(graphPubkeys)
+        : graphPubkeys;
       logger.info(
         `📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`,
       );

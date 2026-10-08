@@ -1,4 +1,4 @@
-import { fetchEventsForPubkeys } from "@/utils/utils.nostr";
+import { fetchEventsForPubkeys, fetchLastSeenAt } from "@/utils/utils.nostr";
 import type { RelatrConfig } from "../types";
 import type { SocialGraph } from "../graph/SocialGraph";
 import type { MetricsValidator } from "../validators/MetricsValidator";
@@ -7,16 +7,22 @@ import type { MetricsRepository } from "../database/repositories/MetricsReposito
 import type { MetadataRepository } from "../database/repositories/MetadataRepository";
 import type { SettingsRepository } from "../database/repositories/SettingsRepository";
 import type { RelayPool } from "applesauce-relay";
+import type { PubkeyKvRepository } from "../database/repositories/PubkeyKvRepository";
+import { PUBKEY_KV_KEYS } from "@/constants/pubkeyKv";
 import type { ISchedulerService } from "./ServiceInterfaces";
 import type { TAService } from "./TAService";
 import { RelatrError } from "../types";
 import { logger } from "../utils/Logger";
-import { nowMs } from "@/utils/utils";
+import { nowMs, nowSeconds } from "@/utils/utils";
 import { ValidationPipeline } from "@/validation/ValidationPipeline";
 import { MetadataFactRefreshStage } from "@/validation/MetadataFactRefreshStage";
 import { CompositeFactRefreshStage } from "@/validation/FactRefreshStage";
 import { Nip05FactRefreshStage } from "@/validation/Nip05FactRefreshStage";
 import { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
+
+/** A pubkey counts as recently active if it published any event within this window. */
+const ACTIVITY_WINDOW_SECONDS = 30 * 24 * 3600;
+const ACTIVITY_SCAN_SETTINGS_KEY = "activity_scan:last_run";
 
 export class SchedulerService implements ISchedulerService {
   private discoveryQueue: Set<string> = new Set();
@@ -33,6 +39,7 @@ export class SchedulerService implements ISchedulerService {
   private _isRunning = false;
   private _isStarting = false;
   private _isStopping = false;
+  private activityScan: Promise<void> | null = null;
 
   constructor(
     private config: RelatrConfig,
@@ -44,6 +51,7 @@ export class SchedulerService implements ISchedulerService {
     private settingsRepository: SettingsRepository,
     private pool: RelayPool,
     private taService?: TAService,
+    private pubkeyKvRepository?: PubkeyKvRepository,
   ) {
     const nip05CacheStore = new Nip05CacheStore(settingsRepository);
     this.nip05FactRefreshStage = new Nip05FactRefreshStage(
@@ -63,6 +71,7 @@ export class SchedulerService implements ISchedulerService {
         ),
         this.nip05FactRefreshStage,
       ]),
+      orderPubkeys: (pubkeys) => this.orderByRecentActivity(pubkeys),
     });
   }
 
@@ -292,6 +301,92 @@ export class SchedulerService implements ISchedulerService {
   queuePubkeyForDiscovery(pubkey: string): void {
     this.discoveryQueue.add(pubkey);
     logger.debug(`📥 Queued ${pubkey} for contact discovery`);
+  }
+
+  /**
+   * Orders validation targets so recently active pubkeys are scored first. Every pubkey stays in
+   * the run; activity only decides the order. Pubkeys never seen active keep their graph order at
+   * the end. Activity is best-effort: if it cannot be determined, the graph order is used.
+   *
+   * Only the very first run waits for the activity scan. Later runs order by the previous scan
+   * while a due scan refreshes the data in the background for the next run.
+   */
+  private async orderByRecentActivity(pubkeys: string[]): Promise<string[]> {
+    if (!this.pubkeyKvRepository) {
+      return pubkeys;
+    }
+
+    try {
+      let lastSeen = await this.pubkeyKvRepository.getAllForKey(
+        PUBKEY_KV_KEYS.last_seen_at,
+      );
+      if (lastSeen.size === 0) {
+        await this.refreshActivityIfDue(pubkeys);
+        lastSeen = await this.pubkeyKvRepository.getAllForKey(
+          PUBKEY_KV_KEYS.last_seen_at,
+        );
+      } else {
+        void this.refreshActivityIfDue(pubkeys).catch((error) => {
+          logger.warn(
+            "Background activity scan failed:",
+            error instanceof Error ? error.message : String(error),
+          );
+        });
+      }
+
+      // Array#sort is stable, so equally unknown pubkeys keep their graph order.
+      return [...pubkeys].sort(
+        (a, b) => Number(lastSeen.get(b) ?? 0) - Number(lastSeen.get(a) ?? 0),
+      );
+    } catch (error) {
+      logger.warn(
+        "Activity ordering failed; validating in graph order:",
+        error instanceof Error ? error.message : String(error),
+      );
+      return pubkeys;
+    }
+  }
+
+  /**
+   * Records when each pubkey was last seen publishing, at most once per sync interval. Concurrent
+   * callers share the scan that is already in flight.
+   */
+  private refreshActivityIfDue(pubkeys: string[]): Promise<void> {
+    this.activityScan ??= this.scanActivityIfDue(pubkeys).finally(() => {
+      this.activityScan = null;
+    });
+    return this.activityScan;
+  }
+
+  private async scanActivityIfDue(pubkeys: string[]): Promise<void> {
+    const lastRun = Number(
+      await this.settingsRepository.get(ACTIVITY_SCAN_SETTINGS_KEY),
+    );
+    if (nowMs() - lastRun < this.config.syncIntervalHours * 3600 * 1000) {
+      return;
+    }
+
+    const startedAt = nowMs();
+    const lastSeen = await fetchLastSeenAt(
+      this.pool,
+      this.config.nostrRelays,
+      pubkeys,
+      nowSeconds() - ACTIVITY_WINDOW_SECONDS,
+    );
+    await this.pubkeyKvRepository!.setMany(
+      PUBKEY_KV_KEYS.last_seen_at,
+      new Map(
+        Array.from(lastSeen, ([pubkey, seenAt]) => [pubkey, String(seenAt)]),
+      ),
+    );
+    await this.settingsRepository.set(
+      ACTIVITY_SCAN_SETTINGS_KEY,
+      String(nowMs()),
+    );
+
+    logger.info(
+      `🕐 Activity scan: ${lastSeen.size.toLocaleString()} of ${pubkeys.length.toLocaleString()} pubkeys published in the last 30 days (${nowMs() - startedAt}ms)`,
+    );
   }
 
   isRunning(): boolean {
