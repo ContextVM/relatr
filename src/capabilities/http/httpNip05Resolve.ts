@@ -1,7 +1,11 @@
 import { Logger } from "@/utils/Logger";
 import type { CapabilityHandler } from "../CapabilityRegistry";
 import { normalizeNip05 } from "./utils/httpNip05Normalize";
-import { resolveNip05WithAbortableFetch } from "./utils/resolveNip05Http";
+import {
+  Nip05TransportError,
+  resolveNip05WithAbortableFetch,
+  splitNormalizedNip05,
+} from "./utils/resolveNip05Http";
 
 const logger = new Logger({ service: "httpNip05Resolve" });
 
@@ -63,6 +67,15 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
       return { pubkey: null };
     }
 
+    const domain = splitNormalizedNip05(formattedNip05)?.domain;
+    if (
+      persistentStore &&
+      domain &&
+      (await persistentStore.getCoolingDownDomains([domain])).has(domain)
+    ) {
+      return { pubkey: null };
+    }
+
     const timeoutMs = Math.min(
       context.config.capTimeoutMs,
       context.config.nip05ResolveTimeoutMs,
@@ -98,6 +111,13 @@ export const httpNip05Resolve: CapabilityHandler = async (args, context) => {
 
         return { pubkey: null };
       } catch (error) {
+        if (error instanceof Nip05TransportError && persistentStore) {
+          await persistentStore.setDomainCooldown(
+            error.domain,
+            context.config.nip05DomainCooldownSeconds,
+          );
+        }
+
         logger.warn(
           `NIP-05 resolution failed for ${nip05}: ${error instanceof Error ? error.message : String(error)}`,
         );

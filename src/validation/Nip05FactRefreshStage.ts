@@ -3,7 +3,11 @@ import type { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
 import type { RelatrConfig } from "@/types";
 import { logger } from "@/utils/Logger";
 import { LruCache } from "@/utils/lru-cache";
-import { resolveNip05WithAbortableFetch } from "@/capabilities/http/utils/resolveNip05Http";
+import {
+  Nip05TransportError,
+  resolveNip05WithAbortableFetch,
+  splitNormalizedNip05,
+} from "@/capabilities/http/utils/resolveNip05Http";
 import type {
   FactRefreshStage,
   FactRefreshStageContext,
@@ -69,18 +73,43 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
       this.config.capTimeoutMs,
       this.config.nip05ResolveTimeoutMs,
     );
+    // Grows during the run so that one transport failure skips the rest of that domain's names.
+    const coolingDownDomains = await this.nip05CacheStore.getCoolingDownDomains(
+      Array.from(
+        new Set(
+          refreshTargets.flatMap(
+            (nip05) => splitNormalizedNip05(nip05)?.domain ?? [],
+          ),
+        ),
+      ),
+    );
+    let skippedCount = 0;
 
     await mapWithConcurrency(
       refreshTargets,
       this.concurrency,
       async (formattedNip05) => {
+        const domain = splitNormalizedNip05(formattedNip05)?.domain;
+        if (domain && coolingDownDomains.has(domain)) {
+          preparedResults.set(formattedNip05, { pubkey: null });
+          skippedCount++;
+          return;
+        }
+
         await this.prepareResolution(
           formattedNip05,
           timeoutMs,
           preparedResults,
+          coolingDownDomains,
         );
       },
     );
+
+    if (skippedCount > 0) {
+      logger.info(
+        `🪪 Skipped ${skippedCount.toLocaleString()} NIP-05 facts on domains in transport cooldown`,
+      );
+    }
   }
 
   private prepareRunContext(
@@ -120,6 +149,7 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
     formattedNip05: string,
     timeoutMs: number,
     preparedResults: LruCache<{ pubkey: string | null }>,
+    coolingDownDomains: Set<string>,
   ): Promise<void> {
     try {
       const result = await resolveNip05WithAbortableFetch(
@@ -137,11 +167,15 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
     } catch (error) {
       preparedResults.set(formattedNip05, { pubkey: null });
 
-      await this.nip05CacheStore.setResolution({
-        nip05: formattedNip05,
-        pubkey: null,
-        ttlSeconds: this.config.nip05CacheTtlSeconds,
-      });
+      // Transport failures say nothing about the name, so only the domain is put on hold;
+      // its names are retried once the cooldown expires instead of being cached as invalid.
+      if (error instanceof Nip05TransportError) {
+        coolingDownDomains.add(error.domain);
+        await this.nip05CacheStore.setDomainCooldown(
+          error.domain,
+          this.config.nip05DomainCooldownSeconds,
+        );
+      }
 
       logger.warn(
         `Failed to refresh NIP-05 fact for ${formattedNip05}: ${error instanceof Error ? error.message : String(error)}`,

@@ -4,6 +4,20 @@ type Nip05NamesResponse = {
 
 export type Nip05ResolveHttpResult = { pubkey: string | null };
 
+/**
+ * The NIP-05 domain could not be reached (network or TLS failure, timeout, rate limiting, or a server
+ * error). Unlike a definitive `{ pubkey: null }`, this says nothing about whether the name is valid.
+ */
+export class Nip05TransportError extends Error {
+  constructor(
+    readonly domain: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "Nip05TransportError";
+  }
+}
+
 export function splitNormalizedNip05(
   nip05: string,
 ): { name: string; domain: string } | null {
@@ -18,6 +32,13 @@ export function splitNormalizedNip05(
   };
 }
 
+/**
+ * Resolves a normalized NIP-05 identifier over HTTP.
+ *
+ * Returns `{ pubkey: null }` when the domain answers definitively that the name does not resolve
+ * (unknown name, non-retryable HTTP status, or a malformed document). Throws `Nip05TransportError`
+ * when the domain cannot be reached.
+ */
 export async function resolveNip05WithAbortableFetch(
   formattedNip05: string,
   timeoutMs: number,
@@ -42,22 +63,33 @@ export async function resolveNip05WithAbortableFetch(
       },
     );
 
-    if (!response.ok) {
+    if (response.status === 429 || response.status >= 500) {
       throw new Error(`Bad response: ${response.status}`);
     }
-
-    const payload = (await response.json()) as Nip05NamesResponse;
-    return { pubkey: payload.names?.[parsed.name.toLowerCase()] ?? null };
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.name === "AbortError" ||
-        error.message.includes("This operation was aborted"))
-    ) {
-      throw new Error(`Operation timed out after ${timeoutMs}ms`);
+    if (!response.ok) {
+      return { pubkey: null };
     }
 
-    throw error;
+    let payload: Nip05NamesResponse | null;
+    try {
+      payload = (await response.json()) as Nip05NamesResponse | null;
+    } catch (error) {
+      // An aborted body read is a timeout; anything else means the document is not valid JSON.
+      if (controller.signal.aborted) throw error;
+      return { pubkey: null };
+    }
+
+    const pubkey = payload?.names?.[parsed.name.toLowerCase()];
+    return { pubkey: typeof pubkey === "string" ? pubkey : null };
+  } catch (error) {
+    throw new Nip05TransportError(
+      parsed.domain,
+      controller.signal.aborted
+        ? `Operation timed out after ${timeoutMs}ms`
+        : error instanceof Error
+          ? error.message
+          : String(error),
+    );
   } finally {
     clearTimeout(timer);
   }
