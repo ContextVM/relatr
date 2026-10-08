@@ -17,7 +17,6 @@ import { MetadataFactRefreshStage } from "@/validation/MetadataFactRefreshStage"
 import { CompositeFactRefreshStage } from "@/validation/FactRefreshStage";
 import { Nip05FactRefreshStage } from "@/validation/Nip05FactRefreshStage";
 import { Nip05CacheStore } from "@/capabilities/http/Nip05CacheStore";
-import { MetadataRefreshTracker } from "@/validation/MetadataRefreshTracker";
 
 export class SchedulerService implements ISchedulerService {
   private discoveryQueue: Set<string> = new Set();
@@ -30,7 +29,6 @@ export class SchedulerService implements ISchedulerService {
     forceRefreshMetricKeys?: string[];
   } | null = null;
   private validationPipeline: ValidationPipeline;
-  private readonly metadataRefreshTracker = new MetadataRefreshTracker();
   private readonly nip05FactRefreshStage: Nip05FactRefreshStage;
   private _isRunning = false;
   private _isStarting = false;
@@ -62,15 +60,10 @@ export class SchedulerService implements ISchedulerService {
         new MetadataFactRefreshStage(
           metadataRepository,
           pubkeyMetadataFetcher,
-          this.metadataRefreshTracker,
         ),
         this.nip05FactRefreshStage,
       ]),
     });
-  }
-
-  markBootstrapMetadataFresh(pubkeys: string[], sourcePubkey?: string): void {
-    this.metadataRefreshTracker.markBootstrapFresh(pubkeys, sourcePubkey);
   }
 
   async start(): Promise<void> {

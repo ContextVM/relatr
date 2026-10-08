@@ -233,7 +233,7 @@ describe("ValidationPipeline", () => {
     expect(seenBatches).toEqual([["pk-a", "pk-b"], ["pk-c", "pk-d"], ["pk-e"]]);
   });
 
-  test("refreshes facts before validation batches run", async () => {
+  test("refreshes each batch's facts right before validating that batch", async () => {
     const executionOrder: string[] = [];
 
     const pipeline = new ValidationPipeline({
@@ -260,11 +260,13 @@ describe("ValidationPipeline", () => {
       },
     });
 
-    await pipeline.runValidationSync(10);
+    await pipeline.runValidationSync(1);
 
     expect(executionOrder).toEqual([
-      "refresh:pk-a,pk-b:pk-source",
-      "validate:pk-a,pk-b:pk-source",
+      "refresh:pk-a:pk-source",
+      "validate:pk-a:pk-source",
+      "refresh:pk-b:pk-source",
+      "validate:pk-b:pk-source",
     ]);
   });
 

@@ -104,7 +104,7 @@ describe("SchedulerService validation sync", () => {
     await scheduler.syncValidations(2);
 
     expect(coarseRepositoryCheckCalls).toBe(0);
-    expect(refreshedPubkeys).toEqual([allPubkeys]);
+    expect(refreshedPubkeys).toEqual([["pk-a", "pk-b"], ["pk-c"]]);
     expect(seenBatches).toEqual([["pk-a", "pk-b"], ["pk-c"]]);
   });
 
@@ -201,62 +201,6 @@ describe("SchedulerService validation sync", () => {
     await scheduler.syncValidations(10);
 
     expect(refreshedPubkeys).toEqual([["pk-b"]]);
-  });
-
-  test("bootstrap metadata coverage suppresses the immediate validation refresh once even when pubkey order changes and cached metadata prevents a second refresh", async () => {
-    const refreshedPubkeys: string[][] = [];
-    let metadataBatchReads = 0;
-
-    const scheduler = new SchedulerService(
-      {
-        defaultSourcePubkey: "pk-source",
-      } as never,
-      mkMetadataRepository() as never,
-      {
-        getAllUsersInGraph: async () => ["pk-b", "pk-a"],
-      } as never,
-      {
-        hasConfiguredValidators: () => true,
-        validateAllBatch: async (pubkeys: string[]) =>
-          new Map(
-            pubkeys.map((pubkey) => [
-              pubkey,
-              mkMetrics(pubkey, { "pk:plugin_b": 1 }),
-            ]),
-          ),
-      } as never,
-      {
-        getBatch: async (pubkeys: string[]) => {
-          metadataBatchReads++;
-          return new Map(
-            pubkeys.map((pubkey) => [
-              pubkey,
-              metadataBatchReads === 1 ? null : { pubkey },
-            ]),
-          );
-        },
-      } as never,
-      {
-        fetchMetadata: async ({ pubkeys }: { pubkeys: string[] }) => {
-          refreshedPubkeys.push([...pubkeys]);
-          return {
-            success: true,
-            message: "ok",
-            profilesFetched: pubkeys.length,
-          };
-        },
-      } as never,
-      mkSettingsRepository() as never,
-      mkMetadataRepository() as never,
-      mkMetadataRepository() as never,
-    );
-
-    scheduler.markBootstrapMetadataFresh(["pk-a", "pk-b"], "pk-source");
-
-    await scheduler.syncValidations(10);
-    await scheduler.syncValidations(10);
-
-    expect(refreshedPubkeys).toEqual([]);
   });
 
   test("syncValidations reuses fallback-persisted metadata on the next run", async () => {
