@@ -26,6 +26,10 @@ import { RelatrService } from "./RelatrService";
 import { SearchService } from "./SearchService";
 import { SchedulerService } from "./SchedulerService";
 import { TAService } from "./TAService";
+import {
+  createConnectTimeoutWebSocket,
+  RELAY_CONNECT_TIMEOUT_MS,
+} from "../utils/utils.nostr";
 import { dirname } from "path";
 import {
   EloPluginEngine,
@@ -107,7 +111,9 @@ export class RelatrFactory {
         : undefined;
 
       // Step 4: Initialize network components and builders first
-      const pool = new RelayPool();
+      const pool = new RelayPool({
+        WebSocket: createConnectTimeoutWebSocket(RELAY_CONNECT_TIMEOUT_MS),
+      });
       const socialGraphBuilder = new SocialGraphBuilder(pool);
       const pubkeyMetadataFetcher = new PubkeyMetadataFetcher(
         pool,
