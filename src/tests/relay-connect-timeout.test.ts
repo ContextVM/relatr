@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Server, TCPSocketListener } from "bun";
 import { RelayPool } from "applesauce-relay";
 import { finalizeEvent, generateSecretKey, type Filter } from "nostr-tools";
-import { lastValueFrom, toArray } from "rxjs";
+import { firstValueFrom, lastValueFrom, timeout, toArray } from "rxjs";
 import { createConnectTimeoutWebSocket } from "@/utils/utils.nostr";
 
 const EOSE_TIMEOUT_MS = 1_000;
@@ -55,22 +55,41 @@ describe("relay connect timeout", () => {
     const pool = new RelayPool({
       WebSocket: createConnectTimeoutWebSocket(200),
       eoseTimeout: EOSE_TIMEOUT_MS,
+      keepAlive: 0,
     });
     const request = (filter: Filter) =>
       lastValueFrom(pool.request(relays, filter).pipe(toArray()));
+    const connectionStartedAt = performance.now();
+    const failedConnection = firstValueFrom(
+      pool.relay(relays[1]!).close$.pipe(timeout(2_000)),
+    );
+    const initialRequest = pool
+      .request(relays, { kinds: [1], limit: 1 })
+      .subscribe();
 
-    // The first request pays for the failed connect attempt.
-    await request({ kinds: [1], limit: 1 });
+    try {
+      // An in-flight request has its own retry policy. Observe the connection timeout itself,
+      // then cancel those retries before checking that new requests skip the offline relay.
+      const close = await failedConnection;
+      initialRequest.unsubscribe();
+      expect(close.wasClean).toBe(false);
+      expect(performance.now() - connectionStartedAt).toBeLessThan(
+        EOSE_TIMEOUT_MS / 2,
+      );
 
-    for (let i = 0; i < 3; i++) {
-      const startedAt = performance.now();
-      const events = await request({ kinds: [1], limit: 1 });
+      for (let i = 0; i < 3; i++) {
+        const startedAt = performance.now();
+        const events = await request({ kinds: [1], limit: 1 });
 
-      expect(events.map((e) => e.id)).toEqual([event.id]);
-      // Without the connect timeout, every request waits for the unresponsive relay's EOSE timeout.
-      expect(performance.now() - startedAt).toBeLessThan(EOSE_TIMEOUT_MS / 2);
+        expect(events.map((e) => e.id)).toEqual([event.id]);
+        // Every request would wait for EOSE if the connecting relay still looked ready.
+        expect(performance.now() - startedAt).toBeLessThan(EOSE_TIMEOUT_MS / 2);
+      }
+    } finally {
+      initialRequest.unsubscribe();
+      relays.forEach((url) => pool.remove(url, true));
     }
-  }, 30_000);
+  }, 5_000);
 
   test("a timed-out connection attempt reports exactly one unclean close", async () => {
     const ConnectTimeoutWebSocket = createConnectTimeoutWebSocket(100);
