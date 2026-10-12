@@ -23,6 +23,7 @@ const testConfig: RelatrConfig = {
   decayFactor: 0.5,
   cacheTtlHours: 1,
   numberOfHops: 1,
+  followListKinds: [3],
   syncIntervalHours: 1,
   cleanupIntervalHours: 1,
   validationSyncIntervalHours: 1,

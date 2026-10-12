@@ -104,7 +104,7 @@ export class PubkeyMetadataFetcher {
       // Fetch profile metadata with streaming to avoid memory accumulation
       // Events are processed immediately via onBatch callback and stored in database,
       // preventing O(n) memory scaling with network size.
-      await fetchEventsForPubkeys(pubkeys, 0, undefined, this.pool, {
+      await fetchEventsForPubkeys(pubkeys, [0], undefined, this.pool, {
         onBatch: async (events, batchIndex, totalBatches) => {
           if (events.length === 0) return;
 

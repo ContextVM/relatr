@@ -83,7 +83,8 @@ export async function negSyncFromRelays(
           } catch {
             // Ignore validation errors for invalid pubkeys
           }
-          resolve([]);
+          // Keep what already arrived; a relay that never finishes must not discard the others' events.
+          resolve(eventStore.getByFilters(filter));
         },
         { once: true },
       );
@@ -99,7 +100,7 @@ export async function negSyncFromRelays(
  * Note: This function clears the EventStore for the fetched authors after each batch to free memory.
  *
  * @param pubkeys List of pubkeys to fetch events for
- * @param kind The event kind to fetch
+ * @param kinds The event kinds to fetch
  * @param relays Relays to query (optional)
  * @param pool Relay pool instance
  * @param eventStore Event store instance (optional, creates a temporary one if not provided)
@@ -108,7 +109,7 @@ export async function negSyncFromRelays(
  */
 export async function fetchEventsForPubkeys(
   pubkeys: string[],
-  kind: number,
+  kinds: number[],
   relays: string[] = NEG_RELAYS,
   pool: RelayPool,
   options?: {
@@ -128,7 +129,7 @@ export async function fetchEventsForPubkeys(
   for (let i = 0; i < pubkeys.length; i += batchSize) {
     const batchIndex = Math.floor(i / batchSize) + 1;
     logger.info(
-      `📥 Fetching kind ${kind} events: batch ${batchIndex}/${totalBatches} (${i + 1}-${Math.min(i + batchSize, pubkeys.length)} of ${pubkeys.length} pubkeys)`,
+      `📥 Fetching kind ${kinds.join(", ")} events: batch ${batchIndex}/${totalBatches} (${i + 1}-${Math.min(i + batchSize, pubkeys.length)} of ${pubkeys.length} pubkeys)`,
     );
     const batch = pubkeys.slice(i, i + batchSize);
 
@@ -145,16 +146,21 @@ export async function fetchEventsForPubkeys(
     let events: NostrEvent[] = [];
 
     try {
-      events = await negSyncFromRelays(
-        pool,
-        relays,
-        {
-          kinds: [kind],
-          authors: batch,
-        },
-        signal,
-        batchEventStore,
-      );
+      // One sync per kind: some relays (relay.nostr.net) never finish a negentropy sync whose filter
+      // lists several kinds, which would stall the whole batch until the timeout.
+      events = (
+        await Promise.all(
+          kinds.map((kind) =>
+            negSyncFromRelays(
+              pool,
+              relays,
+              { kinds: [kind], authors: batch },
+              signal,
+              batchEventStore,
+            ),
+          ),
+        )
+      ).flat();
 
       // Process batch immediately if callback provided
       if (onBatch) {
@@ -163,13 +169,56 @@ export async function fetchEventsForPubkeys(
     } finally {
       clearTimeout(timer);
       batchEventStore.removeByFilters({
-        kinds: [kind],
+        kinds,
         authors: batch,
       });
     }
   }
 
   return [];
+}
+
+/**
+ * Combines each author's follow lists into one kind-3-shaped event, as the graph ingestion expects.
+ *
+ * Graph ingestion accepts only kind 3, keeps one event per author, and replaces that author's follows
+ * with it. Ingesting a second list kind (e.g. 10020 media follows) separately would therefore drop
+ * the first; instead, the `p` tags of the newest list of each kind are merged per author. The result
+ * is not a signed Nostr event and must only be used for graph ingestion.
+ */
+export function mergeFollowLists(events: NostrEvent[]): NostrEvent[] {
+  const newestByAuthorAndKind = new Map<string, NostrEvent>();
+  for (const event of events) {
+    const key = `${event.pubkey}:${event.kind}`;
+    const existing = newestByAuthorAndKind.get(key);
+    if (!existing || event.created_at > existing.created_at) {
+      newestByAuthorAndKind.set(key, event);
+    }
+  }
+
+  const mergedByAuthor = new Map<string, NostrEvent>();
+  for (const event of newestByAuthorAndKind.values()) {
+    const merged = mergedByAuthor.get(event.pubkey);
+    if (!merged) {
+      mergedByAuthor.set(event.pubkey, {
+        ...event,
+        kind: 3,
+        tags: event.tags.filter((tag) => tag[0] === "p"),
+      });
+      continue;
+    }
+
+    const followed = new Set(merged.tags.map((tag) => tag[1]));
+    for (const tag of event.tags) {
+      if (tag[0] === "p" && !followed.has(tag[1])) {
+        followed.add(tag[1]);
+        merged.tags.push(tag);
+      }
+    }
+    merged.created_at = Math.max(merged.created_at, event.created_at);
+  }
+
+  return Array.from(mergedByAuthor.values());
 }
 
 /**

@@ -71,6 +71,8 @@ describe("RelatrService", () => {
       status: "complete",
       sourcePubkey: "pk-source",
       hops: 2,
+      // Signatures written before follow list kinds were configurable describe kind-3-only graphs.
+      followListKinds: [3],
       completedAt: 123,
     });
 

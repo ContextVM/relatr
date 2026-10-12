@@ -17,6 +17,8 @@ export interface RelatrConfig {
   decayFactor: number;
   cacheTtlHours: number;
   numberOfHops: number;
+  /** Event kinds whose `p` tags define follows in the trust graph (e.g. 3 contacts, 10020 media follows). */
+  followListKinds: number[];
   syncIntervalHours: number;
   cleanupIntervalHours: number;
   validationSyncIntervalHours: number;

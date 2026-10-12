@@ -31,6 +31,10 @@ export const RelatrConfigSchema = z.object({
   decayFactor: z.number().min(0).default(0.1),
   cacheTtlHours: z.number().positive().default(72),
   numberOfHops: z.number().int().positive().default(1),
+  followListKinds: z
+    .array(z.number().int().nonnegative())
+    .min(1, "At least one FOLLOW_LIST_KINDS entry is required")
+    .default([3]),
   syncIntervalHours: z.number().positive().default(21),
   cleanupIntervalHours: z.number().positive().default(7),
   validationSyncIntervalHours: z.number().positive().default(3),
@@ -124,6 +128,9 @@ export function loadConfig(): RelatrConfig {
     databasePath: process.env.DATABASE_PATH,
     nostrRelays: process.env.NOSTR_RELAYS?.split(",").map((relay) =>
       relay.trim(),
+    ),
+    followListKinds: process.env.FOLLOW_LIST_KINDS?.split(",").map((kind) =>
+      parseInt(kind.trim(), 10),
     ),
     serverSecretKey: process.env.SERVER_SECRET_KEY,
     serverRelays: process.env.SERVER_RELAYS?.split(",").map((relay) =>

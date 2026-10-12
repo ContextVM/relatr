@@ -38,6 +38,7 @@ function createService(overrides?: {
     decayFactor: 0.5,
     cacheTtlHours: 24,
     numberOfHops: 2,
+    followListKinds: [3],
     syncIntervalHours: 1,
     cleanupIntervalHours: 1,
     validationSyncIntervalHours: 1,
