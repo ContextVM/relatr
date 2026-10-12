@@ -264,6 +264,70 @@ describe("httpNip05Resolve persistent cache hooks", () => {
     }
   });
 
+  test("retries a NIP-05 name after a response-body connection failure instead of caching it as invalid", async () => {
+    const originalFetch = globalThis.fetch;
+    const resolutions = new Map<string, { pubkey: string | null }>();
+    let recovering = false;
+    let coolingDown = false;
+    const context = {
+      targetPubkey: "pk-target",
+      config: {
+        capTimeoutMs: 1000,
+        nip05ResolveTimeoutMs: 500,
+        nip05CacheTtlSeconds: 3600,
+        nip05DomainCooldownSeconds: 600,
+      },
+      nip05CacheStore: {
+        getResolution: async (nip05: string) => resolutions.get(nip05) ?? null,
+        getCoolingDownDomains: async () =>
+          new Set(coolingDown ? ["example.com"] : []),
+        setDomainCooldown: async () => {
+          coolingDown = true;
+        },
+        setResolution: async (input: {
+          nip05: string;
+          pubkey: string | null;
+        }) => void resolutions.set(input.nip05, { pubkey: input.pubkey }),
+      } as never,
+    };
+
+    globalThis.fetch = (async () =>
+      recovering
+        ? new Response(JSON.stringify({ names: { alice: "recovered-pubkey" } }))
+        : new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(
+                  new TypeError(
+                    "Connection closed while reading response body",
+                  ),
+                );
+              },
+            }),
+          )) as unknown as typeof fetch;
+
+    try {
+      expect(
+        await httpNip05Resolve({ nip05: "alice@example.com" }, context),
+      ).toEqual({
+        pubkey: null,
+      });
+      expect(coolingDown).toBe(true);
+      expect(resolutions.has("alice@example.com")).toBe(false);
+
+      // The domain has recovered and its cooldown has expired in a later run.
+      recovering = true;
+      coolingDown = false;
+      expect(
+        await httpNip05Resolve({ nip05: "alice@example.com" }, context),
+      ).toEqual({
+        pubkey: "recovered-pubkey",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("puts an unreachable domain on hold instead of caching its names as invalid", async () => {
     const originalFetch = globalThis.fetch;
     const fetchedUrls: string[] = [];
@@ -273,7 +337,9 @@ describe("httpNip05Resolve persistent cache hooks", () => {
 
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       fetchedUrls.push(String(input));
-      throw new Error("Unable to connect. Is the computer able to access the url?");
+      throw new Error(
+        "Unable to connect. Is the computer able to access the url?",
+      );
     }) as unknown as typeof fetch;
 
     try {

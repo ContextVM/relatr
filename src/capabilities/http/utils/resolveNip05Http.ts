@@ -74,9 +74,11 @@ export async function resolveNip05WithAbortableFetch(
     try {
       payload = (await response.json()) as Nip05NamesResponse | null;
     } catch (error) {
-      // An aborted body read is a timeout; anything else means the document is not valid JSON.
-      if (controller.signal.aborted) throw error;
-      return { pubkey: null };
+      // Only malformed JSON is a definitive negative answer; failed body reads are transport errors.
+      if (error instanceof SyntaxError && !controller.signal.aborted) {
+        return { pubkey: null };
+      }
+      throw error;
     }
 
     const pubkey = payload?.names?.[parsed.name.toLowerCase()];
