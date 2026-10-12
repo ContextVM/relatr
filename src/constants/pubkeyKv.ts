@@ -18,6 +18,8 @@ export const MAX_PUBLISH_RELAYS = 15;
 export const PUBKEY_KV_KEYS = {
   ta_relays: "ta_relays",
   user_relays: "user_relays",
+  /** Unix seconds of the newest event seen from the pubkey; a decimal string. */
+  last_seen_at: "last_seen_at",
 } as const;
 
 /**

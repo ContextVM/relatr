@@ -34,7 +34,7 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
     const candidates = await this.loadCandidates(context.pubkeys);
 
     if (candidates.size === 0) {
-      logger.info(
+      logger.debug(
         "🪪 No NIP-05 facts to refresh for current validation targets",
       );
       return;
@@ -55,7 +55,7 @@ export class Nip05FactRefreshStage implements FactRefreshStage {
     );
 
     if (refreshTargets.length === 0) {
-      logger.info(
+      logger.debug(
         `🪪 Reused ${candidates.size.toLocaleString()} cached NIP-05 facts before scoring`,
       );
       return;

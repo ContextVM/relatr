@@ -17,7 +17,8 @@ import {
 import { mapWithConcurrency } from "@/utils/mapWithConcurrency";
 
 interface ValidationStageTimings {
-  factRefresh: Array<{ label: string; durationMs: number }>;
+  /** Accumulated duration per fact refresh stage label across all batches. */
+  factRefresh: Map<string, number>;
   batchScoringMs: number;
   persistenceMs: number;
   fallbackMs: number;
@@ -35,6 +36,11 @@ export interface ValidationPipelineDeps {
   socialGraph: SocialGraph;
   metricsValidator: MetricsValidator;
   factRefreshStage?: FactRefreshStage;
+  /**
+   * Reorders validation targets, e.g. to score recently active pubkeys first. Must return the
+   * same pubkeys it receives: ordering never decides whether a pubkey is validated.
+   */
+  orderPubkeys?: (pubkeys: string[]) => Promise<string[]>;
 }
 
 interface ValidationSyncProgress {
@@ -149,7 +155,7 @@ export class ValidationPipeline {
     const effectiveSourcePubkey = sourcePubkey || config.defaultSourcePubkey;
     const validationRunContext: ValidationRunContext = {};
     const timings: ValidationStageTimings = {
-      factRefresh: [],
+      factRefresh: new Map(),
       batchScoringMs: 0,
       persistenceMs: 0,
       fallbackMs: 0,
@@ -163,7 +169,10 @@ export class ValidationPipeline {
         return;
       }
 
-      const allPubkeys = await socialGraph.getAllUsersInGraph();
+      const graphPubkeys = await socialGraph.getAllUsersInGraph();
+      const allPubkeys = this.deps.orderPubkeys
+        ? await this.deps.orderPubkeys(graphPubkeys)
+        : graphPubkeys;
       logger.info(
         `📊 Found ${allPubkeys.length.toLocaleString()} pubkeys in social graph`,
       );
@@ -196,17 +205,6 @@ export class ValidationPipeline {
 
       const requiredFactDomains = this.resolveRequiredFactDomains(metricKeys);
 
-      await this.runFactRefreshStages(
-        this.getFactRefreshStage(),
-        {
-          pubkeys: allPubkeys,
-          sourcePubkey: effectiveSourcePubkey,
-          validationRunContext,
-          requiredFactDomains,
-        },
-        timings,
-      );
-
       const progress: ValidationSyncProgress = {
         processedCount: 0,
         successCount: 0,
@@ -218,6 +216,19 @@ export class ValidationPipeline {
       for (const [index, batch] of batches.entries()) {
         logger.info(
           `🔄 Checking validation batch ${index + 1} of ${batches.length} (${batch.length} pubkeys)`,
+        );
+
+        // Facts are refreshed per batch so scoring starts right away instead of waiting for the
+        // whole graph, and cache expiries spread over the run instead of expiring all at once.
+        await this.runFactRefreshStages(
+          this.getFactRefreshStage(),
+          {
+            pubkeys: batch,
+            sourcePubkey: effectiveSourcePubkey,
+            validationRunContext,
+            requiredFactDomains,
+          },
+          timings,
         );
 
         try {
@@ -321,7 +332,7 @@ export class ValidationPipeline {
           context.requiredFactDomains &&
           !context.requiredFactDomains.has(innerStage.factDomain)
         ) {
-          logger.info(
+          logger.debug(
             `⏭️ Skipping ${innerStage.label ?? innerStage.factDomain} because it is not required for the selected metric scope`,
           );
           continue;
@@ -335,7 +346,10 @@ export class ValidationPipeline {
     const label = stage.label ?? "fact refresh";
     const startedAt = nowMs();
     await stage.refresh(context);
-    timings.factRefresh.push({ label, durationMs: nowMs() - startedAt });
+    timings.factRefresh.set(
+      label,
+      (timings.factRefresh.get(label) ?? 0) + nowMs() - startedAt,
+    );
   }
 
   private resolveRequiredFactDomains(
@@ -484,10 +498,8 @@ export class ValidationPipeline {
   }
 
   private logStageTimings(timings: ValidationStageTimings): void {
-    for (const factRefreshStage of timings.factRefresh) {
-      logger.info(
-        `⏱️ Validation stage ${factRefreshStage.label}: ${factRefreshStage.durationMs}ms`,
-      );
+    for (const [label, durationMs] of timings.factRefresh) {
+      logger.info(`⏱️ Validation stage ${label}: ${durationMs}ms`);
     }
 
     logger.info(
