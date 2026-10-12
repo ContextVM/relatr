@@ -8,6 +8,9 @@
     ".",
     "relo"
   ],
+  "overrides": {
+    "@duckdb/node-api": "^1.5.2-r.1"
+  },
   "scripts": {
     "start": "bun run manager.ts",
     "mcp": "bun run src/mcp/server.ts",
