@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { httpNip05Resolve } from "@/capabilities/http/httpNip05Resolve";
 import { LruCache } from "@/utils/lru-cache";
 import { Nip05FactRefreshStage } from "@/validation/Nip05FactRefreshStage";
+import type { ValidationRunContext } from "@/validation/ValidationRunContext";
 
 describe("httpNip05Resolve persistent cache hooks", () => {
   test("returns persisted resolution before attempting live lookup", async () => {
@@ -37,9 +38,10 @@ describe("httpNip05Resolve persistent cache hooks", () => {
     expect(resolutionReads).toBe(1);
   });
 
-  test("aborts live lookup using the dedicated NIP-05 timeout", async () => {
+  test("aborts live lookup using the dedicated NIP-05 timeout and puts the domain on hold", async () => {
     const originalFetch = globalThis.fetch;
     let aborted = false;
+    const cooldowns: Array<{ domain: string; seconds: number }> = [];
 
     globalThis.fetch = (async (
       _input: RequestInfo | URL,
@@ -89,6 +91,10 @@ describe("httpNip05Resolve persistent cache hooks", () => {
           },
           nip05CacheStore: {
             getResolution: async () => null,
+            getCoolingDownDomains: async () => new Set<string>(),
+            setDomainCooldown: async (domain: string, seconds: number) => {
+              cooldowns.push({ domain, seconds });
+            },
             setResolution: async () => {
               throw new Error("setResolution should not be called on timeout");
             },
@@ -98,6 +104,7 @@ describe("httpNip05Resolve persistent cache hooks", () => {
 
       expect(result).toEqual({ pubkey: null });
       expect(aborted).toBe(true);
+      expect(cooldowns).toEqual([{ domain: "example.com", seconds: 600 }]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -198,7 +205,7 @@ describe("httpNip05Resolve persistent cache hooks", () => {
     }
   });
 
-  test("persists failed refresh outcomes so restarts do not immediately retry them", async () => {
+  test("persists a definitive negative answer so restarts do not immediately retry it", async () => {
     const originalFetch = globalThis.fetch;
     const writes: Array<{
       nip05: string;
@@ -206,9 +213,8 @@ describe("httpNip05Resolve persistent cache hooks", () => {
       ttlSeconds: number;
     }> = [];
 
-    globalThis.fetch = (async () => {
-      throw new Error("Bad response: 404");
-    }) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
     try {
       const stage = new Nip05FactRefreshStage(
@@ -220,6 +226,10 @@ describe("httpNip05Resolve persistent cache hooks", () => {
           getResolution: async () => null,
           getResolutionBatch: async (nip05s: string[]) =>
             new Map(nip05s.map((nip05) => [nip05, null])),
+          getCoolingDownDomains: async () => new Set<string>(),
+          setDomainCooldown: async () => {
+            throw new Error("a 404 is not a transport failure");
+          },
           setResolution: async (input: {
             nip05: string;
             pubkey: string | null;
@@ -249,6 +259,139 @@ describe("httpNip05Resolve persistent cache hooks", () => {
           ttlSeconds: 3600,
         },
       ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("retries a NIP-05 name after a response-body connection failure instead of caching it as invalid", async () => {
+    const originalFetch = globalThis.fetch;
+    const resolutions = new Map<string, { pubkey: string | null }>();
+    let recovering = false;
+    let coolingDown = false;
+    const context = {
+      targetPubkey: "pk-target",
+      config: {
+        capTimeoutMs: 1000,
+        nip05ResolveTimeoutMs: 500,
+        nip05CacheTtlSeconds: 3600,
+        nip05DomainCooldownSeconds: 600,
+      },
+      nip05CacheStore: {
+        getResolution: async (nip05: string) => resolutions.get(nip05) ?? null,
+        getCoolingDownDomains: async () =>
+          new Set(coolingDown ? ["example.com"] : []),
+        setDomainCooldown: async () => {
+          coolingDown = true;
+        },
+        setResolution: async (input: {
+          nip05: string;
+          pubkey: string | null;
+        }) => void resolutions.set(input.nip05, { pubkey: input.pubkey }),
+      } as never,
+    };
+
+    globalThis.fetch = (async () =>
+      recovering
+        ? new Response(JSON.stringify({ names: { alice: "recovered-pubkey" } }))
+        : new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(
+                  new TypeError(
+                    "Connection closed while reading response body",
+                  ),
+                );
+              },
+            }),
+          )) as unknown as typeof fetch;
+
+    try {
+      expect(
+        await httpNip05Resolve({ nip05: "alice@example.com" }, context),
+      ).toEqual({
+        pubkey: null,
+      });
+      expect(coolingDown).toBe(true);
+      expect(resolutions.has("alice@example.com")).toBe(false);
+
+      // The domain has recovered and its cooldown has expired in a later run.
+      recovering = true;
+      coolingDown = false;
+      expect(
+        await httpNip05Resolve({ nip05: "alice@example.com" }, context),
+      ).toEqual({
+        pubkey: "recovered-pubkey",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("puts an unreachable domain on hold instead of caching its names as invalid", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchedUrls: string[] = [];
+    const writes: unknown[] = [];
+    const cooldowns: Array<{ domain: string; seconds: number }> = [];
+    const validationRunContext: ValidationRunContext = {};
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetchedUrls.push(String(input));
+      throw new Error(
+        "Unable to connect. Is the computer able to access the url?",
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      const stage = new Nip05FactRefreshStage(
+        {
+          getBatch: async () =>
+            new Map([
+              ["pk-a", { nip05: "a@down.example" }],
+              ["pk-b", { nip05: "b@down.example" }],
+              ["pk-c", { nip05: "c@cooling.example" }],
+            ]),
+        } as never,
+        {
+          getResolutionBatch: async (nip05s: string[]) =>
+            new Map(nip05s.map((nip05) => [nip05, null])),
+          getCoolingDownDomains: async () => new Set(["cooling.example"]),
+          setDomainCooldown: async (domain: string, seconds: number) => {
+            cooldowns.push({ domain, seconds });
+          },
+          setResolution: async (input: unknown) => {
+            writes.push(input);
+          },
+        } as never,
+        {
+          capTimeoutMs: 1000,
+          nip05ResolveTimeoutMs: 500,
+          nip05CacheTtlSeconds: 3600,
+          nip05DomainCooldownSeconds: 600,
+        } as never,
+        1,
+      );
+
+      await stage.refresh({
+        pubkeys: ["pk-a", "pk-b", "pk-c"],
+        validationRunContext,
+      });
+
+      // The first failure on down.example skips its second name; cooling.example is never contacted.
+      expect(fetchedUrls).toEqual([
+        "https://down.example/.well-known/nostr.json?name=a",
+      ]);
+      expect(cooldowns).toEqual([{ domain: "down.example", seconds: 600 }]);
+      expect(writes).toEqual([]);
+      for (const nip05 of [
+        "a@down.example",
+        "b@down.example",
+        "c@cooling.example",
+      ]) {
+        expect(validationRunContext.nip05PreparedResults?.get(nip05)).toEqual({
+          pubkey: null,
+        });
+      }
     } finally {
       globalThis.fetch = originalFetch;
     }

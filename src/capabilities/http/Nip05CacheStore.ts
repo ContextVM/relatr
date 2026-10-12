@@ -10,9 +10,14 @@ type Nip05ResolutionRecord = {
 };
 
 const NIP05_RESOLUTION_PREFIX = "nip05:resolution:v1:";
+const NIP05_DOMAIN_COOLDOWN_PREFIX = "nip05:domain-cooldown:v1:";
 
 function resolutionKey(nip05: string): string {
   return `${NIP05_RESOLUTION_PREFIX}${nip05}`;
+}
+
+function domainCooldownKey(domain: string): string {
+  return `${NIP05_DOMAIN_COOLDOWN_PREFIX}${domain}`;
 }
 
 function parseResolutionRecord(
@@ -118,6 +123,38 @@ export class Nip05CacheStore {
     await this.settingsRepository.set(
       resolutionKey(input.nip05),
       JSON.stringify(record),
+    );
+  }
+
+  /**
+   * Returns the subset of `domains` that are still cooling down after a transport failure.
+   */
+  async getCoolingDownDomains(domains: string[]): Promise<Set<string>> {
+    if (domains.length === 0) {
+      return new Set();
+    }
+
+    const now = nowSeconds();
+    const cooldowns = await this.settingsRepository.getBatch(
+      domains.map((domain) => domainCooldownKey(domain)),
+    );
+    return new Set(
+      domains.filter(
+        (domain) => Number(cooldowns.get(domainCooldownKey(domain))) > now,
+      ),
+    );
+  }
+
+  /**
+   * Skips live lookups against `domain` for `cooldownSeconds`, across restarts.
+   */
+  async setDomainCooldown(
+    domain: string,
+    cooldownSeconds: number,
+  ): Promise<void> {
+    await this.settingsRepository.set(
+      domainCooldownKey(domain),
+      String(nowSeconds() + cooldownSeconds),
     );
   }
 }
