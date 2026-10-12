@@ -65,10 +65,7 @@ export class SchedulerService implements ISchedulerService {
       socialGraph,
       metricsValidator,
       factRefreshStage: new CompositeFactRefreshStage([
-        new MetadataFactRefreshStage(
-          metadataRepository,
-          pubkeyMetadataFetcher,
-        ),
+        new MetadataFactRefreshStage(metadataRepository, pubkeyMetadataFetcher),
         this.nip05FactRefreshStage,
       ]),
       orderPubkeys: (pubkeys) => this.orderByRecentActivity(pubkeys),
@@ -320,7 +317,11 @@ export class SchedulerService implements ISchedulerService {
       let lastSeen = await this.pubkeyKvRepository.getAllForKey(
         PUBKEY_KV_KEYS.last_seen_at,
       );
-      if (lastSeen.size === 0) {
+      const hasPreviousScan =
+        lastSeen.size > 0 ||
+        Number(await this.settingsRepository.get(ACTIVITY_SCAN_SETTINGS_KEY)) >
+          0;
+      if (!hasPreviousScan) {
         await this.refreshActivityIfDue(pubkeys);
         lastSeen = await this.pubkeyKvRepository.getAllForKey(
           PUBKEY_KV_KEYS.last_seen_at,

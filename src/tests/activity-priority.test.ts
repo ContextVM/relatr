@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RelayPool } from "applesauce-relay";
 import type { Filter, NostrEvent } from "nostr-tools";
-import { from, NEVER, throwError } from "rxjs";
+import { from, NEVER, Subject, throwError } from "rxjs";
 import { SchedulerService } from "@/service/SchedulerService";
 import { fetchLastSeenAt } from "@/utils/utils.nostr";
 import type { ProfileMetrics } from "@/types";
@@ -74,11 +74,11 @@ describe("SchedulerService activity ordering", () => {
     pool: RelayPool,
     seenBatches: string[][],
     storedLastSeen: Record<string, number> = {},
+    settings = new Map<string, string>(),
   ) {
     const kv = new Map<string, string>(
       Object.entries(storedLastSeen).map(([pk, ts]) => [pk, String(ts)]),
     );
-    const settings = new Map<string, string>();
     const mkMetrics = (pubkey: string): ProfileMetrics => ({
       pubkey,
       metrics: { "pk:plugin": 1 },
@@ -110,7 +110,8 @@ describe("SchedulerService activity ordering", () => {
         get: async (key: string) => settings.get(key) ?? null,
         getBatch: async (keys: string[]) =>
           new Map(keys.map((key) => [key, settings.get(key) ?? null])),
-        set: async (key: string, value: string) => void settings.set(key, value),
+        set: async (key: string, value: string) =>
+          void settings.set(key, value),
         delete: async (key: string) => void settings.delete(key),
       } as never,
       pool,
@@ -127,10 +128,7 @@ describe("SchedulerService activity ordering", () => {
   test("validates every graph pubkey, most recently active first and unseen ones in graph order", async () => {
     const seenBatches: string[][] = [];
     const scheduler = mkScheduler(
-      mkPool([
-        mkEvent("pk-a", NOW - 5 * 86400),
-        mkEvent("pk-c", NOW - 86400),
-      ]),
+      mkPool([mkEvent("pk-a", NOW - 5 * 86400), mkEvent("pk-c", NOW - 86400)]),
       seenBatches,
     );
 
@@ -151,6 +149,52 @@ describe("SchedulerService activity ordering", () => {
     await scheduler.syncValidations(10);
 
     expect(seenBatches).toEqual([graphOrder]);
+  });
+
+  test("does not block validation on a due scan after an empty scan, including after restart", async () => {
+    const settings = new Map<string, string>();
+    const firstRunBatches: string[][] = [];
+    await mkScheduler(
+      mkPool([]),
+      firstRunBatches,
+      {},
+      settings,
+    ).syncValidations(10);
+    expect(firstRunBatches).toEqual([graphOrder]);
+
+    // Make the completed empty scan due again and recreate the scheduler with persisted settings.
+    settings.set(
+      "activity_scan:last_run",
+      String(Date.now() - 22 * 3600 * 1000),
+    );
+    const pendingScan = new Subject<NostrEvent>();
+    let scanStarted = false;
+    const seenBatches: string[][] = [];
+    const scheduler = mkScheduler(
+      {
+        request: () => {
+          scanStarted = true;
+          return pendingScan;
+        },
+      } as unknown as RelayPool,
+      seenBatches,
+      {},
+      settings,
+    );
+    const run = scheduler.syncValidations(10);
+
+    try {
+      const completed = await Promise.race([
+        run.then(() => true),
+        Bun.sleep(100).then(() => false),
+      ]);
+      expect(completed).toBe(true);
+      expect(scanStarted).toBe(true);
+      expect(seenBatches).toEqual([graphOrder]);
+    } finally {
+      pendingScan.complete();
+      await run;
+    }
   });
 
   test("orders by the previous scan without waiting for a due scan to finish", async () => {
